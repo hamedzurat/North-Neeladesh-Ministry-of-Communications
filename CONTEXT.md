@@ -108,6 +108,10 @@ _Avoid_: Player family, home base
 An NPC whose telephone line can originate or receive calls through the exchange.
 _Avoid_: User, customer, phone
 
+**Subscriber Profile**:
+The authored starting description of a Subscriber, including their identity, voice, personality, baseline goals, initial perspective, relationships, and permitted actions. Changes during a Run do not rewrite the Profile.
+_Avoid_: Character file, NPC prompt, mutable subscriber state
+
 **Caller**:
 The subscriber who initiates a particular call.
 _Avoid_: Sender
@@ -197,8 +201,44 @@ An authored truth about the setting, a character, or an unfolding situation that
 _Avoid_: Lore prompt, generated fact
 
 **Subscriber Memory**:
-A validated recollection belonging to a Subscriber that persists between Shifts within the current Run and may be shared only through permitted story actions.
+A short validated text recollection independently written for a Subscriber after each meaningful conversation they experience and persisted between Shifts within the current Run. Memories are not rewritten; later corrections become new Memories or changed Beliefs.
 _Avoid_: Chat history, transcript, cross-run memory
+
+**Subscriber Knowledge**:
+Canonical information available to a particular Subscriber, recorded with where they learned it. It arises through authored starting knowledge, participation, witnessing, validated transfer, or an observable public consequence rather than becoming universally available.
+_Avoid_: Global lore, prompt context
+
+**Subscriber Belief**:
+A proposition a Subscriber accepts that may be mistaken, incomplete, or contradicted by a Canonical Fact. It may shape Improvised Dialogue but cannot change authoritative world state.
+_Avoid_: Canonical fact, generated fact
+
+**Subscriber Action**:
+A typed consequential change an AI-controlled Subscriber may propose from their individual subset of a shared action catalogue. It affects authoritative state only after validation by the game, and Story Events may further constrain its availability.
+_Avoid_: NPC tool call, LLM action, unrestricted command
+
+**Action Record**:
+The authoritative, uniquely identified record of an accepted Subscriber Action and its pending, succeeded, failed, or cancelled status. It belongs to the acting Subscriber; other Subscribers learn its meaningful effects only through permitted observation or knowledge transfer.
+_Avoid_: Tool log, action memory, dialogue claim
+
+**State Query**:
+A permitted read of authoritative state that a Subscriber needs during a conversation, such as checking their own Account Balance. It changes no world state and may divide one response into natural speech before and after the result.
+_Avoid_: Subscriber Action, asynchronous command, unrestricted lookup
+
+**Action Summary**:
+A compact derived account of a Subscriber's older completed Action Records, backed by exact authoritative totals and outcomes. It does not replace the underlying records.
+_Avoid_: Deleted action history, LLM-calculated ledger
+
+**Memory Digest**:
+A compact, perspective-specific summary of a Subscriber's older Memories used alongside an intact recent-memory tail. It is derived context rather than a replacement for the underlying Memories or a Canonical Fact.
+_Avoid_: Rewritten memory history, canonical summary
+
+**Relationship Note**:
+A Subscriber's single short text description of their current relationship with another known person, organization, or institution. A validated replacement supersedes the previous note for that relationship.
+_Avoid_: Affinity score, relationship meter, universal reputation
+
+**Response Context**:
+The bounded, perspective-specific information assembled for one Subscriber response cycle, distinguishing authoritative facts from that Subscriber's fallible beliefs and recollections. It begins when the core accepts a response trigger and ends when the final speech finishes or the response is cancelled; State Query continuations remain inside the same context.
+_Avoid_: Turn Context, full prompt history, global NPC context, transcript dump
 
 **Call Premise**:
 An authored reason for a call that defines eligible participants, required knowledge, prerequisites, and possible Story Events while leaving the conversation itself open to improvisation.
@@ -263,3 +303,7 @@ _Avoid_: AI error, random transcription failure, accent challenge
 **Improvised Dialogue**:
 Natural speech generated from a Subscriber's authored personality, quirks, goals, knowledge, available actions, and current situation. Its wording is not structured and cannot by itself change authoritative world state; consequential effects are proposed separately and validated before taking effect.
 _Avoid_: Dialogue tree, scripted line, world-state command
+
+**Unheard Conversation Outcome**:
+The bounded, seeded result of a completed Subscriber conversation that the Exchange Operator did not monitor. It may produce perspective-specific Subscriber Memories but has no invented hidden transcript.
+_Avoid_: Simulated hidden dialogue, background LLM decision
