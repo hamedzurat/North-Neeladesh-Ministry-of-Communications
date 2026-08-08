@@ -134,6 +134,21 @@ knowledge boundaries, untrusted-context resistance, permitted queries/actions,
 and the rule that a proposal must not be described as already successful. Raw
 prompts and model outputs remain in the requested private result JSON.
 
+## Measure the integrated warm pipeline
+
+With the selected STT and LLM servers already resident, run the integration
+harness from the Pocket TTS environment. It measures from simulated PTT release
+through STT, completion of the streamable `SPEECH` line, and Pocket's first PCM
+chunk. LLM generation continues concurrently so query/action slots are retained.
+
+```bash
+python3 prototypes/half-duplex-voice-benchmark/benchmark_pipeline.py \
+  --data-dir /path/to/private-benchmark-data \
+  --results-dir /path/to/private-results \
+  --initial-prompt-file prototypes/half-duplex-voice-benchmark/scenario_vocabulary.txt \
+  --engine-label base.en-qwen3-4b-pocket-alba
+```
+
 To use a different port or private data directory:
 
 ```bash
