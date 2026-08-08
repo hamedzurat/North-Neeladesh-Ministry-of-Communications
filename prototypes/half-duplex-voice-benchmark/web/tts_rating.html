@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Blind TTS listening test — prototype</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, sans-serif;
+        background: #0b1220;
+        color: #f8fafc;
+      }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+      main {
+        width: min(58rem, calc(100% - 2rem));
+        margin: 1rem;
+        padding: 1.5rem;
+        box-sizing: border-box;
+        border: 1px solid #475569;
+        border-radius: 1rem;
+        background: #172033;
+      }
+      .prototype { color: #fbbf24; font-weight: 800; letter-spacing: 0.06em; }
+      .muted { color: #cbd5e1; }
+      progress { width: 100%; height: 1rem; }
+      .prompt {
+        margin: 1rem 0;
+        padding: 1rem;
+        border-radius: 0.75rem;
+        background: #0b1220;
+        font-size: 1.25rem;
+        line-height: 1.45;
+      }
+      .samples { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.85rem; }
+      .sample { padding: 1rem; border: 1px solid #475569; border-radius: 0.75rem; }
+      .sample h2 { margin-top: 0; }
+      audio { width: 100%; }
+      fieldset { margin-top: 0.8rem; border-color: #64748b; }
+      .score { display: flex; justify-content: space-between; gap: 0.25rem; }
+      .score label { display: grid; place-items: center; gap: 0.2rem; cursor: pointer; }
+      .best { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+      textarea { width: 100%; min-height: 4rem; box-sizing: border-box; }
+      .controls { display: flex; gap: 0.75rem; margin-top: 1rem; }
+      button {
+        border: 0;
+        border-radius: 0.6rem;
+        padding: 0.75rem 1rem;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button.primary { background: #22c55e; color: #07130b; }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      #status[data-kind="error"] { color: #fca5a5; }
+      #status[data-kind="success"] { color: #86efac; }
+      @media (max-width: 760px) { .samples { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="prototype">BLIND THROWAWAY PROTOTYPE</div>
+      <h1>Telephone-character voice screening</h1>
+      <p class="muted">
+        Use headphones if practical. For each line, play A, B, and C; score their
+        overall listening quality, mark obvious mispronunciations, then choose the
+        voice that best fits this game. The letters are reshuffled for every line.
+      </p>
+      <progress id="progress" value="0"></progress>
+      <p id="counter" class="muted">Loading private session…</p>
+      <div id="prompt" class="prompt"></div>
+      <div id="samples" class="samples"></div>
+      <fieldset>
+        <legend>Best fit for this line</legend>
+        <div id="best" class="best"></div>
+      </fieldset>
+      <p><label>Optional note<br /><textarea id="note" placeholder="What sounded wrong or especially convincing?"></textarea></label></p>
+      <div class="controls">
+        <button id="previous">Previous</button>
+        <button id="next" class="primary">Save &amp; next</button>
+      </div>
+      <p id="status" class="muted">Score 1 = unusable, 3 = acceptable, 5 = excellent.</p>
+    </main>
+    <script>
+      const ui = Object.fromEntries(
+        ["progress", "counter", "prompt", "samples", "best", "note", "previous", "next", "status"]
+          .map((id) => [id, document.getElementById(id)]),
+      );
+      let session = null;
+      let index = 0;
+      const ratings = {};
+
+      function setStatus(message, kind = "") {
+        ui.status.textContent = message;
+        ui.status.dataset.kind = kind;
+      }
+
+      function readCurrent() {
+        const line = session.lines[index];
+        const samples = {};
+        for (const sample of line.samples) {
+          const selected = document.querySelector(`input[name="score-${sample.label}"]:checked`);
+          samples[sample.label] = {
+            quality: selected ? Number(selected.value) : null,
+            pronunciation_issue: document.getElementById(`issue-${sample.label}`).checked,
+          };
+        }
+        return {
+          samples,
+          best: document.querySelector('input[name="best"]:checked')?.value || null,
+          note: ui.note.value.trim(),
+        };
+      }
+
+      function isComplete(rating) {
+        return rating.best && Object.values(rating.samples).every((sample) => sample.quality);
+      }
+
+      function render() {
+        const line = session.lines[index];
+        const prior = ratings[line.id];
+        ui.progress.max = session.lines.length;
+        ui.progress.value = Object.values(ratings).filter(isComplete).length;
+        ui.counter.textContent = `Line ${index + 1} of ${session.lines.length} · ${line.category}`;
+        ui.prompt.textContent = line.text;
+        ui.samples.replaceChildren();
+        ui.best.replaceChildren();
+        for (const sample of line.samples) {
+          const card = document.createElement("section");
+          card.className = "sample";
+          const scoreChoices = [1, 2, 3, 4, 5].map((score) => `
+            <label><input type="radio" name="score-${sample.label}" value="${score}"
+              ${prior?.samples?.[sample.label]?.quality === score ? "checked" : ""}>${score}</label>
+          `).join("");
+          card.innerHTML = `
+            <h2>Sample ${sample.label}</h2>
+            <audio controls preload="metadata" src="${sample.url}"></audio>
+            <fieldset><legend>Overall quality</legend><div class="score">${scoreChoices}</div></fieldset>
+            <p><label><input id="issue-${sample.label}" type="checkbox"
+              ${prior?.samples?.[sample.label]?.pronunciation_issue ? "checked" : ""}>
+              Obvious pronunciation/content issue</label></p>
+          `;
+          ui.samples.append(card);
+          const bestLabel = document.createElement("label");
+          bestLabel.innerHTML = `<input type="radio" name="best" value="${sample.label}"
+            ${prior?.best === sample.label ? "checked" : ""}> Sample ${sample.label}`;
+          ui.best.append(bestLabel);
+        }
+        ui.note.value = prior?.note || "";
+        ui.previous.disabled = index === 0;
+        ui.next.textContent = index === session.lines.length - 1 ? "Finish & save" : "Save & next";
+        setStatus("Score all three samples and choose the best fit.");
+      }
+
+      async function save(status) {
+        const response = await fetch("/api/ratings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: session.session_id, status, ratings }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Could not save ratings");
+      }
+
+      ui.next.addEventListener("click", async () => {
+        const line = session.lines[index];
+        const rating = readCurrent();
+        if (!isComplete(rating)) {
+          setStatus("Please score A, B, and C and choose one best fit.", "error");
+          return;
+        }
+        ratings[line.id] = rating;
+        const finalLine = index === session.lines.length - 1;
+        ui.next.disabled = true;
+        try {
+          await save(finalLine ? "complete" : "draft");
+          if (finalLine) {
+            ui.progress.value = session.lines.length;
+            ui.counter.textContent = `All ${session.lines.length} lines rated`;
+            ui.prompt.textContent = "Thank you — your blind ratings are saved outside the repository.";
+            ui.samples.replaceChildren();
+            ui.best.replaceChildren();
+            ui.note.closest("p").hidden = true;
+            ui.previous.hidden = true;
+            ui.next.hidden = true;
+            setStatus("Complete. Return to the chat and tell me you are done.", "success");
+          } else {
+            index += 1;
+            render();
+          }
+        } catch (error) {
+          setStatus(error.message, "error");
+        } finally {
+          ui.next.disabled = false;
+        }
+      });
+
+      ui.previous.addEventListener("click", () => {
+        ratings[session.lines[index].id] = readCurrent();
+        index -= 1;
+        render();
+      });
+
+      fetch("/api/session")
+        .then((response) => response.json())
+        .then((result) => { session = result; ui.progress.max = session.lines.length; render(); })
+        .catch((error) => setStatus(error.message, "error"));
+    </script>
+  </body>
+</html>

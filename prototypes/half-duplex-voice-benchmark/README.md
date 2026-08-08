@@ -97,6 +97,24 @@ python3 prototypes/half-duplex-voice-benchmark/benchmark_pocket_tts.py \
   --voice alba --torch-threads 2
 ```
 
+## Run the blind listening test
+
+Pass only private sample/result directories outside the repository. Candidate
+identities are reshuffled per line and kept in a private session file; the
+browser sees only Sample A/B/C.
+
+```bash
+python3 prototypes/half-duplex-voice-benchmark/tts_rating_server.py \
+  --samples-root /path/to/private-results/listening-samples \
+  --candidate piper-en_US-lessac-medium-cpu \
+  --candidate kokoro-af_heart-cpu \
+  --candidate pocket-tts-alba-cpu \
+  --results-dir /path/to/private-results
+```
+
+Open <http://127.0.0.1:8766>. Drafts and the completed ratings are saved after
+each line so closing the browser does not discard completed work.
+
 To use a different port or private data directory:
 
 ```bash
