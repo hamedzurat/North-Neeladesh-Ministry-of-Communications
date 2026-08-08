@@ -4,9 +4,105 @@ The game models a manual telephone exchange in which the player operates the swi
 
 ## Language
 
+**North Neeladesh**:
+The northern successor country created by the recent Partition of Neeladesh. It retains substantial industry but little farmland, making food dependence and severe inflation central pressures on daily life.
+_Avoid_: The North, fictional Bangladesh
+
+**South Neeladesh**:
+The southern successor country created by the Partition of Neeladesh. It retains the former country's grain belt and important river routes but depends on northern industry and skilled production.
+_Avoid_: The South, agricultural faction
+
+**Partition**:
+The unresolved division of Neeladesh after a disputed transfer of power, short civil conflict, and foreign-brokered ceasefire. Its militarily drawn border split families, communities, workplaces, and previously integrated supply networks.
+_Avoid_: Independence, clean separation
+
+**Partition Hostility**:
+The reciprocal hatred sustained by casualties, displacement, competing territorial claims, and official propaganda in North and South Neeladesh. It coexists with family ties, covert trade, and unavoidable economic dependence across the border.
+_Avoid_: Ancient hatred, national rivalry
+
+**Partition Era**:
+The alternate late-twentieth-century period in which the game occurs, combining manual exchanges and paper bureaucracy with radio, early state databases, and limited electronic displays.
+_Avoid_: Modern day, historical year
+
+**Ethnic Community**:
+An invented identity formed through shared language, region, heritage, and material history, with members on both sides of the Partition. Religion is outside the setting's causal model and does not define communities or conflicts.
+_Avoid_: Race, religion, nationality
+
+**Dhevari**:
+An Ethnic Community historically concentrated in the northern plateau and industrial belt, with substantial populations elsewhere in both successor countries.
+_Avoid_: Northern ethnicity, industrial people
+
+**Lunari**:
+An Ethnic Community historically concentrated along the river plains and grain routes, with substantial populations elsewhere in both successor countries.
+_Avoid_: Southern ethnicity, farming people
+
+**Karsin**:
+An Ethnic Community historically concentrated around the Partition border and railway towns, with substantial populations elsewhere in both successor countries.
+_Avoid_: Border ethnicity, displaced people
+
+**Reconstruction Government**:
+North Neeladesh's nominally civilian government under emergency law, sustained by military and industrial backing while promised elections are repeatedly delayed. Its ministries and supporters compete internally rather than acting as one unified interest.
+_Avoid_: Regime, dictatorship
+
+**National Reconstruction Council**:
+The governing civilian coalition at the head of the Reconstruction Government, balancing genuine state recovery against censorship, ration favoritism, and prolonged emergency rule.
+_Avoid_: Ruling party, cabinet
+
+**State Protection Directorate**:
+North Neeladesh's security and military-intelligence Faction, containing both public-safety professionals and hardliners seeking permanent emergency power.
+_Avoid_: Secret police, army faction
+
+**Neeladesh Industrial Coordination League**:
+The Faction representing major factory owners and managers, pursuing industrial recovery, controlled labour costs, and foreign capital even at the risk of oligarchic or foreign control.
+_Avoid_: Industrialists, corporations
+
+**Civic Labour Congress**:
+The Faction joining unions, election campaigners, and civil groups around fair rations, worker protection, and restored elections despite internal ambition, disruption, and infiltration.
+_Avoid_: Democratic opposition, unions
+
+**Whole Neeladesh Front**:
+The clandestine reunification Faction containing negotiators, nationalists, couriers, and violent cells whose competing methods could produce peace, war, or replacement authoritarianism.
+_Avoid_: Rebels, resistance
+
+**Border Passage Network**:
+The decentralized Faction whose routes carry food, medicine, refugees, messages, weapons, and contraband across the Partition border for mixtures of mutual aid, profit, and local autonomy.
+_Avoid_: Smugglers, humanitarian network
+
+**Southern Continuity Authority**:
+South Neeladesh's government Faction, claiming lawful continuity with undivided Neeladesh while using food leverage, intelligence operations, and Partition Hostility against North Neeladesh.
+_Avoid_: South government, enemy state
+
+**River Commerce Assembly**:
+The southern Faction of traders, local officials, and peace advocates seeking restored commerce and family contact without claiming to represent every southerner.
+_Avoid_: Peace faction, trade lobby
+
+**Veyran Maritime Union**:
+The fictional maritime-commercial great-power bloc whose trade, naval protection, and aid can relieve shortages while creating concessions, intelligence access, and dependency.
+_Avoid_: Western bloc, capitalist power
+
+**Ordan Continental Compact**:
+The fictional continental-security great-power bloc whose military, infrastructure, and intelligence support can deter war while creating strategic access and political dependency.
+_Avoid_: Eastern bloc, communist power
+
+**Ministry of Communications**:
+The state institution that operates North Neeladesh's telephone exchanges and issues the rules governing their service. Employment by the Ministry constrains the Exchange Operator without determining the Operator's personal loyalties or choices.
+_Avoid_: Telephone company, communications department
+
+**Provincial Exchange**:
+The Ministry workplace represented by the Cabinet, serving sixteen strategically selected Subscriber Lines in a border-adjacent industrial and railway city. Its Subscribers include ordinary residents, public services, officials, and political actors.
+_Avoid_: National exchange, local switchboard
+
+**Kharad**:
+The border-adjacent industrial and railway city served by the Provincial Exchange, where factories, ministries, public services, displaced households, traders, and covert networks compete for scarce telephone access.
+_Avoid_: The capital, border town
+
 **Exchange Operator**:
 The player character responsible for speaking with subscribers and routing calls through the manual exchange.
 _Avoid_: Player operator, telephone agent
+
+**Operator Household**:
+The Exchange Operator's elderly parent requiring medicine, school-age younger sibling, and cousin displaced from South Neeladesh. Their food, housing, education, health, and safety give the otherwise undefined Operator personal stakes in employment and political choices.
+_Avoid_: Player family, home base
 
 **Subscriber**:
 An NPC whose telephone line can originate or receive calls through the exchange.
@@ -71,6 +167,10 @@ _Avoid_: Campaign, playthrough
 **Scenario**:
 A top-level authored configuration that composes the content, pacing, difficulty, and seed policy for a Run.
 _Avoid_: Mode, preset, master config
+
+**Content Profile**:
+The pre-Run boundary that admits or excludes Subscribers and Story Events according to their authored subject and intensity tags. Disallowed material never enters the selected Run or its improvised conversations.
+_Avoid_: Mid-scene censorship, age slider
 
 **Story Event**:
 A discrete occurrence in the world that records or causes a consequential change and may contribute to an ending.
