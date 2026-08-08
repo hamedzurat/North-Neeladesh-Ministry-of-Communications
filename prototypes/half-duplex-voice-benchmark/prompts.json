@@ -2,101 +2,121 @@
   {
     "id": "quiet-01",
     "condition": "Quiet room",
-    "text": "Please connect me to Kharad subscriber one zero four seven."
+    "text": "Please connect me to Kharad subscriber one zero four seven.",
+    "critical": ["Kharad", "one zero four seven"]
   },
   {
     "id": "quiet-02",
     "condition": "Quiet room",
-    "text": "Put me through to five zero three eight at the Ministry of Communications."
+    "text": "Put me through to five zero three eight at the Ministry of Communications.",
+    "critical": ["five zero three eight", "Ministry of Communications"]
   },
   {
     "id": "quiet-03",
     "condition": "Quiet room",
-    "text": "No, I said zero six one five, not zero six five zero."
+    "text": "No, I said zero six one five, not zero six five zero.",
+    "critical": ["zero six one five", "zero six five zero"]
   },
   {
     "id": "quiet-04",
     "condition": "Quiet room",
-    "text": "Call the State Protection Directorate on seven seven one two."
+    "text": "Call the State Protection Directorate on seven seven one two.",
+    "critical": ["State Protection Directorate", "seven seven one two"]
   },
   {
     "id": "quiet-05",
     "condition": "Quiet room",
-    "text": "Could you connect me with the Civic Labour Congress?"
+    "text": "Could you connect me with the Civic Labour Congress?",
+    "critical": ["Civic Labour Congress"]
   },
   {
     "id": "quiet-06",
     "condition": "Quiet room",
-    "text": "I need the River Commerce Assembly in South Neeladesh."
+    "text": "I need the River Commerce Assembly in South Neeladesh.",
+    "critical": ["River Commerce Assembly", "South Neeladesh"]
   },
   {
     "id": "quiet-07",
     "condition": "Quiet room",
-    "text": "The Dhevari workshop needs medicine before the morning shift."
+    "text": "The Dhevari workshop needs medicine before the morning shift.",
+    "critical": ["Dhevari"]
   },
   {
     "id": "quiet-08",
     "condition": "Quiet room",
-    "text": "This is the Provincial Exchange in Kharad."
+    "text": "This is the Provincial Exchange in Kharad.",
+    "critical": ["Provincial Exchange", "Kharad"]
   },
   {
     "id": "quiet-09",
     "condition": "Quiet room",
-    "text": "Please ring the Veyran Maritime Union office."
+    "text": "Please ring the Veyran Maritime Union office.",
+    "critical": ["Veyran Maritime Union"]
   },
   {
     "id": "quiet-10",
     "condition": "Quiet room",
-    "text": "Tell the Border Passage Network that the shipment is delayed."
+    "text": "Tell the Border Passage Network that the shipment is delayed.",
+    "critical": ["Border Passage Network"]
   },
   {
     "id": "quiet-11",
     "condition": "Quiet room",
-    "text": "I asked for the Lunari clinic, not the Karsin railway depot."
+    "text": "I asked for the Lunari clinic, not the Karsin railway depot.",
+    "critical": ["Lunari", "Karsin"]
   },
   {
     "id": "quiet-12",
     "condition": "Quiet room",
-    "text": "Connect the National Reconstruction Council to nine four four one."
+    "text": "Connect the National Reconstruction Council to nine four four one.",
+    "critical": ["National Reconstruction Council", "nine four four one"]
   },
   {
     "id": "quiet-13",
     "condition": "Quiet room",
-    "text": "The line went quiet; please try the Callee again."
+    "text": "The line went quiet; please try the Callee again.",
+    "critical": ["Callee"]
   },
   {
     "id": "quiet-14",
     "condition": "Quiet room",
-    "text": "Cancel that request and place a Service Call for medical help."
+    "text": "Cancel that request and place a Service Call for medical help.",
+    "critical": ["Service Call"]
   },
   {
     "id": "quiet-15",
     "condition": "Quiet room",
-    "text": "One moment, I am checking the Directory Terminal."
+    "text": "One moment, I am checking the Directory Terminal.",
+    "critical": ["Directory Terminal"]
   },
   {
     "id": "ordinary-01",
     "condition": "Ordinary room noise",
-    "text": "Please reconnect subscriber two three eight nine."
+    "text": "Please reconnect subscriber two three eight nine.",
+    "critical": ["two three eight nine"]
   },
   {
     "id": "ordinary-02",
     "condition": "Ordinary room noise",
-    "text": "The Whole Neeladesh Front caller has hung up."
+    "text": "The Whole Neeladesh Front caller has hung up.",
+    "critical": ["Whole Neeladesh Front"]
   },
   {
     "id": "ordinary-03",
     "condition": "Ordinary room noise",
-    "text": "Was that four one nine six or four nine one six?"
+    "text": "Was that four one nine six or four nine one six?",
+    "critical": ["four one nine six", "four nine one six"]
   },
   {
     "id": "ordinary-04",
     "condition": "Ordinary room noise",
-    "text": "I cannot hear you clearly; repeat the subscriber number."
+    "text": "I cannot hear you clearly; repeat the subscriber number.",
+    "critical": []
   },
   {
     "id": "ordinary-05",
     "condition": "Ordinary room noise",
-    "text": "Connect me now, please; this call is urgent."
+    "text": "Connect me now, please; this call is urgent.",
+    "critical": []
   }
 ]
