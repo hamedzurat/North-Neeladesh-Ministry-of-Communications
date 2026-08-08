@@ -63,6 +63,40 @@ For CUDA, expose the isolated environment's `nvidia/cublas/lib` and
 Distil-Whisper until its observed prompt-induced repetitions and digit
 corruption are understood.
 
+## Measure Piper streaming
+
+```bash
+python3 prototypes/half-duplex-voice-benchmark/benchmark_piper.py \
+  --model /path/to/en_US-lessac-medium.onnx \
+  --config /path/to/en_US-lessac-medium.onnx.json \
+  --results-dir /path/to/private-results \
+  --engine-label piper-en_US-lessac-medium-cpu
+```
+
+The first run's listening samples are written beneath the private results
+directory. They contain generated audio only and are never committed.
+
+## Measure Kokoro streaming
+
+```bash
+python3 prototypes/half-duplex-voice-benchmark/benchmark_kokoro.py \
+  --results-dir /path/to/private-results \
+  --engine-label kokoro-af_heart-cpu \
+  --voice af_heart --device cpu
+```
+
+## Measure Pocket TTS streaming
+
+Accept the Pocket TTS model terms and authenticate through an `HF_HOME` kept
+outside the repository. Then run:
+
+```bash
+python3 prototypes/half-duplex-voice-benchmark/benchmark_pocket_tts.py \
+  --results-dir /path/to/private-results \
+  --engine-label pocket-tts-alba-cpu \
+  --voice alba --torch-threads 2
+```
+
 To use a different port or private data directory:
 
 ```bash
