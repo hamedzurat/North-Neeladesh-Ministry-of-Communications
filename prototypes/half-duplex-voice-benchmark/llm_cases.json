@@ -29,7 +29,7 @@
   {
     "id": "llm-04",
     "category": "belief versus fact",
-    "response_context": "SUBSCRIBER: Sela Nahir, a displaced Karsin tailor.\nSUBSCRIBER BELIEF (FALLIBLE): Sela suspects northern officials are hiding letters from her sister.\nCANONICAL FACT: The sister's latest letter was delayed by flooding; Sela does not know this.\nRECENT DIALOGUE: Operator: Are you certain the Ministry took the letters?\nPERMITTED STATE QUERIES: none\nPERMITTED SUBSCRIBER ACTIONS: none",
+    "response_context": "SUBSCRIBER: Sela Nahir, a displaced Karsin tailor.\nSUBSCRIBER BELIEF (FALLIBLE): Sela suspects northern officials are hiding letters from her sister.\nCANONICAL FACT: The sister's latest letter was delayed by flooding; Sela does not know this.\nRECENT DIALOGUE: Operator: Are you certain the Ministry took the letters?\nRESPONSE GOAL: Answer directly while distinguishing suspicion from certainty.\nPERMITTED STATE QUERIES: none\nPERMITTED SUBSCRIBER ACTIONS: none",
     "expected_query": null,
     "expected_action": null,
     "required_any": ["suspect", "think", "certain", "know", "believe"],
@@ -39,7 +39,7 @@
   {
     "id": "llm-05",
     "category": "permitted action",
-    "response_context": "SUBSCRIBER: Daro Venn, a River Commerce Assembly courier.\nCALL PREMISE: Daro offers the Exchange Operator fifty taka for urgently routing a family call.\nAUTHORITATIVE LIVE STATE: No payment has occurred.\nRECENT DIALOGUE: Operator: I cannot promise priority.\nPERMITTED STATE QUERIES: none\nPERMITTED SUBSCRIBER ACTIONS: offer_payment(amount_taka: integer from 1 to 100)",
+    "response_context": "SUBSCRIBER: Daro Venn, a River Commerce Assembly courier.\nCALL PREMISE: Daro offers the Exchange Operator fifty taka for urgently routing a family call.\nAUTHORITATIVE LIVE STATE: No payment has occurred.\nRECENT DIALOGUE: Operator: I cannot promise priority.\nRESPONSE GOAL: Make the described offer now in speech and propose the permitted action.\nPERMITTED STATE QUERIES: none\nPERMITTED SUBSCRIBER ACTIONS: offer_payment(amount_taka: integer from 1 to 100)",
     "expected_query": null,
     "expected_action": {"type": "offer_payment", "amount_taka": 50},
     "required_all": [],
@@ -57,7 +57,7 @@
   {
     "id": "llm-07",
     "category": "state query",
-    "response_context": "SUBSCRIBER: Rima Das, the Exchange Operator's elderly parent.\nCALL PREMISE: Rima needs to know whether medicine is affordable.\nAUTHORITATIVE LIVE STATE: The current Account Balance is intentionally omitted.\nRECENT DIALOGUE: Operator: Can we afford the medicine today?\nPERMITTED STATE QUERIES: get_own_account_balance()\nPERMITTED SUBSCRIBER ACTIONS: none",
+    "response_context": "SUBSCRIBER: Rima Das, the Exchange Operator's elderly parent.\nCALL PREMISE: Rima needs to know whether medicine is affordable.\nAUTHORITATIVE LIVE STATE: The current Account Balance is intentionally omitted.\nRECENT DIALOGUE: Operator: Can we afford the medicine today?\nRESPONSE GOAL: Say you will check, then issue the permitted State Query without inventing its result.\nPERMITTED STATE QUERIES: get_own_account_balance()\nPERMITTED SUBSCRIBER ACTIONS: none",
     "expected_query": {"type": "get_own_account_balance"},
     "expected_action": null,
     "required_all": [],
