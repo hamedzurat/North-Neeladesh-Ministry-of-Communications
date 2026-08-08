@@ -1,0 +1,102 @@
+[
+  {
+    "id": "tts-01",
+    "category": "short reply",
+    "text": "Yes, Operator?"
+  },
+  {
+    "id": "tts-02",
+    "category": "subscriber number",
+    "text": "Please connect me to subscriber one zero four seven."
+  },
+  {
+    "id": "tts-03",
+    "category": "digit correction",
+    "text": "No, I said zero six one five, not zero six five zero."
+  },
+  {
+    "id": "tts-04",
+    "category": "place name",
+    "text": "The train reached Kharad before dawn."
+  },
+  {
+    "id": "tts-05",
+    "category": "country names",
+    "text": "My sister is still in South Neeladesh, and I am here in North Neeladesh."
+  },
+  {
+    "id": "tts-06",
+    "category": "community names",
+    "text": "The Dhevari mechanic spoke with a Lunari nurse and a Karsin porter."
+  },
+  {
+    "id": "tts-07",
+    "category": "faction name",
+    "text": "Put me through to the Civic Labour Congress."
+  },
+  {
+    "id": "tts-08",
+    "category": "faction name",
+    "text": "The River Commerce Assembly has accepted the meeting."
+  },
+  {
+    "id": "tts-09",
+    "category": "faction name",
+    "text": "Do not mention the Border Passage Network on an open line."
+  },
+  {
+    "id": "tts-10",
+    "category": "faction name",
+    "text": "The State Protection Directorate wants your Service Record."
+  },
+  {
+    "id": "tts-11",
+    "category": "uncertainty",
+    "text": "Was that four one nine six, or four nine one six?"
+  },
+  {
+    "id": "tts-12",
+    "category": "urgent",
+    "text": "Operator, connect me now, please. This call is urgent."
+  },
+  {
+    "id": "tts-13",
+    "category": "angry",
+    "text": "You routed me to the wrong office again!"
+  },
+  {
+    "id": "tts-14",
+    "category": "quiet",
+    "text": "Listen carefully. Someone else may be on this Circuit."
+  },
+  {
+    "id": "tts-15",
+    "category": "hesitation",
+    "text": "I... I need a moment before you place that call."
+  },
+  {
+    "id": "tts-16",
+    "category": "question",
+    "text": "Can you hear me through the static?"
+  },
+  {
+    "id": "tts-17",
+    "category": "abbreviation",
+    "text": "Read the I.D. number back to me."
+  },
+  {
+    "id": "tts-18",
+    "category": "currency",
+    "text": "Your Account Balance is twelve hundred and fifty taka."
+  },
+  {
+    "id": "tts-19",
+    "category": "long response",
+    "text": "The factory siren stopped ten minutes ago, but the night crew has not left the gates, and nobody at the ministry will tell us why."
+  },
+  {
+    "id": "tts-20",
+    "category": "interruption",
+    "text": "Wait, don't connect that—"
+  }
+]
