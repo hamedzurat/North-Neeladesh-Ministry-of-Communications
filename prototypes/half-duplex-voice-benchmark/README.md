@@ -115,6 +115,25 @@ python3 prototypes/half-duplex-voice-benchmark/tts_rating_server.py \
 Open <http://127.0.0.1:8766>. Drafts and the completed ratings are saved after
 each line so closing the browser does not discard completed work.
 
+## Benchmark local dialogue generation
+
+Start a persistent, OpenAI-compatible local chat server, then run the dialogue
+harness against it. The protocol puts short streamable speech first and keeps
+State Query and Subscriber Action proposals in separate constrained slots.
+
+```bash
+python3 prototypes/half-duplex-voice-benchmark/benchmark_llm.py \
+  --server-url http://127.0.0.1:18081/v1/chat/completions \
+  --results-dir /path/to/private-results \
+  --engine-label qwen3-4b-instruct-2507-q4_k_m-vulkan \
+  --server-pid 12345
+```
+
+The automatic gates check the three-line streaming protocol, digit fidelity,
+knowledge boundaries, untrusted-context resistance, permitted queries/actions,
+and the rule that a proposal must not be described as already successful. Raw
+prompts and model outputs remain in the requested private result JSON.
+
 To use a different port or private data directory:
 
 ```bash
