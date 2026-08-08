@@ -184,6 +184,26 @@ _Avoid_: Campaign, playthrough
 A top-level authored configuration that composes the content, pacing, difficulty, and seed policy for a Run.
 _Avoid_: Mode, preset, master config
 
+**Run Manifest**:
+The seeded selection created from a Scenario at the start of a Run, identifying the small subset of authored Story Threads and their participating Subscribers that exist in that Run. Content belonging only to unselected Story Threads is absent from the Run's world state.
+_Avoid_: Generated campaign, predetermined plot, seed output
+
+**Run Outcome State**:
+The small authoritative set of concrete conditions shared across Story Threads and inspected by common Endings, including finances, employment, housing, Operator Household members, and elapsed Shifts.
+_Avoid_: Attribute bag, ending score, player statistics
+
+**Story Thread**:
+An authored multi-Shift chain involving a small group of Subscribers whose branches follow authoritative outcomes and always affect state relevant to common Endings. It continues through heard, unheard, missed, or offscreen outcomes and may also make its own Ending available.
+_Avoid_: Side quest, random event chain, fixed subplot
+
+**Story Beat**:
+An authored step within a Story Thread, expressed as a Call Premise or non-call Story Event and resolved through one of its defined outcomes.
+_Avoid_: Quest step, generated plot, dialogue scene
+
+**Ending**:
+An authored terminal conclusion reached through an explicit decision or authoritative Run state, after which the Run cannot advance. An Ending may be universally available or exist only through a Story Thread selected in the Run Manifest.
+_Avoid_: Ending family, predetermined ending, score tier, ending roll
+
 **Content Profile**:
 The pre-Run boundary that admits or excludes Subscribers and Story Events according to their authored subject and intensity tags. Disallowed material never enters the selected Run or its improvised conversations.
 _Avoid_: Mid-scene censorship, age slider
