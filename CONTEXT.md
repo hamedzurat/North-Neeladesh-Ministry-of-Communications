@@ -173,7 +173,7 @@ The pre-Run boundary that admits or excludes Subscribers and Story Events accord
 _Avoid_: Mid-scene censorship, age slider
 
 **Story Event**:
-A discrete occurrence in the world that records or causes a consequential change and may contribute to an ending.
+A discrete occurrence in the world that records or causes a consequential change and may contribute to an ending. It may result from uncertainty or deception, but must follow a plausible causal chain that can become understandable to the player.
 _Avoid_: Score change, plot point, LLM action
 
 **Faction**:
@@ -217,7 +217,7 @@ A Call Attempt connected to a Callee other than the one requested by the Caller.
 _Avoid_: Wrong route, invalid connection
 
 **Service Error**:
-A recorded breach of the exchange rules, such as a Misroute or an unjustified premature disconnection. A physically similar action taken for a permitted story reason is a consequential choice rather than a Service Error.
+A recorded breach of a disclosed, player-verifiable exchange rule, such as a Misroute or an unjustified premature disconnection. A system failure or unknowable fact cannot create a Service Error; a physically similar action taken for a permitted story reason is a consequential choice instead.
 _Avoid_: Player mistake, invalid move
 
 **Shift Earnings**:
@@ -243,3 +243,11 @@ _Avoid_: Emergency button, service shortcut
 **Operator Session**:
 The single audio session through which the Exchange Operator speaks with a Subscriber or direct service using push-to-talk. It is mutually exclusive with listening through a Tap Bridge.
 _Avoid_: Voice channel, player chat
+
+**Diegetic Interference**:
+An authored static-noise effect on an affected Call Attempt that the Exchange Operator may reduce with the tuning controls when needed for intelligibility. Tuning is not a mandatory gate when the speech is already understandable; speech-recognition mistakes, malformed improvised dialogue, and speech-synthesis defects are system failures rather than Diegetic Interference.
+_Avoid_: AI error, random transcription failure, accent challenge
+
+**Improvised Dialogue**:
+Natural speech generated from a Subscriber's authored personality, quirks, goals, knowledge, available actions, and current situation. Its wording is not structured and cannot by itself change authoritative world state; consequential effects are proposed separately and validated before taking effect.
+_Avoid_: Dialogue tree, scripted line, world-state command
