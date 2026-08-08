@@ -86,7 +86,11 @@ def stream_llm(
                     continue
                 event = json.loads(line.removeprefix("data: "))
                 choices = event.get("choices") or []
-                content = choices[0].get("delta", {}).get("content", "") if choices else ""
+                content = (
+                    choices[0].get("delta", {}).get("content") or ""
+                    if choices
+                    else ""
+                )
                 chunks.append(content)
                 accumulated = "".join(chunks)
                 match = re.search(r"\ASPEECH:\s*([^\n]+)\nQUERY:", accumulated)
