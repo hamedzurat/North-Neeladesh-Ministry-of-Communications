@@ -156,6 +156,18 @@ _Avoid_: NPC display, thumbwheel input, lookup button
 The physical arcade installation through which the Exchange Operator controls the exchange.
 _Avoid_: Hardware mode, controller
 
+**Cabinet Frontend**:
+The ESP32-based I/O boundary that owns responsive device mechanics, reports physical state to the authoritative laptop core, and presents the core's output instructions without interpreting or advancing the game.
+_Avoid_: Embedded game controller, secondary game core
+
+**Cabinet Snapshot**:
+A complete observation of the Cabinet Frontend's current controls, Cord Topology, and device health at one sample point. It describes hardware state without assigning gameplay meaning.
+_Avoid_: Input event batch, game-state snapshot
+
+**Cord Topology**:
+The physical pairing of Cabinet ports inferred from scanning the ports. It records connected endpoint pairs without assigning identities to individual Cords or deciding whether a valid Circuit exists.
+_Avoid_: Cord identity, interpreted circuit
+
 **Shift**:
 One configurable workday at the telephone exchange, during which the Exchange Operator handles calls under the rules currently in force.
 _Avoid_: Round, level, day
