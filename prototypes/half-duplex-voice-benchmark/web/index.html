@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Voice benchmark recorder — prototype</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, sans-serif;
+        background: #111827;
+        color: #f9fafb;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+      }
+      main {
+        width: min(46rem, calc(100% - 2rem));
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 1rem;
+        padding: 1.5rem;
+        box-sizing: border-box;
+      }
+      .prototype {
+        color: #fbbf24;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+      }
+      .muted { color: #cbd5e1; }
+      .condition {
+        display: inline-block;
+        padding: 0.25rem 0.6rem;
+        border-radius: 999px;
+        background: #374151;
+      }
+      .prompt {
+        min-height: 7rem;
+        display: grid;
+        place-items: center;
+        margin: 1rem 0;
+        padding: 1.25rem;
+        border-radius: 0.75rem;
+        background: #111827;
+        font-size: clamp(1.35rem, 4vw, 2rem);
+        line-height: 1.35;
+        text-align: center;
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-top: 1rem;
+      }
+      button {
+        border: 0;
+        border-radius: 0.65rem;
+        padding: 0.8rem 1rem;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        background: #e5e7eb;
+        color: #111827;
+      }
+      button.primary { background: #22c55e; }
+      button.danger { background: #ef4444; color: white; }
+      button:disabled { cursor: not-allowed; opacity: 0.45; }
+      progress { width: 100%; height: 1rem; }
+      audio { width: 100%; margin-top: 1rem; }
+      #status[data-kind="error"] { color: #fca5a5; }
+      #status[data-kind="success"] { color: #86efac; }
+      kbd { background: #374151; padding: 0.1rem 0.35rem; border-radius: 0.25rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="prototype">THROWAWAY PROTOTYPE</div>
+      <h1>STT screening corpus</h1>
+      <p class="muted">
+        Read each line naturally. Do not imitate a telephone voice. Keep roughly
+        the same distance from the laptop microphone throughout.
+      </p>
+      <progress id="progress" max="20" value="0"></progress>
+      <p id="counter" class="muted">Loading prompts…</p>
+      <span id="condition" class="condition"></span>
+      <div id="prompt" class="prompt"></div>
+      <div class="controls">
+        <button id="record" class="primary">Start recording</button>
+        <button id="stop" class="danger" disabled>Stop</button>
+        <button id="save" disabled>Save &amp; next</button>
+        <button id="skip">Next unfinished</button>
+      </div>
+      <audio id="playback" controls hidden></audio>
+      <p id="status" class="muted">Allow microphone access when prompted.</p>
+      <p class="muted">
+        Keyboard: <kbd>Space</kbd> starts/stops; <kbd>Enter</kbd> saves.
+      </p>
+    </main>
+    <script>
+      const ui = Object.fromEntries(
+        ["progress", "counter", "condition", "prompt", "record", "stop", "save", "skip", "playback", "status"]
+          .map((id) => [id, document.getElementById(id)]),
+      );
+      let prompts = [];
+      let completed = new Set();
+      let index = 0;
+      let recorder = null;
+      let chunks = [];
+      let recordingBlob = null;
+      let stream = null;
+
+      function setStatus(message, kind = "") {
+        ui.status.textContent = message;
+        ui.status.dataset.kind = kind;
+      }
+
+      function showPrompt() {
+        const prompt = prompts[index];
+        ui.progress.max = prompts.length;
+        ui.progress.value = completed.size;
+        ui.counter.textContent = `Prompt ${index + 1} of ${prompts.length} · ${completed.size} saved`;
+        ui.condition.textContent = prompt.condition;
+        ui.prompt.textContent = prompt.text;
+        ui.save.disabled = true;
+        recordingBlob = null;
+        ui.playback.hidden = true;
+        ui.playback.removeAttribute("src");
+        setStatus(completed.has(prompt.id) ? "Already saved. You may record another take." : "Ready.");
+      }
+
+      async function startRecording() {
+        if (!stream) {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+          });
+        }
+        const preferredTypes = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"];
+        const mimeType = preferredTypes.find((type) => MediaRecorder.isTypeSupported(type));
+        recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        chunks = [];
+        recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
+        recorder.onstop = () => {
+          recordingBlob = new Blob(chunks, { type: recorder.mimeType });
+          ui.playback.src = URL.createObjectURL(recordingBlob);
+          ui.playback.hidden = false;
+          ui.save.disabled = false;
+          setStatus("Listen if you want, then save this take.");
+        };
+        recorder.start();
+        ui.record.disabled = true;
+        ui.stop.disabled = false;
+        ui.save.disabled = true;
+        setStatus("Recording… read the displayed line, then stop.");
+      }
+
+      function stopRecording() {
+        if (recorder?.state === "recording") recorder.stop();
+        ui.record.disabled = false;
+        ui.stop.disabled = true;
+      }
+
+      async function saveRecording() {
+        if (!recordingBlob) return;
+        ui.save.disabled = true;
+        setStatus("Saving and converting to 16 kHz WAV…");
+        const prompt = prompts[index];
+        const response = await fetch(`/api/recordings/${encodeURIComponent(prompt.id)}`, {
+          method: "POST",
+          headers: { "Content-Type": recordingBlob.type || "application/octet-stream" },
+          body: recordingBlob,
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          ui.save.disabled = false;
+          setStatus(result.detail || result.error || "Save failed.", "error");
+          return;
+        }
+        completed.add(prompt.id);
+        setStatus("Saved.", "success");
+        nextUnfinished();
+      }
+
+      function nextUnfinished() {
+        const next = prompts.findIndex((prompt, offset) =>
+          offset > index && !completed.has(prompt.id),
+        );
+        const wrapped = prompts.findIndex((prompt) => !completed.has(prompt.id));
+        if (next >= 0) index = next;
+        else if (wrapped >= 0) index = wrapped;
+        else {
+          ui.progress.value = prompts.length;
+          ui.counter.textContent = `All ${prompts.length} prompts saved`;
+          ui.condition.textContent = "Complete";
+          ui.prompt.textContent = "Thank you — you can close this tab.";
+          ui.record.disabled = true;
+          ui.stop.disabled = true;
+          ui.save.disabled = true;
+          ui.skip.disabled = true;
+          ui.playback.hidden = true;
+          setStatus("The recording corpus is ready for transcription benchmarks.", "success");
+          return;
+        }
+        showPrompt();
+      }
+
+      ui.record.addEventListener("click", () => startRecording().catch((error) => setStatus(error.message, "error")));
+      ui.stop.addEventListener("click", stopRecording);
+      ui.save.addEventListener("click", saveRecording);
+      ui.skip.addEventListener("click", nextUnfinished);
+      document.addEventListener("keydown", (event) => {
+        if (event.code === "Space") {
+          event.preventDefault();
+          recorder?.state === "recording" ? stopRecording() : startRecording().catch((error) => setStatus(error.message, "error"));
+        } else if (event.code === "Enter" && !ui.save.disabled) {
+          saveRecording();
+        }
+      });
+
+      Promise.all([
+        fetch("/api/prompts").then((response) => response.json()),
+        fetch("/api/status").then((response) => response.json()),
+      ]).then(([promptResult, statusResult]) => {
+        prompts = promptResult.prompts;
+        completed = new Set(statusResult.completed);
+        const unfinished = prompts.findIndex((prompt) => !completed.has(prompt.id));
+        index = unfinished >= 0 ? unfinished : 0;
+        showPrompt();
+        if (completed.size === prompts.length) nextUnfinished();
+      }).catch((error) => setStatus(error.message, "error"));
+    </script>
+  </body>
+</html>
