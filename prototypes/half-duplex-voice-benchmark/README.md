@@ -23,4 +23,3 @@ To use a different port or private data directory:
 python3 prototypes/half-duplex-voice-benchmark/server.py \
   --port 9000 --data-dir /path/to/private-benchmark-data
 ```
-
