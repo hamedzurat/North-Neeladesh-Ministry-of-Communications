@@ -313,8 +313,12 @@ An outbound Call Attempt that the Exchange Operator places directly to police, e
 _Avoid_: Emergency button, service shortcut
 
 **Operator Session**:
-The single audio session through which the Exchange Operator speaks with a Subscriber or direct service using push-to-talk. It is mutually exclusive with listening through a Tap Bridge.
+The single spoken interaction through which the Exchange Operator converses with a Subscriber or direct service. Its dependable form is push-to-talk half duplex, with optional automatic Operator turns only while Subscriber speech is silent; it is mutually exclusive with listening through a Tap Bridge.
 _Avoid_: Voice channel, player chat
+
+**Speech Interruption**:
+The Exchange Operator's act of beginning an utterance while Subscriber speech is playing, stopping that speech rather than pausing it. Speech that did not play is not treated as part of the conversation or resumed automatically.
+_Avoid_: Barge-in, paused reply, hidden remainder
 
 **Diegetic Interference**:
 An authored static-noise effect on an affected Call Attempt that the Exchange Operator may reduce with the tuning controls when needed for intelligibility. Tuning is not a mandatory gate when the speech is already understandable; speech-recognition mistakes, malformed improvised dialogue, and speech-synthesis defects are system failures rather than Diegetic Interference.
