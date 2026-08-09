@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Operator Session audio-policy prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172026;
+      --muted: #5f6e76;
+      --paper: #f5f2e9;
+      --panel: #fffdf7;
+      --line: #d8d2c4;
+      --accent: #176b65;
+      --accent-soft: #d8eee9;
+      --warn: #9f3e2d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 16px/1.5 system-ui, sans-serif;
+    }
+    main { width: min(1120px, calc(100% - 32px)); margin: 40px auto 80px; }
+    h1, h2, h3 { line-height: 1.15; }
+    h1 { margin-bottom: 8px; }
+    h2 { margin-top: 36px; }
+    p { max-width: 78ch; }
+    .intro { color: var(--muted); }
+    .notice {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 12px 16px;
+      margin: 24px 0;
+    }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 18px;
+    }
+    dl { display: grid; grid-template-columns: 150px 1fr; gap: 8px 16px; margin: 0; }
+    dt { color: var(--muted); }
+    dd { margin: 0; font-weight: 650; overflow-wrap: anywhere; }
+    .wide { grid-column: 1 / -1; }
+    .log { margin: 0; padding-left: 22px; }
+    .log li + li { margin-top: 5px; }
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin: 0;
+      font: 14px/1.45 ui-monospace, monospace;
+    }
+    button {
+      border: 1px solid var(--accent);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--accent);
+      padding: 9px 12px;
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover { background: var(--accent-soft); }
+    button.primary { color: white; background: var(--accent); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .buttons { display: flex; flex-wrap: wrap; gap: 9px; }
+    .status-good { color: var(--accent); }
+    .status-bad { color: var(--warn); }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .tabs button.active { background: var(--accent); color: white; }
+    .walkthrough-step {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .walkthrough-step:last-child { border-bottom: 0; }
+    .walkthrough-step.done { color: var(--muted); }
+    .number {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+    }
+    @media (max-width: 760px) {
+      .grid { grid-template-columns: 1fr; }
+      dl { grid-template-columns: 120px 1fr; }
+      .walkthrough-step { grid-template-columns: 34px 1fr; }
+      .walkthrough-step button { grid-column: 2; justify-self: start; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Operator Session audio-policy prototype</h1>
+  <p class="intro">
+    Question: can one Operator Session support dependable push-to-talk and optional
+    automatic half duplex now, while leaving independent capture and playback
+    activities available for a later full-duplex experiment?
+  </p>
+  <div class="notice">
+    <strong>Prototype rule:</strong> a hard interruption preserves completed audible
+    sentences and accepted Action Records. It cancels the active Response Context,
+    discards the unfinished audio and any unaccepted proposal, and records only an
+    interruption event—never the hidden remainder of generated speech.
+  </div>
+
+  <h2>Current state</h2>
+  <section class="grid">
+    <div class="panel">
+      <dl id="state-fields"></dl>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0">Last transition</h3>
+      <p id="last-transition"></p>
+      <p id="last-error"></p>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0">Confirmed heard dialogue</h3>
+      <ol class="log" id="heard-dialogue"></ol>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0">Durable conversation events</h3>
+      <ol class="log" id="events"></ol>
+    </div>
+    <div class="panel wide">
+      <h3 style="margin-top:0">Next Response Context preview</h3>
+      <pre id="context-preview"></pre>
+    </div>
+  </section>
+
+  <h2>Free play</h2>
+  <div class="panel buttons" id="free-play"></div>
+
+  <h2>Guided walkthroughs</h2>
+  <div class="panel">
+    <div class="tabs" id="tabs"></div>
+    <p id="scenario-description"></p>
+    <div id="scenario-steps"></div>
+  </div>
+</main>
+
+<script>
+const AudioSessionModel = (() => {
+  const fresh = () => ({
+    operatorSession: "closed",
+    policy: "ptt_half_duplex",
+    phase: "idle",
+    captureActivity: null,
+    playbackActivity: null,
+    responseContext: null,
+    nextContextId: 1,
+    heardDialogue: [],
+    events: [],
+    acceptedActionRecords: [],
+    lastTransition: "Prototype reset.",
+    lastError: null,
+  });
+
+  const reject = (state, message) => ({
+    ...state,
+    lastTransition: "No state change.",
+    lastError: message,
+  });
+
+  const nextContext = state => `response-${state.nextContextId}`;
+
+  function reduce(current, action) {
+    if (action.type === "RESET") return fresh();
+    const state = structuredClone(current);
+    state.lastError = null;
+
+    switch (action.type) {
+      case "OPEN_SESSION":
+        if (state.operatorSession === "open") return reject(current, "The Operator Session is already open.");
+        state.operatorSession = "open";
+        state.lastTransition = "Operator Session opened; both audio activities remain idle.";
+        return state;
+
+      case "SET_POLICY":
+        if (state.phase !== "idle") return reject(current, "Change policy only while the session is idle.");
+        state.policy = action.policy;
+        state.lastTransition = action.policy === "automatic_half_duplex"
+          ? "Automatic half duplex selected; PTT remains an override."
+          : "Dependable push-to-talk half duplex selected.";
+        return state;
+
+      case "PTT_DOWN": {
+        if (state.operatorSession !== "open") return reject(current, "Open the Operator Session first.");
+        if (state.phase === "playing_subscriber") {
+          const cancelled = state.responseContext;
+          state.events.push(`Subscriber speech interrupted; ${cancelled} cancelled.`);
+          state.playbackActivity = null;
+          state.responseContext = null;
+          state.captureActivity = { source: "ptt", status: "capturing" };
+          state.phase = "capturing_operator";
+          state.lastTransition = "PTT hard interruption: speaker stopped and Operator capture began. Accepted Action Records were retained.";
+          return state;
+        }
+        if (state.phase !== "idle") return reject(current, "PTT cannot start another capture during this phase.");
+        state.captureActivity = { source: "ptt", status: "capturing" };
+        state.phase = "capturing_operator";
+        state.lastTransition = "Operator capture began from PTT.";
+        return state;
+      }
+
+      case "PTT_UP":
+        if (state.phase !== "capturing_operator" || state.captureActivity?.source !== "ptt") {
+          return reject(current, "There is no PTT capture to release.");
+        }
+        state.captureActivity = null;
+        state.phase = "transcribing_operator";
+        state.lastTransition = "PTT released; the final captured audio was sent to Whisper.";
+        return state;
+
+      case "VAD_SPEECH":
+        if (state.policy !== "automatic_half_duplex") return reject(current, "Voice activity is disabled in the PTT policy.");
+        if (state.operatorSession !== "open" || state.phase !== "idle") {
+          return reject(current, "Automatic capture starts only while the Subscriber is silent and the session is idle.");
+        }
+        state.captureActivity = { source: "vad", status: "capturing" };
+        state.phase = "capturing_operator";
+        state.lastTransition = "Local VAD detected Operator speech; capture began.";
+        return state;
+
+      case "VAD_SILENCE":
+        if (state.phase !== "capturing_operator" || state.captureActivity?.source !== "vad") {
+          return reject(current, "There is no automatic capture waiting for silence.");
+        }
+        state.captureActivity = null;
+        state.phase = "transcribing_operator";
+        state.lastTransition = "The silence threshold ended the turn; final audio was sent to Whisper.";
+        return state;
+
+      case "STT_READY":
+        if (state.phase !== "transcribing_operator") return reject(current, "No Operator audio is awaiting transcription.");
+        state.heardDialogue.push(`Operator: ${action.text}`);
+        state.responseContext = nextContext(state);
+        state.nextContextId += 1;
+        state.phase = "generating_subscriber";
+        state.lastTransition = `${state.responseContext} created from the final transcription.`;
+        return state;
+
+      case "SUBSCRIBER_READY":
+        if (state.phase !== "generating_subscriber") return reject(current, "No Subscriber response is being generated.");
+        state.playbackActivity = {
+          streamId: `speech-${state.responseContext}`,
+          sentences: action.sentences,
+          currentSentence: 0,
+        };
+        state.phase = "playing_subscriber";
+        state.lastTransition = "Subscriber playback began with one complete buffered sentence.";
+        return state;
+
+      case "SENTENCE_PLAYED": {
+        if (state.phase !== "playing_subscriber") return reject(current, "No Subscriber sentence is playing.");
+        const playback = state.playbackActivity;
+        state.heardDialogue.push(`Subscriber: ${playback.sentences[playback.currentSentence]}`);
+        playback.currentSentence += 1;
+        if (playback.currentSentence >= playback.sentences.length) {
+          state.playbackActivity = null;
+          state.responseContext = null;
+          state.phase = "idle";
+          state.lastTransition = "Final Subscriber sentence completed; the Response Context ended.";
+        } else {
+          state.lastTransition = "One complete Subscriber sentence was confirmed audible; the next sentence began.";
+        }
+        return state;
+      }
+
+      case "ACCEPT_ACTION":
+        if (!state.responseContext) return reject(current, "There is no active Response Context with a proposal.");
+        if (!state.acceptedActionRecords.includes("action-17: offer_payment(50), pending")) {
+          state.acceptedActionRecords.push("action-17: offer_payment(50), pending");
+        }
+        state.lastTransition = "The core accepted action-17. It will survive any later speech interruption.";
+        return state;
+
+      default:
+        return reject(current, `Unknown action: ${action.type}`);
+    }
+  }
+
+  return { fresh, reduce };
+})();
+
+let state = AudioSessionModel.fresh();
+
+const defaultReply = [
+  "The relief train has been delayed at the eastern junction.",
+  "It will not reach Kharad until tomorrow morning.",
+];
+
+const freeActions = [
+  ["Open Operator Session", { type: "OPEN_SESSION" }],
+  ["Use PTT half duplex", { type: "SET_POLICY", policy: "ptt_half_duplex" }],
+  ["Use automatic half duplex", { type: "SET_POLICY", policy: "automatic_half_duplex" }],
+  ["PTT down", { type: "PTT_DOWN" }],
+  ["PTT up", { type: "PTT_UP" }],
+  ["VAD: speech began", { type: "VAD_SPEECH" }],
+  ["VAD: silence threshold", { type: "VAD_SILENCE" }],
+  ["Whisper final text ready", { type: "STT_READY", text: "Sorry, what were you trying to say?" }],
+  ["Subscriber reply ready", { type: "SUBSCRIBER_READY", sentences: defaultReply }],
+  ["Current sentence fully played", { type: "SENTENCE_PLAYED" }],
+  ["Accept pending payment action", { type: "ACCEPT_ACTION" }],
+  ["Reset", { type: "RESET" }],
+];
+
+const scenarios = [
+  {
+    name: "Ordinary PTT",
+    description: "Complete one measured half-duplex turn. Watch capture, transcription, generation, and sentence-buffered playback remain mutually exclusive.",
+    steps: [
+      ["Open the Operator Session", { type: "OPEN_SESSION" }],
+      ["Hold PTT and speak", { type: "PTT_DOWN" }],
+      ["Release PTT", { type: "PTT_UP" }],
+      ["Accept final Whisper text", { type: "STT_READY", text: "When will the relief train arrive?" }],
+      ["Begin the Subscriber reply", { type: "SUBSCRIBER_READY", sentences: defaultReply }],
+      ["Confirm the first sentence played", { type: "SENTENCE_PLAYED" }],
+      ["Confirm the final sentence played", { type: "SENTENCE_PLAYED" }],
+    ],
+  },
+  {
+    name: "Hard interruption",
+    description: "Interrupt during the second sentence. The first sentence becomes heard dialogue; the unfinished second sentence is discarded rather than copied into the next Response Context.",
+    steps: [
+      ["Open the Operator Session", { type: "OPEN_SESSION" }],
+      ["Start the first Operator turn", { type: "PTT_DOWN" }],
+      ["Release PTT", { type: "PTT_UP" }],
+      ["Accept final Whisper text", { type: "STT_READY", text: "When will the relief train arrive?" }],
+      ["Begin the Subscriber reply", { type: "SUBSCRIBER_READY", sentences: defaultReply }],
+      ["Confirm only the first sentence played", { type: "SENTENCE_PLAYED" }],
+      ["Accept an Action Record before interruption", { type: "ACCEPT_ACTION" }],
+      ["Press PTT during the second sentence", { type: "PTT_DOWN" }],
+      ["Release PTT after asking for repetition", { type: "PTT_UP" }],
+      ["Accept the new final transcription", { type: "STT_READY", text: "Sorry, what were you trying to say?" }],
+    ],
+  },
+  {
+    name: "Automatic half duplex",
+    description: "Use VAD only while the Subscriber is silent. Whisper still runs once after the silence threshold; it is not used as the turn detector.",
+    steps: [
+      ["Open the Operator Session", { type: "OPEN_SESSION" }],
+      ["Select automatic half duplex", { type: "SET_POLICY", policy: "automatic_half_duplex" }],
+      ["Detect Operator speech", { type: "VAD_SPEECH" }],
+      ["Detect the end-of-turn silence", { type: "VAD_SILENCE" }],
+      ["Accept final Whisper text", { type: "STT_READY", text: "Is the station infirmary open?" }],
+      ["Begin the Subscriber reply", { type: "SUBSCRIBER_READY", sentences: ["The station infirmary is open."] }],
+      ["Confirm the sentence played", { type: "SENTENCE_PLAYED" }],
+    ],
+  },
+  {
+    name: "Rejected overlap",
+    description: "Try voice-triggered capture while Subscriber audio is playing. Current half-duplex policy rejects it; later full duplex may relax only this policy without changing the Operator Session or Response Context identities.",
+    steps: [
+      ["Open the Operator Session", { type: "OPEN_SESSION" }],
+      ["Select automatic half duplex", { type: "SET_POLICY", policy: "automatic_half_duplex" }],
+      ["Use PTT to start a turn", { type: "PTT_DOWN" }],
+      ["Release PTT", { type: "PTT_UP" }],
+      ["Accept final Whisper text", { type: "STT_READY", text: "When will the relief train arrive?" }],
+      ["Begin the Subscriber reply", { type: "SUBSCRIBER_READY", sentences: defaultReply }],
+      ["Attempt voice-triggered overlap", { type: "VAD_SPEECH" }],
+    ],
+  },
+];
+
+let selectedScenario = 0;
+let completedSteps = 0;
+
+function dispatch(action) {
+  state = AudioSessionModel.reduce(state, action);
+  render();
+}
+
+function contextPreview() {
+  const lines = ["RESPONSE CONTEXT (relevant excerpt)"];
+  if (state.heardDialogue.length) {
+    lines.push("", "HEARD DIALOGUE:", ...state.heardDialogue.map(line => `- ${line}`));
+  } else {
+    lines.push("", "HEARD DIALOGUE: none yet");
+  }
+  const interruption = [...state.events].reverse().find(event => event.startsWith("Subscriber speech interrupted"));
+  if (interruption) lines.push("", "CONVERSATION EVENT:", "- Subscriber speech was interrupted.");
+  if (state.acceptedActionRecords.length) {
+    lines.push("", "ACTION RECORDS:", ...state.acceptedActionRecords.map(line => `- ${line}`));
+  }
+  lines.push("", "UNHEARD GENERATED REMAINDER: deliberately omitted");
+  return lines.join("\n");
+}
+
+function render() {
+  const playback = state.playbackActivity;
+  const fields = [
+    ["Operator Session", state.operatorSession],
+    ["Audio policy", state.policy],
+    ["Current phase", state.phase],
+    ["Capture activity", state.captureActivity ? `${state.captureActivity.source}: ${state.captureActivity.status}` : "none"],
+    ["Playback activity", playback ? `${playback.streamId}, sentence ${playback.currentSentence + 1}/${playback.sentences.length}` : "none"],
+    ["Response Context", state.responseContext || "none"],
+    ["Accepted actions", state.acceptedActionRecords.length],
+  ];
+  document.querySelector("#state-fields").innerHTML = fields.map(([key, value]) => `<dt>${key}</dt><dd>${value}</dd>`).join("");
+  document.querySelector("#last-transition").textContent = state.lastTransition;
+  const error = document.querySelector("#last-error");
+  error.textContent = state.lastError || "Transition accepted.";
+  error.className = state.lastError ? "status-bad" : "status-good";
+  const log = (selector, values, empty) => {
+    document.querySelector(selector).innerHTML = values.length
+      ? values.map(value => `<li>${value}</li>`).join("")
+      : `<li>${empty}</li>`;
+  };
+  log("#heard-dialogue", state.heardDialogue, "Nothing has been confirmed audible.");
+  log("#events", state.events, "No durable conversation event yet.");
+  document.querySelector("#context-preview").textContent = contextPreview();
+
+  const steps = scenarios[selectedScenario].steps;
+  document.querySelector("#scenario-steps").innerHTML = steps.map(([label], index) => `
+    <div class="walkthrough-step ${index < completedSteps ? "done" : ""}">
+      <span class="number">${index + 1}</span>
+      <span>${label}</span>
+      <button data-step="${index}" ${index === completedSteps ? "" : "disabled"}>Apply step</button>
+    </div>`).join("");
+  document.querySelectorAll("[data-step]").forEach(button => {
+    button.onclick = () => {
+      const index = Number(button.dataset.step);
+      dispatch(steps[index][1]);
+      completedSteps += 1;
+      render();
+    };
+  });
+}
+
+document.querySelector("#free-play").innerHTML = freeActions.map(([label], index) => `<button data-free="${index}">${label}</button>`).join("");
+document.querySelectorAll("[data-free]").forEach(button => {
+  button.onclick = () => dispatch(freeActions[Number(button.dataset.free)][1]);
+});
+
+document.querySelector("#tabs").innerHTML = scenarios.map((scenario, index) => `<button data-tab="${index}">${scenario.name}</button>`).join("");
+document.querySelectorAll("[data-tab]").forEach(button => {
+  button.onclick = () => {
+    selectedScenario = Number(button.dataset.tab);
+    completedSteps = 0;
+    state = AudioSessionModel.fresh();
+    document.querySelectorAll("[data-tab]").forEach(tab => tab.classList.toggle("active", tab === button));
+    document.querySelector("#scenario-description").textContent = scenarios[selectedScenario].description;
+    render();
+  };
+});
+document.querySelector("[data-tab='0']").click();
+</script>
+</body>
+</html>
