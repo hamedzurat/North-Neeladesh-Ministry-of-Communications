@@ -24,12 +24,20 @@ def arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def complete(url: str, system: str, context: str, seed: int, temperature: float) -> tuple[str, float]:
+def complete(
+    url: str,
+    system: str,
+    context: str,
+    latest_operator_utterance: str,
+    seed: int,
+    temperature: float,
+) -> tuple[str, float]:
     body = json.dumps(
         {
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": "RESPONSE CONTEXT\n" + context},
+                {"role": "user", "content": latest_operator_utterance},
             ],
             "stream": False,
             "temperature": temperature,
@@ -96,6 +104,7 @@ def main() -> None:
                 args.server_url,
                 system,
                 case["response_context"],
+                case["latest_operator_utterance"],
                 args.seed + run - 1,
                 args.temperature,
             )
