@@ -164,6 +164,10 @@ _Avoid_: Hardware mode, controller
 The ESP32-based I/O boundary that owns responsive device mechanics, reports physical state to the authoritative laptop core, and presents the core's output instructions without interpreting or advancing the game.
 _Avoid_: Embedded game controller, secondary game core
 
+**Control Console**:
+The local terminal interface through which the operator starts, resumes, pauses, exports, or ends a Run and inspects frontend, worker, persistence, and device health. It sends management commands to the authoritative core but provides no gameplay controls.
+_Avoid_: Gameplay frontend, admin website, debug switchboard
+
 **Cabinet Snapshot**:
 A complete observation of the Cabinet Frontend's current controls, Cord Topology, and device health at one sample point. It describes hardware state without assigning gameplay meaning.
 _Avoid_: Input event batch, game-state snapshot
@@ -187,6 +191,22 @@ _Avoid_: Mode, preset, master config
 **Run Manifest**:
 The seeded selection created from a Scenario at the start of a Run, identifying the small subset of authored Story Threads and their participating Subscribers that exist in that Run. Content belonging only to unselected Story Threads is absent from the Run's world state.
 _Avoid_: Generated campaign, predetermined plot, seed output
+
+**Recovery Point**:
+The latest completed authoritative transition from which a paused or interrupted Run can safely resume without repeating or losing a consequential change. Unfinished speech and external work are not part of a Recovery Point.
+_Avoid_: Autosave slot, audio position, arbitrary checkpoint
+
+**Save**:
+The resume-ready record of a Run at a Recovery Point, retaining the Run's original Run Manifest and every authoritative input and accepted result needed to reconstruct its state.
+_Avoid_: Manual save slot, regenerated Run, mutable state dump
+
+**Diagnostic Journal**:
+The chronological record used to inspect authoritative transitions, external results, failures, and their correlations without confusing diagnostic evidence with the in-world Service Record.
+_Avoid_: Service record, debug printout, player audit log
+
+**Replay**:
+The reconstruction of authoritative Run state by reapplying recorded commands, explicit clock and seeded-random inputs, and recorded external results. It does not regenerate improvised dialogue or require identical audio playback.
+_Avoid_: Rerun, AI regeneration, video recording
 
 **Run Outcome State**:
 The small authoritative set of concrete conditions shared across Story Threads and inspected by common Endings, including finances, employment, housing, Operator Household members, and elapsed Shifts.
