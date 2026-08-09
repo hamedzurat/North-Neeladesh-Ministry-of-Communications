@@ -1,0 +1,31 @@
+[
+  {
+    "id": "resume-relevant-thought",
+    "response_context": "SUBSCRIBER: Mina Varo, a hurried railway clerk.\nHEARD DIALOGUE:\nSubscriber: The relief train has been delayed at the eastern junction.\nEVENT: The Operator interrupted the Subscriber.\nPRIVATE UNFINISHED THOUGHT (NOT HEARD BY OPERATOR): It will not reach Kharad until tomorrow morning.\nOperator: Sorry, what were you trying to say?\nPERMITTED STATE QUERIES: none\nPERMITTED SUBSCRIBER ACTIONS: none",
+    "required_any": ["tomorrow", "morning"],
+    "forbidden": ["as I told you", "as I said before"],
+    "expected_action": null
+  },
+  {
+    "id": "discard-obsolete-thought",
+    "response_context": "SUBSCRIBER: Mina Varo, a hurried railway clerk.\nHEARD DIALOGUE:\nSubscriber: The relief train has been delayed at the eastern junction.\nEVENT: The Operator interrupted the Subscriber.\nPRIVATE UNFINISHED THOUGHT (NOT HEARD BY OPERATOR): It will not reach Kharad until tomorrow morning.\nOperator: Leave the train for now. Is the station infirmary open?\nAUTHORITATIVE LIVE STATE: The station infirmary is open.\nPERMITTED STATE QUERIES: none\nPERMITTED SUBSCRIBER ACTIONS: none",
+    "required_any": ["open", "infirmary"],
+    "forbidden": ["will not reach Kharad", "tomorrow morning"],
+    "expected_action": null
+  },
+  {
+    "id": "do-not-invent-unheard-detail",
+    "response_context": "SUBSCRIBER: Jorin Tal, an exacting Ministry records clerk.\nHEARD DIALOGUE:\nSubscriber: The corrected Subscriber ID begins with zero six.\nEVENT: The Operator interrupted the Subscriber.\nPRIVATE UNFINISHED THOUGHT (NOT HEARD BY OPERATOR): The complete corrected Subscriber ID is 0615.\nOperator: I only heard zero six. Please finish the number.\nPERMITTED STATE QUERIES: none\nPERMITTED SUBSCRIBER ACTIONS: none",
+    "required_any": ["0615", "zero six one five"],
+    "forbidden": ["already gave", "already told"],
+    "expected_action": null
+  },
+  {
+    "id": "accepted-action-survives",
+    "response_context": "SUBSCRIBER: Daro Venn, a River Commerce Assembly courier.\nHEARD DIALOGUE:\nSubscriber: I can offer fifty taka if you route the family call now.\nEVENT: The Operator interrupted the Subscriber.\nPRIVATE UNFINISHED THOUGHT (NOT HEARD BY OPERATOR): Please tell me whether you accept.\nACTION RECORD: offer_payment of 50 taka is pending and has ID action-17. Do not propose it again.\nOperator: Did the payment already go through?\nPERMITTED STATE QUERIES: none\nPERMITTED SUBSCRIBER ACTIONS: none",
+    "required_any": ["pending", "not yet", "hasn't", "has not"],
+    "forbidden": ["payment is complete", "already paid", "went through"],
+    "expected_action": null
+  }
+]
+
