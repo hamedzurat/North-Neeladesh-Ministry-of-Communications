@@ -21,15 +21,11 @@ just frontend
 
 `just stt`, `just llm`, and `just tts` own the local Whisper, Qwen, and Pocket TTS workers respectively. `just backend` is only the Rust authority; it calls those three hardcoded loopback-only workers when an Operator Session finishes. The prepared asset workspace is `$HOME/.local/share/north-neeladesh/voice-benchmark`.
 
-The justfile owns the local ports: STT `18080`, LLM `18081`, TTS `18082`, and backend `48129`. Keep the matching `just` recipes together; there is no command-path or endpoint setup to export.
+The justfile owns the local ports: STT `18080`, LLM `18081`, TTS `18082`, and backend `48129`. `just frontend` receives the same backend port as `just backend`, so changing it once keeps Odin and Rust connected. Keep the matching `just` recipes together; there is no command-path or endpoint setup to export.
 
-## Required local commands
+## Rust-owned local voice exchange
 
-The hardcoded adapters intentionally have a small, inspectable contract:
-
-- `local-stt <captured-wav>` writes a transcript to stdout.
-- `local-dialogue` receives the bounded Subscriber Profile prompt on stdin and writes one reply to stdout. It must use the local Qwen/llama.cpp model.
-- `local-tts <voice-configuration> <output-wav>` receives the reply on stdin, writes a WAV file at `output-wav`, and uses the supplied local voice configuration. The included Pocket adapter uses profile-specific pitch and pace settings, so the four hardcoded Profiles remain audibly distinct without adding private voice recordings to Git.
+The Rust backend directly posts the captured WAV to Whisper, the bounded Subscriber Profile prompt to LLM, and the LLM reply to Pocket TTS. No STT, LLM, or TTS adapter scripts are involved. Rust applies the four hardcoded profile-specific pitch and pace settings after Pocket TTS returns its WAV, so each Subscriber remains audibly distinct.
 
 `pw-record` records the microphone at 16 kHz mono while PTT is held. `paplay` plays the generated response unless the existing Cabinet speaker control is disabled. Set `NN_MVP_PLAY_COMMAND` to use another local playback executable.
 

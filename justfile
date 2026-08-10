@@ -4,7 +4,7 @@ tts_port := "18082"
 backend_port := "48129"
 
 frontend:
-	odin run frontend
+	NN_MVP_BACKEND_PORT={{backend_port}} odin run frontend
 
 backend:
 	NN_MVP_STT_PORT={{stt_port}} NN_MVP_LLM_PORT={{llm_port}} NN_MVP_TTS_PORT={{tts_port}} NN_MVP_BACKEND_PORT={{backend_port}} cargo run --manifest-path backend/Cargo.toml --bin backend

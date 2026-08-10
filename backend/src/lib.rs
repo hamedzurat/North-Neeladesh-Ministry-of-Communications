@@ -3,10 +3,11 @@
 //! the Odin/Rust boundary inspectable during the MVP demonstration.
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::process::{Child, Command};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const SHIFT_START_MINUTES: u16 = 9 * 60;
 const SHIFT_END_MINUTES: u16 = 17 * 60;
@@ -158,7 +159,7 @@ impl VoicePipelineError {
 
 /// Disposable MVP boundary around the local STT → dialogue → TTS pipeline.
 /// Tests use a deterministic implementation; the runtime implementation uses
-/// only locally configured commands and never makes a network request.
+/// only the fixed local loopback workers.
 pub trait VoicePipeline {
     fn begin_capture(&mut self) -> Result<(), VoicePipelineError>;
     fn finish_operator_session(
@@ -197,56 +198,197 @@ impl LocalVoicePipeline {
         ))
     }
 
-    fn local_adapter(stage: VoiceStage) -> &'static str {
-        match stage {
-            VoiceStage::Stt => "scripts/local-stt.sh",
-            VoiceStage::Dialogue => "scripts/local-dialogue.sh",
-            VoiceStage::Tts => "scripts/local-tts.sh",
-            VoiceStage::Capture => unreachable!("capture is owned directly by the Rust core"),
+    fn worker_port(variable: &str, stage: VoiceStage) -> Result<String, VoicePipelineError> {
+        std::env::var(variable).map_err(|_| {
+            VoicePipelineError::new(stage, "LOCAL WORKER PORT IS MISSING: USE just backend")
+        })
+    }
+
+    fn post_local_worker(
+        stage: VoiceStage,
+        port: &str,
+        path: &str,
+        content_type: &str,
+        body: &[u8],
+    ) -> Result<Vec<u8>, VoicePipelineError> {
+        let address = format!("127.0.0.1:{port}");
+        let mut stream = TcpStream::connect(&address).map_err(|error| {
+            VoicePipelineError::new(stage, format!("LOCAL WORKER UNAVAILABLE: {error}"))
+        })?;
+        let timeout = Some(Duration::from_secs(30));
+        stream.set_read_timeout(timeout).map_err(|error| {
+            VoicePipelineError::new(stage, format!("LOCAL WORKER TIMEOUT UNAVAILABLE: {error}"))
+        })?;
+        stream.set_write_timeout(timeout).map_err(|error| {
+            VoicePipelineError::new(stage, format!("LOCAL WORKER TIMEOUT UNAVAILABLE: {error}"))
+        })?;
+        let head = format!(
+            "POST {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream
+            .write_all(head.as_bytes())
+            .and_then(|_| stream.write_all(body))
+            .map_err(|error| {
+                VoicePipelineError::new(stage, format!("LOCAL WORKER REQUEST FAILED: {error}"))
+            })?;
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).map_err(|error| {
+            VoicePipelineError::new(stage, format!("LOCAL WORKER RESPONSE FAILED: {error}"))
+        })?;
+        Self::http_response_body(stage, &response)
+    }
+
+    fn http_response_body(
+        stage: VoiceStage,
+        response: &[u8],
+    ) -> Result<Vec<u8>, VoicePipelineError> {
+        let divider = response
+            .windows(4)
+            .position(|part| part == b"\r\n\r\n")
+            .ok_or_else(|| {
+                VoicePipelineError::new(stage, "LOCAL WORKER SENT AN INVALID HTTP RESPONSE")
+            })?;
+        let head = std::str::from_utf8(&response[..divider]).map_err(|_| {
+            VoicePipelineError::new(stage, "LOCAL WORKER SENT A NON-TEXT HTTP RESPONSE")
+        })?;
+        let status = head.split_whitespace().nth(1).unwrap_or("UNKNOWN");
+        if !status.starts_with('2') {
+            return Err(VoicePipelineError::new(
+                stage,
+                format!("LOCAL WORKER RETURNED HTTP {status}"),
+            ));
+        }
+        Ok(response[divider + 4..].to_vec())
+    }
+
+    fn append_form_field(body: &mut Vec<u8>, boundary: &str, name: &str, value: &[u8]) {
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n")
+                .as_bytes(),
+        );
+        body.extend_from_slice(value);
+        body.extend_from_slice(b"\r\n");
+    }
+
+    fn append_audio_file(body: &mut Vec<u8>, boundary: &str, audio: &[u8]) {
+        body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"capture.wav\"\r\nContent-Type: audio/wav\r\n\r\n").as_bytes());
+        body.extend_from_slice(audio);
+        body.extend_from_slice(b"\r\n");
+    }
+
+    fn transcribe(&self, audio_path: &PathBuf) -> Result<String, VoicePipelineError> {
+        let stage = VoiceStage::Stt;
+        let audio = fs::read(audio_path).map_err(|error| {
+            VoicePipelineError::new(stage, format!("CAPTURED AUDIO IS UNAVAILABLE: {error}"))
+        })?;
+        let boundary = "north-neeladesh-mvp-stt";
+        let mut body = Vec::new();
+        Self::append_audio_file(&mut body, boundary, &audio);
+        Self::append_form_field(&mut body, boundary, "temperature", b"0.0");
+        Self::append_form_field(&mut body, boundary, "response_format", b"json");
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        let port = Self::worker_port("NN_MVP_STT_PORT", stage)?;
+        let response = Self::post_local_worker(
+            stage,
+            &port,
+            "/inference",
+            &format!("multipart/form-data; boundary={boundary}"),
+            &body,
+        )?;
+        let response: serde_json::Value = serde_json::from_slice(&response).map_err(|error| {
+            VoicePipelineError::new(stage, format!("LOCAL WORKER SENT INVALID JSON: {error}"))
+        })?;
+        response
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| VoicePipelineError::new(stage, "LOCAL WORKER OMITTED THE TRANSCRIPT"))
+    }
+
+    fn request_llm(&self, prompt: &str) -> Result<String, VoicePipelineError> {
+        let stage = VoiceStage::Dialogue;
+        let body = serde_json::json!({
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.2,
+            "max_tokens": 70,
+            "stream": false,
+        })
+        .to_string();
+        let port = Self::worker_port("NN_MVP_LLM_PORT", stage)?;
+        let response = Self::post_local_worker(
+            stage,
+            &port,
+            "/v1/chat/completions",
+            "application/json",
+            body.as_bytes(),
+        )?;
+        let response: serde_json::Value = serde_json::from_slice(&response).map_err(|error| {
+            VoicePipelineError::new(stage, format!("LOCAL WORKER SENT INVALID JSON: {error}"))
+        })?;
+        response
+            .pointer("/choices/0/message/content")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| VoicePipelineError::new(stage, "LOCAL WORKER OMITTED THE REPLY"))
+    }
+
+    fn audio_filter(voice_configuration: &str) -> Result<&'static str, VoicePipelineError> {
+        match voice_configuration {
+            "pocket-tts:nila-low-warm" => Ok("asetrate=21800,aresample=24000"),
+            "pocket-tts:sorin-clear-neutral" => Ok("asetrate=24600,aresample=24000"),
+            "pocket-tts:arun-brisk-mid" => Ok("asetrate=24000,atempo=1.08,aresample=24000"),
+            "pocket-tts:leela-measured-low" => Ok("asetrate=20800,atempo=0.94,aresample=24000"),
+            _ => Err(VoicePipelineError::new(
+                VoiceStage::Tts,
+                format!("UNKNOWN LOCAL VOICE CONFIGURATION: {voice_configuration}"),
+            )),
         }
     }
 
-    fn command_output(
-        mut command: Command,
-        stage: VoiceStage,
-        input: Option<&str>,
-    ) -> Result<String, VoicePipelineError> {
-        if input.is_some() {
-            command.stdin(Stdio::piped());
-        }
-        command.stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut child = command.spawn().map_err(|error| {
-            VoicePipelineError::new(stage, format!("COULD NOT START LOCAL COMMAND: {error}"))
+    fn synthesize(
+        &self,
+        voice_configuration: &str,
+        response: &str,
+        output_path: &PathBuf,
+    ) -> Result<(), VoicePipelineError> {
+        let stage = VoiceStage::Tts;
+        let boundary = "north-neeladesh-mvp-tts";
+        let mut body = Vec::new();
+        Self::append_form_field(&mut body, boundary, "text", response.as_bytes());
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        let port = Self::worker_port("NN_MVP_TTS_PORT", stage)?;
+        let wave = Self::post_local_worker(
+            stage,
+            &port,
+            "/tts",
+            &format!("multipart/form-data; boundary={boundary}"),
+            &body,
+        )?;
+        let raw_path = output_path.with_extension("pocket.wav");
+        fs::write(&raw_path, wave).map_err(|error| {
+            VoicePipelineError::new(stage, format!("COULD NOT WRITE LOCAL SPEECH: {error}"))
         })?;
-        if let Some(input) = input {
-            child
-                .stdin
-                .take()
-                .expect("piped stdin is available")
-                .write_all(input.as_bytes())
-                .map_err(|error| {
-                    VoicePipelineError::new(stage, format!("COULD NOT SEND INPUT: {error}"))
-                })?;
-        }
-        let output = child.wait_with_output().map_err(|error| {
-            VoicePipelineError::new(stage, format!("LOCAL COMMAND DID NOT COMPLETE: {error}"))
-        })?;
-        if !output.status.success() {
-            let detail = String::from_utf8_lossy(&output.stderr)
-                .split_whitespace()
-                .take(12)
-                .collect::<Vec<_>>()
-                .join(" ");
-            return Err(VoicePipelineError::new(
-                stage,
-                if detail.is_empty() {
-                    format!("LOCAL COMMAND EXITED {}", output.status)
-                } else {
-                    detail
-                },
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        let filter = Self::audio_filter(voice_configuration)?;
+        let result = Command::new("ffmpeg")
+            .args(["-v", "error", "-y", "-i"])
+            .arg(&raw_path)
+            .args(["-filter:a", filter])
+            .arg(output_path)
+            .output()
+            .map_err(|error| {
+                VoicePipelineError::new(stage, format!("SPEECH RENDERER UNAVAILABLE: {error}"))
+            })
+            .and_then(|output| {
+                output.status.success().then_some(()).ok_or_else(|| {
+                    VoicePipelineError::new(
+                        stage,
+                        format!("SPEECH RENDERER EXITED {}", output.status),
+                    )
+                })
+            });
+        let _ = fs::remove_file(raw_path);
+        result
     }
 
     fn bounded_text(value: &str) -> String {
@@ -303,16 +445,7 @@ impl VoicePipeline for LocalVoicePipeline {
         let _ = process.wait();
 
         let result = (|| {
-            let stt_command = Self::local_adapter(VoiceStage::Stt);
-            let transcript = Self::bounded_text(&Self::command_output(
-                {
-                    let mut command = Command::new(stt_command);
-                    command.arg(&path);
-                    command
-                },
-                VoiceStage::Stt,
-                None,
-            )?);
+            let transcript = Self::bounded_text(&self.transcribe(&path)?);
             if transcript.is_empty() {
                 return Err(VoicePipelineError::new(
                     VoiceStage::Stt,
@@ -320,19 +453,10 @@ impl VoicePipeline for LocalVoicePipeline {
                 ));
             }
 
-            let dialogue_command = Self::local_adapter(VoiceStage::Dialogue);
             let prompt = profile.operator_session_prompt(&transcript);
-            let first_response = Self::bounded_text(&Self::command_output(
-                Command::new(&dialogue_command),
-                VoiceStage::Dialogue,
-                Some(&prompt),
-            )?);
+            let first_response = Self::bounded_text(&self.request_llm(&prompt)?);
             let response = if first_response.is_empty() {
-                let retry = Self::bounded_text(&Self::command_output(
-                    Command::new(dialogue_command),
-                    VoiceStage::Dialogue,
-                    Some(&prompt),
-                )?);
+                let retry = Self::bounded_text(&self.request_llm(&prompt)?);
                 if retry.is_empty() {
                     Self::fallback_response(profile)
                 } else {
@@ -343,18 +467,8 @@ impl VoicePipeline for LocalVoicePipeline {
             };
 
             let speech_path = Self::temporary_audio_path("wav");
-            let tts_command = Self::local_adapter(VoiceStage::Tts);
-            let synthesis = Self::command_output(
-                {
-                    let mut command = Command::new(tts_command);
-                    command
-                        .arg(profile.local_voice_configuration)
-                        .arg(&speech_path);
-                    command
-                },
-                VoiceStage::Tts,
-                Some(&response),
-            );
+            let synthesis =
+                self.synthesize(profile.local_voice_configuration, &response, &speech_path);
             if let Err(error) = synthesis {
                 let _ = fs::remove_file(&speech_path);
                 return Err(error);
@@ -1253,18 +1367,18 @@ mod tests {
     }
 
     #[test]
-    fn local_pipeline_uses_the_three_hardcoded_worker_adapters() {
+    fn local_pipeline_keeps_the_hardcoded_subscriber_voice_profiles_distinct() {
         assert_eq!(
-            LocalVoicePipeline::local_adapter(VoiceStage::Stt),
-            "scripts/local-stt.sh"
+            LocalVoicePipeline::audio_filter("pocket-tts:nila-low-warm").as_deref(),
+            Ok("asetrate=21800,aresample=24000")
         );
         assert_eq!(
-            LocalVoicePipeline::local_adapter(VoiceStage::Dialogue),
-            "scripts/local-dialogue.sh"
+            LocalVoicePipeline::audio_filter("pocket-tts:sorin-clear-neutral").as_deref(),
+            Ok("asetrate=24600,aresample=24000")
         );
         assert_eq!(
-            LocalVoicePipeline::local_adapter(VoiceStage::Tts),
-            "scripts/local-tts.sh"
+            LocalVoicePipeline::audio_filter("pocket-tts:arun-brisk-mid").as_deref(),
+            Ok("asetrate=24000,atempo=1.08,aresample=24000")
         );
     }
 }
