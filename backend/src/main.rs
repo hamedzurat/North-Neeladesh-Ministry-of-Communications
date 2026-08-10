@@ -45,11 +45,12 @@ fn handle_client(stream: TcpStream, core: &mut MvpCore) -> std::io::Result<()> {
     let printer = output.printer.join("|");
     writeln!(
         &mut stream.try_clone()?,
-        "{{\"sequence\":{},\"phase\":\"{}\",\"health\":\"{}\",\"reset_status\":\"{}\",\"line_lamps\":[{}],\"directory\":\"{}\",\"printer\":\"{}\",\"monitor_active\":{},\"speaker_active\":{}}}",
+        "{{\"sequence\":{},\"phase\":\"{}\",\"health\":\"{}\",\"reset_status\":\"{}\",\"routing_status\":\"{}\",\"line_lamps\":[{}],\"directory\":\"{}\",\"printer\":\"{}\",\"monitor_active\":{},\"speaker_active\":{}}}",
         output.sequence,
         output.phase.label(),
         output.health,
         output.reset_status,
+        output.routing_status,
         lamps,
         escape(&directory),
         escape(&printer),
