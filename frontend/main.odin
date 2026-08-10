@@ -489,13 +489,14 @@ snapshot_json :: proc(state: ^App_State) -> string {
 	directory_id := state.digits[0] * 1000 + state.digits[1] * 100 + state.digits[2] * 10 + state.digits[3]
 	fmt.sbprintf(
 		&builder,
-		`],"active_action":%d,"crank_complete":%t,"directory_id":%d,"speaker_enabled":%t,"reset":%t}\n`,
+		`],"active_action":%d,"crank_complete":%t,"directory_id":%d,"speaker_enabled":%t,"reset":%t}`,
 		state.active_action,
 		state.crank_flash > 0,
 		directory_id,
 		state.speaker_enabled,
 		state.reset_requested,
 	)
+	strings.write_string(&builder, "\n")
 	return strings.to_string(builder)
 }
 
