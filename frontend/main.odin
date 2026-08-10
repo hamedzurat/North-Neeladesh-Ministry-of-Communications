@@ -80,8 +80,8 @@ Cord :: struct {
 
 Backend_Output :: struct {
 	sequence:       u64,
+	clock_minutes:  u16,
 	phase:          string,
-	health:         string,
 	reset_status:   string,
 	routing_status: string,
 	line_lamps:     [LINE_COUNT]bool,
@@ -101,7 +101,7 @@ App_State :: struct {
 	tuning:           [2]f32,
 	crank_fill:       f32,
 	crank_flash:      f32,
-	work_minutes:     f32,
+	clock_minutes:    u16,
 	speaker_playing:  bool,
 	speaker_phase:    f32,
 	receipt_revealed: f32,
@@ -112,7 +112,6 @@ App_State :: struct {
 	backend_timer:    f32,
 	backend_online:   bool,
 	backend_phase:    string,
-	backend_health:   string,
 	reset_status:     string,
 	routing_status:   string,
 	directory_page:   string,
@@ -342,11 +341,10 @@ draw_seven_digit :: proc(digit: int, origin: rl.Vector2, scale: f32) {
 	}
 }
 
-draw_shift_time :: proc(state: ^App_State, delta: f32) {
+draw_shift_time :: proc(state: ^App_State) {
 	area := rect(940, 20, 480, 145)
 	draw_panel(area)
-	state.work_minutes = min(17 * 60, state.work_minutes + delta)
-	total_minutes := int(state.work_minutes)
+	total_minutes := int(state.clock_minutes)
 	hour := total_minutes / 60
 	minute := total_minutes % 60
 	digits := [4]int{hour / 10, hour % 10, minute / 10, minute % 10}
@@ -358,10 +356,7 @@ draw_shift_time :: proc(state: ^App_State, delta: f32) {
 	}
 	rl.DrawCircleV(point(area.x + 239, area.y + 57), 5, AMBER)
 	rl.DrawCircleV(point(area.x + 239, area.y + 86), 5, AMBER)
-	status_color := state.backend_online ? GREEN : AMBER
-	draw_text(fmt.ctprintf("%s", state.backend_health), area.x + 16, area.y + 116, 11, status_color)
 	draw_text(fmt.ctprintf("%s", state.reset_status), area.x + 286, area.y + 116, 11, MUTED)
-	draw_text(fmt.ctprintf("%s", state.routing_status), area.x + 16, area.y + 137, 11, AMBER)
 }
 
 draw_directory :: proc(state: ^App_State, delta: f32) {
@@ -515,40 +510,44 @@ sync_backend :: proc(state: ^App_State) {
 	socket, dial_error := net.dial_tcp_from_hostname_and_port_string("127.0.0.1:48129")
 	if dial_error != nil {
 		state.backend_online = false
-		state.backend_health = "RUST CORE OFFLINE"
 		return
 	}
 	defer net.close(socket)
 	if net.set_option(socket, .Receive_Timeout, time.Millisecond * 250) != nil {
 		state.backend_online = false
-		state.backend_health = "RUST CORE SOCKET ERROR"
 		return
 	}
 	request := snapshot_json(state)
 	_, send_error := net.send_tcp(socket, transmute([]byte)request)
 	if send_error != nil {
 		state.backend_online = false
-		state.backend_health = "RUST CORE SEND ERROR"
 		return
 	}
-	buffer: [8192]byte
-	read_count, receive_error := net.recv_tcp(socket, buffer[:])
-	if receive_error != nil || read_count == 0 {
+	response: [8192]byte
+	response_length := 0
+	for response_length < len(response) {
+		read_count, receive_error := net.recv_tcp(socket, response[response_length:])
+		if receive_error != nil || read_count == 0 {
+			state.backend_online = false
+			return
+		}
+		response_length += read_count
+		if response[response_length - 1] == '\n' do break
+	}
+	if response_length == len(response) && response[response_length - 1] != '\n' {
 		state.backend_online = false
-		state.backend_health = "RUST CORE NO RESPONSE"
 		return
 	}
 	output: Backend_Output
-	decode_error := json.unmarshal(buffer[:read_count], &output)
+	decode_error := json.unmarshal(response[:response_length], &output)
 	if decode_error != nil {
 		state.backend_online = false
-		state.backend_health = "RUST CORE PROTOCOL ERROR"
 		return
 	}
 	state.backend_online = true
 	state.backend_phase = output.phase
-	state.backend_health = output.health
 	state.reset_status = output.reset_status
+	state.clock_minutes = output.clock_minutes
 	state.routing_status = output.routing_status
 	state.line_lamps = output.line_lamps
 	state.directory_page = output.directory
@@ -666,8 +665,7 @@ initial_state :: proc() -> App_State {
 		active_action   = -1,
 		digits          = {4, 1, 0, 1},
 		tuning          = {0.64, 0.38},
-		work_minutes    = 9 * 60,
-		backend_health  = "RUST CORE STARTING",
+		clock_minutes   = 9 * 60,
 		reset_status    = "PRESS R TO RESET",
 		routing_status  = "WAITING FOR RUST CORE",
 		directory_page  = "SEARCHING",
@@ -704,7 +702,7 @@ main :: proc() {
 		draw_exchange_ports(&jacks)
 		draw_action_row(&state)
 		draw_manual_controls(&state, delta)
-		draw_shift_time(&state, delta)
+		draw_shift_time(&state)
 		draw_directory(&state, delta)
 		draw_speaker(&state, delta)
 		draw_printer(&state, delta)

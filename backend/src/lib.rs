@@ -2,6 +2,11 @@
 //! The newline-delimited JSON protocol is disposable: it exists only to make
 //! the Odin/Rust boundary inspectable during the MVP demonstration.
 
+use std::time::Instant;
+
+const SHIFT_START_MINUTES: u16 = 9 * 60;
+const SHIFT_END_MINUTES: u16 = 17 * 60;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
     IncomingCaller,
@@ -43,8 +48,8 @@ pub struct CabinetSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CabinetOutput {
     pub sequence: u64,
+    pub clock_minutes: u16,
     pub phase: Phase,
-    pub health: &'static str,
     pub reset_status: &'static str,
     pub routing_status: &'static str,
     pub line_lamps: [bool; 16],
@@ -160,6 +165,7 @@ const TAP_TWO: (usize, usize) = (20, 21);
 #[derive(Debug)]
 pub struct MvpCore {
     call_index: usize,
+    clock_started_at: Instant,
     phase: Phase,
     receipts: Vec<String>,
     routing_status: &'static str,
@@ -177,6 +183,7 @@ impl MvpCore {
     pub fn new() -> Self {
         Self {
             call_index: 0,
+            clock_started_at: Instant::now(),
             phase: Phase::IncomingCaller,
             receipts: vec![
                 "MINISTRY OF COMMUNICATIONS".into(),
@@ -319,6 +326,15 @@ impl MvpCore {
         }
     }
 
+    fn clock_minutes(&self) -> u16 {
+        let elapsed_minutes =
+            self.clock_started_at
+                .elapsed()
+                .as_secs()
+                .min(u64::from(SHIFT_END_MINUTES - SHIFT_START_MINUTES)) as u16;
+        SHIFT_START_MINUTES + elapsed_minutes
+    }
+
     fn output(
         &self,
         sequence: u64,
@@ -333,8 +349,8 @@ impl MvpCore {
         }
         CabinetOutput {
             sequence,
+            clock_minutes: self.clock_minutes(),
             phase: self.phase,
-            health: "RUST CORE READY",
             reset_status,
             routing_status: self.routing_status,
             line_lamps: lamps,
@@ -401,6 +417,7 @@ mod tests {
         let mut core = MvpCore::new();
         let incoming = core.apply(snapshot(&[], -1, false));
         assert_eq!(incoming.phase, Phase::IncomingCaller);
+        assert_eq!(incoming.clock_minutes, 9 * 60);
         assert!(incoming.line_lamps[4]);
         assert!(!incoming.line_lamps[1]);
         assert_eq!(
