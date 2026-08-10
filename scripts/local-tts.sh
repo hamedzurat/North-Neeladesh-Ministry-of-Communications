@@ -3,7 +3,7 @@ set -euo pipefail
 
 voice_configuration=${1:?Usage: local-tts.sh <voice-configuration> <output-wav>}
 output_path=${2:?Usage: local-tts.sh <voice-configuration> <output-wav>}
-tts_url=${NN_MVP_TTS_URL:-http://127.0.0.1:18082/tts}
+tts_url="http://127.0.0.1:${NN_MVP_TTS_PORT:?Set by just backend}/tts"
 
 text=$(cat)
 [[ -n "$text" ]] || {

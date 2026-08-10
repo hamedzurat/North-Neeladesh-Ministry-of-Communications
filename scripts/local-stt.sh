@@ -2,7 +2,7 @@
 set -euo pipefail
 
 audio_path=${1:?Usage: local-stt.sh <captured-wav>}
-stt_url=${NN_MVP_STT_URL:-http://127.0.0.1:18080/inference}
+stt_url="http://127.0.0.1:${NN_MVP_STT_PORT:?Set by just backend}/inference"
 
 [[ -f "$audio_path" ]] || {
   printf 'Captured audio is unavailable: %s\n' "$audio_path" >&2

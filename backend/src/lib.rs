@@ -197,22 +197,13 @@ impl LocalVoicePipeline {
         ))
     }
 
-    fn configured_command(variable: &str, stage: VoiceStage) -> Result<String, VoicePipelineError> {
-        if let Ok(command) = std::env::var(variable) {
-            return Ok(command);
+    fn local_adapter(stage: VoiceStage) -> &'static str {
+        match stage {
+            VoiceStage::Stt => "scripts/local-stt.sh",
+            VoiceStage::Dialogue => "scripts/local-dialogue.sh",
+            VoiceStage::Tts => "scripts/local-tts.sh",
+            VoiceStage::Capture => unreachable!("capture is owned directly by the Rust core"),
         }
-        let default = match variable {
-            "NN_MVP_STT_COMMAND" => "scripts/local-stt.sh",
-            "NN_MVP_DIALOGUE_COMMAND" => "scripts/local-dialogue.sh",
-            "NN_MVP_TTS_COMMAND" => "scripts/local-tts.sh",
-            _ => {
-                return Err(VoicePipelineError::new(
-                    stage,
-                    format!("{variable} HAS NO LOCAL MVP ADAPTER"),
-                ));
-            }
-        };
-        Ok(default.into())
     }
 
     fn command_output(
@@ -312,7 +303,7 @@ impl VoicePipeline for LocalVoicePipeline {
         let _ = process.wait();
 
         let result = (|| {
-            let stt_command = Self::configured_command("NN_MVP_STT_COMMAND", VoiceStage::Stt)?;
+            let stt_command = Self::local_adapter(VoiceStage::Stt);
             let transcript = Self::bounded_text(&Self::command_output(
                 {
                     let mut command = Command::new(stt_command);
@@ -329,8 +320,7 @@ impl VoicePipeline for LocalVoicePipeline {
                 ));
             }
 
-            let dialogue_command =
-                Self::configured_command("NN_MVP_DIALOGUE_COMMAND", VoiceStage::Dialogue)?;
+            let dialogue_command = Self::local_adapter(VoiceStage::Dialogue);
             let prompt = profile.operator_session_prompt(&transcript);
             let first_response = Self::bounded_text(&Self::command_output(
                 Command::new(&dialogue_command),
@@ -353,7 +343,7 @@ impl VoicePipeline for LocalVoicePipeline {
             };
 
             let speech_path = Self::temporary_audio_path("wav");
-            let tts_command = Self::configured_command("NN_MVP_TTS_COMMAND", VoiceStage::Tts)?;
+            let tts_command = Self::local_adapter(VoiceStage::Tts);
             let synthesis = Self::command_output(
                 {
                     let mut command = Command::new(tts_command);
@@ -1263,24 +1253,18 @@ mod tests {
     }
 
     #[test]
-    fn local_pipeline_defaults_to_the_three_separately_started_worker_adapters() {
+    fn local_pipeline_uses_the_three_hardcoded_worker_adapters() {
         assert_eq!(
-            LocalVoicePipeline::configured_command("NN_MVP_STT_COMMAND", VoiceStage::Stt)
-                .as_deref(),
-            Ok("scripts/local-stt.sh")
+            LocalVoicePipeline::local_adapter(VoiceStage::Stt),
+            "scripts/local-stt.sh"
         );
         assert_eq!(
-            LocalVoicePipeline::configured_command(
-                "NN_MVP_DIALOGUE_COMMAND",
-                VoiceStage::Dialogue,
-            )
-            .as_deref(),
-            Ok("scripts/local-dialogue.sh")
+            LocalVoicePipeline::local_adapter(VoiceStage::Dialogue),
+            "scripts/local-dialogue.sh"
         );
         assert_eq!(
-            LocalVoicePipeline::configured_command("NN_MVP_TTS_COMMAND", VoiceStage::Tts)
-                .as_deref(),
-            Ok("scripts/local-tts.sh")
+            LocalVoicePipeline::local_adapter(VoiceStage::Tts),
+            "scripts/local-tts.sh"
         );
     }
 }

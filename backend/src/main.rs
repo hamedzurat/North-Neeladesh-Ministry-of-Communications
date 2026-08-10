@@ -6,8 +6,11 @@ use std::time::Duration;
 const CLIENT_TIMEOUT: Duration = Duration::from_millis(250);
 
 fn main() -> std::io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:48129")?;
-    eprintln!("North Neeladesh MVP core listening on 127.0.0.1:48129 (offline only)");
+    let address = std::env::var("NN_MVP_BACKEND_PORT")
+        .map(|port| format!("127.0.0.1:{port}"))
+        .unwrap_or_else(|_| "127.0.0.1:48129".into());
+    let listener = TcpListener::bind(&address)?;
+    eprintln!("North Neeladesh MVP core listening on {address} (offline only)");
     let mut core = MvpCore::new();
     for stream in listener.incoming() {
         match stream {

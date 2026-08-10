@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-dialogue_url=${NN_MVP_DIALOGUE_URL:-http://127.0.0.1:18081/v1/chat/completions}
+dialogue_url="http://127.0.0.1:${NN_MVP_LLM_PORT:?Set by just backend}/v1/chat/completions"
 prompt=$(cat)
 payload=$(jq --null-input --arg prompt "$prompt" '{messages: [{role: "user", content: $prompt}], temperature: 0.2, max_tokens: 70, stream: false}')
 curl --fail-with-body --silent --show-error \
