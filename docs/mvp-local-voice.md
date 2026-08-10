@@ -1,12 +1,16 @@
 # Local MVP voice configuration
 
-Run the complete offline MVP with:
+Run the offline MVP in separate terminals:
 
 ```sh
-just mvp
+# Terminal 1
+just backend
+
+# Terminal 2
+just frontend
 ```
 
-The command verifies the prepared local Whisper, Qwen, and Pocket TTS assets, starts the Rust authority, then launches the unchanged Odin Cabinet Frontend. It makes no network request. The default asset workspace is `$HOME/.local/share/north-neeladesh/voice-benchmark`; set `NN_MVP_VOICE_BENCHMARK_ROOT` to use another prepared local workspace.
+`just backend` verifies the prepared local Whisper, Qwen, and Pocket TTS assets before starting the Rust authority. Its terminal then retains the stage logs while the frontend runs separately. Both programs make no network request. The default asset workspace is `$HOME/.local/share/north-neeladesh/voice-benchmark`; set `NN_MVP_VOICE_BENCHMARK_ROOT` to use another prepared local workspace.
 
 ## Required local commands
 

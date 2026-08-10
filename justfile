@@ -2,10 +2,7 @@ frontend:
 	odin run frontend
 
 backend:
-	cargo run --manifest-path backend/Cargo.toml --bin backend
-
-mvp:
-	./scripts/run-mvp.sh
+	./scripts/run-backend.sh
 
 check:
 	cargo test --manifest-path backend/Cargo.toml
