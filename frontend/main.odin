@@ -571,6 +571,9 @@ sync_backend :: proc(state: ^App_State) {
 		state.receipt_revealed = 0
 		state.receipt_scroll = 0
 	}
+	if output.phase == "RECOVERABLE SYSTEM FAILURE" && output.printer != state.printer_feed {
+		fmt.printf("[frontend] %s\n[frontend] receipt: %s\n", output.routing_status, output.printer)
+	}
 	state.printer_feed = output.printer
 	state.speaker_playing = output.speaker_active
 	state.reset_requested = false
