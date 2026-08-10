@@ -6,7 +6,8 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::Command;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const SHIFT_START_MINUTES: u16 = 9 * 60;
@@ -172,9 +173,12 @@ pub trait VoicePipeline {
 }
 
 struct ActiveCapture {
-    process: Child,
+    stream: cpal::Stream,
     path: PathBuf,
     session_id: u128,
+    sample_rate: u32,
+    samples: Arc<Mutex<Vec<i16>>>,
+    stream_error: Arc<Mutex<Option<String>>>,
 }
 
 struct LocalVoicePipeline {
@@ -222,12 +226,140 @@ impl LocalVoicePipeline {
         Ok(())
     }
 
-    fn finish_recording(process: &mut Child) {
-        let stopped = unsafe { libc::kill(process.id() as libc::pid_t, libc::SIGINT) } == 0;
-        if !stopped {
-            let _ = process.kill();
+    fn append_captured_samples<T>(input: &[T], samples: &Arc<Mutex<Vec<i16>>>, channels: usize)
+    where
+        T: cpal::Sample,
+        i16: cpal::FromSample<T>,
+    {
+        use cpal::Sample;
+
+        let Ok(mut samples) = samples.lock() else {
+            return;
+        };
+        for frame in input.chunks(channels) {
+            if let Some(sample) = frame.first() {
+                samples.push(i16::from_sample(*sample));
+            }
         }
-        let _ = process.wait();
+    }
+
+    fn build_capture_stream(
+        device: &cpal::Device,
+        config: &cpal::SupportedStreamConfig,
+        samples: Arc<Mutex<Vec<i16>>>,
+        stream_error: Arc<Mutex<Option<String>>>,
+    ) -> Result<cpal::Stream, VoicePipelineError> {
+        use cpal::traits::DeviceTrait;
+
+        let stream_config: cpal::StreamConfig = config.clone().into();
+        let channels = usize::from(stream_config.channels);
+        let stage = VoiceStage::Capture;
+        match config.sample_format() {
+            cpal::SampleFormat::I8 => {
+                let stream_error = stream_error.clone();
+                device.build_input_stream(
+                    stream_config.clone(),
+                    move |data: &[i8], _| Self::append_captured_samples(data, &samples, channels),
+                    move |error: cpal::Error| {
+                        if let Ok(mut saved_error) = stream_error.lock() {
+                            *saved_error = Some(error.to_string());
+                        }
+                    },
+                    None,
+                )
+            }
+            cpal::SampleFormat::I16 => {
+                let stream_error = stream_error.clone();
+                device.build_input_stream(
+                    stream_config.clone(),
+                    move |data: &[i16], _| Self::append_captured_samples(data, &samples, channels),
+                    move |error: cpal::Error| {
+                        if let Ok(mut saved_error) = stream_error.lock() {
+                            *saved_error = Some(error.to_string());
+                        }
+                    },
+                    None,
+                )
+            }
+            cpal::SampleFormat::I32 => {
+                let stream_error = stream_error.clone();
+                device.build_input_stream(
+                    stream_config.clone(),
+                    move |data: &[i32], _| Self::append_captured_samples(data, &samples, channels),
+                    move |error: cpal::Error| {
+                        if let Ok(mut saved_error) = stream_error.lock() {
+                            *saved_error = Some(error.to_string());
+                        }
+                    },
+                    None,
+                )
+            }
+            cpal::SampleFormat::F32 => {
+                let stream_error = stream_error.clone();
+                device.build_input_stream(
+                    stream_config,
+                    move |data: &[f32], _| Self::append_captured_samples(data, &samples, channels),
+                    move |error: cpal::Error| {
+                        if let Ok(mut saved_error) = stream_error.lock() {
+                            *saved_error = Some(error.to_string());
+                        }
+                    },
+                    None,
+                )
+            }
+            format => {
+                return Err(VoicePipelineError::new(
+                    stage,
+                    format!("UNSUPPORTED PIPEWIRE SAMPLE FORMAT: {format}"),
+                ));
+            }
+        }
+        .map_err(|error| {
+            VoicePipelineError::new(stage, format!("COULD NOT START PIPEWIRE CAPTURE: {error}"))
+        })
+    }
+
+    fn write_captured_audio(
+        path: &PathBuf,
+        sample_rate: u32,
+        samples: &[i16],
+    ) -> Result<(), VoicePipelineError> {
+        let sample_bytes = u32::try_from(samples.len().saturating_mul(2)).map_err(|_| {
+            VoicePipelineError::new(VoiceStage::Capture, "CAPTURE IS TOO LARGE TO WRITE")
+        })?;
+        let mut file = fs::File::create(path).map_err(|error| {
+            VoicePipelineError::new(
+                VoiceStage::Capture,
+                format!("COULD NOT WRITE CAPTURED AUDIO: {error}"),
+            )
+        })?;
+        file.write_all(b"RIFF")
+            .and_then(|_| file.write_all(&(36_u32.saturating_add(sample_bytes)).to_le_bytes()))
+            .and_then(|_| file.write_all(b"WAVEfmt "))
+            .and_then(|_| file.write_all(&16_u32.to_le_bytes()))
+            .and_then(|_| file.write_all(&1_u16.to_le_bytes()))
+            .and_then(|_| file.write_all(&1_u16.to_le_bytes()))
+            .and_then(|_| file.write_all(&sample_rate.to_le_bytes()))
+            .and_then(|_| file.write_all(&sample_rate.saturating_mul(2).to_le_bytes()))
+            .and_then(|_| file.write_all(&2_u16.to_le_bytes()))
+            .and_then(|_| file.write_all(&16_u16.to_le_bytes()))
+            .and_then(|_| file.write_all(b"data"))
+            .and_then(|_| file.write_all(&sample_bytes.to_le_bytes()))
+            .map_err(|error| {
+                VoicePipelineError::new(
+                    VoiceStage::Capture,
+                    format!("COULD NOT WRITE CAPTURE HEADER: {error}"),
+                )
+            })?;
+        for sample in samples {
+            file.write_all(&sample.to_le_bytes()).map_err(|error| {
+                VoicePipelineError::new(
+                    VoiceStage::Capture,
+                    format!("COULD NOT WRITE CAPTURE FRAMES: {error}"),
+                )
+            })?;
+        }
+        Ok(())
     }
 
     fn worker_port(variable: &str, stage: VoiceStage) -> Result<String, VoicePipelineError> {
@@ -503,6 +635,8 @@ impl LocalVoicePipeline {
 
 impl VoicePipeline for LocalVoicePipeline {
     fn begin_capture(&mut self) -> Result<(), VoicePipelineError> {
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
         if self.capture.is_some() {
             return Err(VoicePipelineError::new(
                 VoiceStage::Capture,
@@ -512,20 +646,40 @@ impl VoicePipeline for LocalVoicePipeline {
         let session_id = Self::next_session_id();
         let path =
             Self::voice_artifact_path(VoiceStage::Capture, &format!("{session_id}-operator.wav"))?;
-        let child = Command::new("pw-record")
-            .args(["--rate", "16000", "--channels", "1", "--format", "s16"])
-            .arg(&path)
-            .spawn()
-            .map_err(|error| {
-                VoicePipelineError::new(
-                    VoiceStage::Capture,
-                    format!("MICROPHONE UNAVAILABLE: {error}"),
-                )
-            })?;
+        let host = cpal::host_from_id(cpal::HostId::PipeWire).map_err(|error| {
+            VoicePipelineError::new(
+                VoiceStage::Capture,
+                format!("PIPEWIRE HOST UNAVAILABLE: {error}"),
+            )
+        })?;
+        let device = host.default_input_device().ok_or_else(|| {
+            VoicePipelineError::new(VoiceStage::Capture, "PIPEWIRE HAS NO DEFAULT MICROPHONE")
+        })?;
+        let device_name = device.to_string();
+        let config = device.default_input_config().map_err(|error| {
+            VoicePipelineError::new(
+                VoiceStage::Capture,
+                format!("MICROPHONE CONFIGURATION UNAVAILABLE: {error}"),
+            )
+        })?;
+        let samples = Arc::new(Mutex::new(Vec::new()));
+        let stream_error = Arc::new(Mutex::new(None));
+        let stream =
+            Self::build_capture_stream(&device, &config, samples.clone(), stream_error.clone())?;
+        stream.play().map_err(|error| {
+            VoicePipelineError::new(
+                VoiceStage::Capture,
+                format!("PIPEWIRE MICROPHONE COULD NOT START: {error}"),
+            )
+        })?;
+        eprintln!("[voice] CAPTURE: PIPEWIRE INPUT {device_name}");
         self.capture = Some(ActiveCapture {
-            process: child,
+            stream,
             path,
             session_id,
+            sample_rate: config.sample_rate(),
+            samples,
+            stream_error,
         });
         Ok(())
     }
@@ -536,13 +690,32 @@ impl VoicePipeline for LocalVoicePipeline {
         speaker_enabled: bool,
     ) -> Result<OperatorSession, VoicePipelineError> {
         let ActiveCapture {
-            mut process,
+            stream,
             path,
             session_id,
+            sample_rate,
+            samples,
+            stream_error,
         } = self.capture.take().ok_or_else(|| {
             VoicePipelineError::new(VoiceStage::Capture, "NO PTT RECORDING WAS STARTED")
         })?;
-        Self::finish_recording(&mut process);
+        drop(stream);
+        if let Some(error) = stream_error.lock().ok().and_then(|mut error| error.take()) {
+            return Err(VoicePipelineError::new(
+                VoiceStage::Capture,
+                format!("PIPEWIRE MICROPHONE STOPPED: {error}"),
+            ));
+        }
+        let captured_samples = samples
+            .lock()
+            .map_err(|_| {
+                VoicePipelineError::new(
+                    VoiceStage::Capture,
+                    "PIPEWIRE CAPTURE BUFFER IS UNAVAILABLE",
+                )
+            })?
+            .clone();
+        Self::write_captured_audio(&path, sample_rate, &captured_samples)?;
 
         let result = (|| {
             Self::captured_audio_has_frames(&path)?;
@@ -602,9 +775,8 @@ impl VoicePipeline for LocalVoicePipeline {
     }
 
     fn cancel_capture(&mut self) {
-        if let Some(mut capture) = self.capture.take() {
-            let _ = capture.process.kill();
-            let _ = capture.process.wait();
+        if let Some(capture) = self.capture.take() {
+            drop(capture.stream);
         }
     }
 }
