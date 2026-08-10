@@ -208,16 +208,12 @@ _Avoid_: Round, level, day
 A sequence of Shifts whose accumulated choices and consequences lead to an ending.
 _Avoid_: Campaign, playthrough
 
-**Scenario**:
-A top-level authored configuration that composes the content, pacing, difficulty, and seed policy for a Run.
-_Avoid_: Mode, preset, master config
-
 **Story Graph**:
-The Scenario-wide directed acyclic network of authored Story Beats, Story Events, and Endings whose eligibility follows authoritative state. It may have a fixed opening and seeded choices among authored alternatives, but free-form dialogue cannot create nodes, edges, or consequences.
+The directed acyclic network of authored Story Beats, Story Events, and Endings whose eligibility follows authoritative state. It may have fixed opening nodes and seeded choices among authored alternatives, but free-form dialogue cannot create nodes, edges, or consequences.
 _Avoid_: Generated plot, monolithic story file, LLM story state
 
 **Run Manifest**:
-The seeded initialization created from a Scenario at the start of a Run, fixing the Story Graph version, Content Profile, starting conditions, Line Listing assignments, and any authored initial branch selections. It preserves reproducible inputs without predetermining which later paths become eligible.
+The seeded initialization created from the compiled authored content at the start of a Run, fixing the Story Graph version, starting conditions, Line Listing assignments, and any authored initial branch selections. It preserves reproducible inputs without predetermining which later paths become eligible.
 _Avoid_: Generated campaign, predetermined plot, story bundle
 
 **Recovery Point**:
@@ -259,10 +255,6 @@ _Avoid_: Quest step, generated plot, dialogue scene
 **Ending**:
 The single authored terminal conclusion selected for a Run through precedence after an explicit terminal decision, an occurred terminal Story Event, or an eligible Run Outcome State condition. It normally resolves at Shift settlement; only the Operator Detained and Operator Killed Endings may terminate a Shift immediately. It contains one core conclusion and up to three eligible authored closure passages about materially connected people or Story Threads, never an exhaustive set of layered epilogues. An Ending may be universally available or exist only through the Story Graph.
 _Avoid_: Ending family, exhaustive epilogue, predetermined ending, score tier, ending roll
-
-**Content Profile**:
-The pre-Run boundary that admits or excludes Subscribers and Story Events according to their authored subject and intensity tags. Disallowed material never enters the selected Run or its improvised conversations.
-_Avoid_: Mid-scene censorship, age slider
 
 **Story Event**:
 A discrete occurrence in the world that records or causes a consequential change and may contribute to an ending. It may result from uncertainty or deception, but must follow a plausible causal chain that can become understandable to the player.
@@ -381,7 +373,7 @@ The history of the Exchange Operator's logged service performance during the cur
 _Avoid_: Mistake counter, penalty score
 
 **Disciplinary Status**:
-The Exchange Operator's standing under the Service Rules currently in force, progressing through disclosed counter-based conditions from good standing to warning, probation, or dismissal. Dismissal ends the Run unless a Scenario explicitly defines another outcome.
+The Exchange Operator's standing under the Service Rules currently in force, progressing through disclosed counter-based conditions from good standing to warning, probation, or dismissal. Dismissal ends the Run unless the Story Graph explicitly defines another outcome.
 _Avoid_: Lives, failure meter
 
 **Service Call**:
