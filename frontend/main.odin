@@ -65,7 +65,7 @@ CORD_COLORS := [CORD_COUNT]rl.Color {
 }
 
 ACTION_LABELS := [ACTION_COUNT]cstring {
-	"OPERATOR",
+	"PTT / OPERATOR",
 	"POLICE",
 	"EMS",
 	"FIRE",
@@ -516,7 +516,7 @@ sync_backend :: proc(state: ^App_State) {
 		return
 	}
 	defer net.close(socket)
-	if net.set_option(socket, .Receive_Timeout, time.Millisecond * 250) != nil {
+	if net.set_option(socket, .Receive_Timeout, time.Second * 30) != nil {
 		state.backend_online = false
 		return
 	}
