@@ -101,8 +101,12 @@ The player character responsible for speaking with subscribers and routing calls
 _Avoid_: Player operator, telephone agent
 
 **Operator Household**:
-The Exchange Operator's elderly parent requiring medicine, school-age younger sibling, and cousin displaced from South Neeladesh. Their food, housing, education, health, and safety give the otherwise undefined Operator personal stakes in employment and political choices.
-_Avoid_: Player family, home base
+The Run-specific group of authored people whose relationships to the Exchange Operator and composition are defined by the selected Household Story Thread; a member is a Subscriber only when that thread assigns them a Subscriber Line. Their shared living conditions and individual outcomes give the otherwise undefined Operator personal stakes in employment and political choices.
+_Avoid_: Player family, fixed household, home base
+
+**Household Condition**:
+A typed current condition of the Operator Household: shared Housing Status (`secure`, `threatened`, or `homeless`) and Food Status (`supplied`, `short`, or `exhausted`), plus each member's Whereabouts, Health Status, and Safety Status. Education and Displacement Status apply only to members for whom the Household Story Thread declares them relevant.
+_Avoid_: Family score, household pressure meter, free-form family state
 
 **Subscriber**:
 An NPC whose telephone line can originate or receive calls through the exchange.
@@ -217,12 +221,20 @@ The reconstruction of authoritative Run state by reapplying recorded commands, e
 _Avoid_: Rerun, AI regeneration, video recording
 
 **Run Outcome State**:
-The authoritative concrete conditions and event-derived counters shared across Story Threads and inspected by common Endings, including finances, employment, housing, Operator Household members, completed Shifts, service volume, and per-type Service Errors. It excludes generic scores and Story or Ending history.
+The authoritative concrete conditions and event-derived counters shared across Story Threads and inspected by common Endings, including finances, Employment Status, Disciplinary Status, Household Conditions, completed Shifts, service volume, and per-type Service Errors. It excludes generic scores and Story or Ending history.
 _Avoid_: Attribute bag, ending score, player statistics
 
 **Story Thread**:
 An authored multi-Shift chain involving a small group of Subscribers whose branches follow authoritative outcomes and always affect state relevant to common Endings. It continues through heard, unheard, missed, or offscreen outcomes and may also make its own Ending available.
 _Avoid_: Side quest, random event chain, fixed subplot
+
+**Household Story Thread**:
+The required Story Thread category from which every Run Manifest selects exactly one entry, defining that Run's Operator Household, related Subscribers, pressures, and possible story-specific Endings.
+_Avoid_: Family storyline, universal family
+
+**Household Need**:
+One of at most four authored Shift-end opportunities to spend from the Account Balance to improve the odds for a shared or member-specific household condition, with a disclosed cost, deadline, possible benefit, and risk.
+_Avoid_: Upgrade, family stat, hidden expense
 
 **Story Beat**:
 An authored step within a Story Thread, expressed as a Call Premise or non-call Story Event and resolved through one of its defined outcomes.
@@ -341,8 +353,12 @@ Money accumulated during a Shift from completed Routings at the current dynamic 
 _Avoid_: Score, wage
 
 **Account Balance**:
-Money carried between Shifts within the current Run. Its transaction history records Routing income, outside payments, and deductions without assigning them a moral category.
+Money carried between Shifts within the current Run; it may become negative and then accrue disclosed interest. Its transaction history records Routing income, outside payments, interest, and deductions without assigning them a moral category.
 _Avoid_: Total score, wallet
+
+**Employment Status**:
+The Exchange Operator's current relationship to Ministry employment: `employed`, `resigned`, `dismissed`, or `retired`. It remains separate from Disciplinary Status, though dismissal changes both.
+_Avoid_: Job score, Disciplinary Status, employment history
 
 **Service Record**:
 The history of the Exchange Operator's logged service performance during the current Run, retaining service volume and separate counters for each Service Error type. It affects earnings and may satisfy disclosed warning, probation, dismissal, or retirement conditions without becoming one aggregate score.
