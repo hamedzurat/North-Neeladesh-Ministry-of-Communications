@@ -100,6 +100,7 @@ Backend_Output :: struct {
 	printer:        string,
 	monitor_active: bool,
 	speaker_active: bool,
+	microphone_level: u8,
 }
 
 App_State :: struct {
@@ -115,6 +116,7 @@ App_State :: struct {
 	clock_minutes:    u16,
 	speaker_playing:  bool,
 	speaker_phase:    f32,
+	microphone_level: f32,
 	receipt_revealed: f32,
 	receipt_scroll:   f32,
 	receipt_dragging: bool,
@@ -414,21 +416,21 @@ draw_speaker :: proc(state: ^App_State, delta: f32) {
 	area := rect(940, 450, 480, 70)
 	draw_panel(area)
 	if rl.IsMouseButtonPressed(.LEFT) && contains(area, ui_mouse()) do state.speaker_enabled = !state.speaker_enabled
-	if state.speaker_playing do state.speaker_phase += delta * 7
+	if state.microphone_level > 0.01 do state.speaker_phase += delta * 7
 	bar_width: f32 = 12
 	for index in 0 ..< 24 {
 		height: f32 = 5
-		if state.speaker_playing {
+		if state.microphone_level > 0.01 {
 			wave := math.sin_f32(state.speaker_phase + f32(index) * 0.73)
 			if wave < 0 do wave = -wave
-			height = 7 + wave * 26
+			height = 5 + state.microphone_level * (8 + wave * 29)
 		}
 		x := area.x + 18 + f32(index) * 18
 		rl.DrawRectangleRounded(
 			rect(x, area.y + 57 - height, bar_width, height),
 			0.3,
 			3,
-			state.speaker_playing ? BLUE : BORDER,
+			state.microphone_level > 0.01 ? BLUE : BORDER,
 		)
 	}
 }
@@ -576,6 +578,7 @@ sync_backend :: proc(state: ^App_State) {
 	}
 	state.printer_feed = output.printer
 	state.speaker_playing = output.speaker_active
+	state.microphone_level = f32(output.microphone_level) / 255
 	state.reset_requested = false
 }
 
@@ -732,7 +735,7 @@ main :: proc() {
 		state.backend_timer -= delta
 		if state.backend_timer <= 0 {
 			sync_backend(&state)
-			state.backend_timer = 0.15
+			state.backend_timer = 0.05
 		}
 		rl.EndMode2D()
 		rl.EndDrawing()

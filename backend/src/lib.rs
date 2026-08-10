@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
     mpsc::{self, Receiver},
 };
 use std::thread;
@@ -72,6 +72,7 @@ pub struct CabinetOutput {
     pub printer: Vec<String>,
     pub monitor_active: bool,
     pub speaker_active: bool,
+    pub microphone_level: u8,
 }
 
 /// Typed consequential changes available to the MVP's hardcoded Subscribers.
@@ -182,6 +183,10 @@ pub trait VoicePipeline: Send {
     ) -> Result<OperatorSession, VoicePipelineError>;
 
     fn cancel_capture(&mut self) {}
+
+    fn microphone_level(&self) -> Arc<AtomicU32> {
+        Arc::new(AtomicU32::new(0))
+    }
 }
 
 struct FinishedOperatorSession {
@@ -205,6 +210,7 @@ struct ContinuousRecorder {
 }
 
 struct LocalVoicePipeline {
+    microphone_level: Arc<AtomicU32>,
     recorder: Option<ContinuousRecorder>,
     recorder_failure: Option<VoicePipelineError>,
     capture: Option<ActiveCapture>,
@@ -212,13 +218,16 @@ struct LocalVoicePipeline {
 
 impl Default for LocalVoicePipeline {
     fn default() -> Self {
-        match Self::start_continuous_recorder() {
+        let microphone_level = Arc::new(AtomicU32::new(0));
+        match Self::start_continuous_recorder(microphone_level.clone()) {
             Ok(recorder) => Self {
+                microphone_level,
                 recorder: Some(recorder),
                 recorder_failure: None,
                 capture: None,
             },
             Err(error) => Self {
+                microphone_level,
                 recorder: None,
                 recorder_failure: Some(error),
                 capture: None,
@@ -299,6 +308,7 @@ impl LocalVoicePipeline {
         input: &[T],
         samples: &Arc<Mutex<Vec<i16>>>,
         recording: &Arc<AtomicBool>,
+        microphone_level: &Arc<AtomicU32>,
         channels: usize,
     ) where
         T: cpal::Sample,
@@ -306,6 +316,12 @@ impl LocalVoicePipeline {
     {
         use cpal::Sample;
 
+        let peak = input
+            .iter()
+            .map(|sample| i32::from(i16::from_sample(*sample)).unsigned_abs())
+            .max()
+            .unwrap_or_default();
+        microphone_level.store(peak, Ordering::Release);
         if !recording.load(Ordering::Acquire) {
             return;
         }
@@ -328,6 +344,7 @@ impl LocalVoicePipeline {
         config: &cpal::SupportedStreamConfig,
         samples: Arc<Mutex<Vec<i16>>>,
         recording: Arc<AtomicBool>,
+        microphone_level: Arc<AtomicU32>,
         stream_error: Arc<Mutex<Option<String>>>,
     ) -> Result<cpal::Stream, VoicePipelineError> {
         use cpal::traits::DeviceTrait;
@@ -339,10 +356,17 @@ impl LocalVoicePipeline {
             cpal::SampleFormat::I8 => {
                 let stream_error = stream_error.clone();
                 let recording = recording.clone();
+                let microphone_level = microphone_level.clone();
                 device.build_input_stream(
                     stream_config.clone(),
                     move |data: &[i8], _| {
-                        Self::append_captured_samples(data, &samples, &recording, channels)
+                        Self::append_captured_samples(
+                            data,
+                            &samples,
+                            &recording,
+                            &microphone_level,
+                            channels,
+                        )
                     },
                     move |error: cpal::Error| {
                         if let Ok(mut saved_error) = stream_error.lock() {
@@ -355,10 +379,17 @@ impl LocalVoicePipeline {
             cpal::SampleFormat::I16 => {
                 let stream_error = stream_error.clone();
                 let recording = recording.clone();
+                let microphone_level = microphone_level.clone();
                 device.build_input_stream(
                     stream_config.clone(),
                     move |data: &[i16], _| {
-                        Self::append_captured_samples(data, &samples, &recording, channels)
+                        Self::append_captured_samples(
+                            data,
+                            &samples,
+                            &recording,
+                            &microphone_level,
+                            channels,
+                        )
                     },
                     move |error: cpal::Error| {
                         if let Ok(mut saved_error) = stream_error.lock() {
@@ -371,10 +402,17 @@ impl LocalVoicePipeline {
             cpal::SampleFormat::I32 => {
                 let stream_error = stream_error.clone();
                 let recording = recording.clone();
+                let microphone_level = microphone_level.clone();
                 device.build_input_stream(
                     stream_config.clone(),
                     move |data: &[i32], _| {
-                        Self::append_captured_samples(data, &samples, &recording, channels)
+                        Self::append_captured_samples(
+                            data,
+                            &samples,
+                            &recording,
+                            &microphone_level,
+                            channels,
+                        )
                     },
                     move |error: cpal::Error| {
                         if let Ok(mut saved_error) = stream_error.lock() {
@@ -386,10 +424,17 @@ impl LocalVoicePipeline {
             }
             cpal::SampleFormat::F32 => {
                 let stream_error = stream_error.clone();
+                let microphone_level = microphone_level.clone();
                 device.build_input_stream(
                     stream_config,
                     move |data: &[f32], _| {
-                        Self::append_captured_samples(data, &samples, &recording, channels)
+                        Self::append_captured_samples(
+                            data,
+                            &samples,
+                            &recording,
+                            &microphone_level,
+                            channels,
+                        )
                     },
                     move |error: cpal::Error| {
                         if let Ok(mut saved_error) = stream_error.lock() {
@@ -411,7 +456,9 @@ impl LocalVoicePipeline {
         })
     }
 
-    fn start_continuous_recorder() -> Result<ContinuousRecorder, VoicePipelineError> {
+    fn start_continuous_recorder(
+        microphone_level: Arc<AtomicU32>,
+    ) -> Result<ContinuousRecorder, VoicePipelineError> {
         use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
         let host = cpal::host_from_id(cpal::HostId::PipeWire).map_err(|error| {
@@ -438,6 +485,7 @@ impl LocalVoicePipeline {
             &config,
             samples.clone(),
             recording.clone(),
+            microphone_level,
             stream_error.clone(),
         )?;
         stream.play().map_err(|error| {
@@ -764,6 +812,10 @@ impl LocalVoicePipeline {
 }
 
 impl VoicePipeline for LocalVoicePipeline {
+    fn microphone_level(&self) -> Arc<AtomicU32> {
+        self.microphone_level.clone()
+    }
+
     fn begin_capture(&mut self) -> Result<(), VoicePipelineError> {
         if self.capture.is_some() {
             return Err(VoicePipelineError::new(
@@ -1005,6 +1057,7 @@ pub struct MvpCore {
     routing_status: &'static str,
     voice_pipeline: Option<Box<dyn VoicePipeline>>,
     voice_completion: Option<Receiver<FinishedOperatorSession>>,
+    microphone_level: Arc<AtomicU32>,
     ptt_held: bool,
     capture_active: bool,
     operator_session_profile: Option<SubscriberProfile>,
@@ -1024,6 +1077,7 @@ impl MvpCore {
     }
 
     pub fn with_voice_pipeline(pipeline: impl VoicePipeline + 'static) -> Self {
+        let microphone_level = pipeline.microphone_level();
         Self {
             call_index: 0,
             clock_started_at: Instant::now(),
@@ -1037,6 +1091,7 @@ impl MvpCore {
             routing_status: "CALLER OFF-HOOK: CONNECT TO OPERATOR",
             voice_pipeline: Some(Box::new(pipeline)),
             voice_completion: None,
+            microphone_level,
             ptt_held: false,
             capture_active: false,
             operator_session_profile: None,
@@ -1327,7 +1382,15 @@ impl MvpCore {
             printer: self.receipts.clone(),
             monitor_active,
             speaker_active,
+            microphone_level: Self::normalize_microphone_level(
+                self.microphone_level.load(Ordering::Acquire),
+            ),
         }
+    }
+
+    fn normalize_microphone_level(peak: u32) -> u8 {
+        let normalized = peak.saturating_mul(255) / u32::from(i16::MAX as u16);
+        normalized.min(255) as u8
     }
 }
 
@@ -1836,6 +1899,13 @@ mod tests {
     }
 
     #[test]
+    fn cabinet_output_exposes_the_continuous_microphone_level_for_visualization() {
+        let output = test_core().apply(snapshot(&[], -1, false));
+
+        assert_eq!(output.microphone_level, 0);
+    }
+
+    #[test]
     fn releasing_ptt_runs_a_bounded_profile_grounded_voice_exchange() {
         let pipeline = SuccessfulVoicePipeline {
             started: false,
@@ -1999,29 +2069,52 @@ mod tests {
     fn local_pipeline_mixes_all_cpal_input_channels_to_mono() {
         let samples = Arc::new(Mutex::new(Vec::new()));
         let recording = Arc::new(AtomicBool::new(true));
+        let microphone_level = Arc::new(AtomicU32::new(0));
 
         LocalVoicePipeline::append_captured_samples(
             &[0_i16, 1_000, 0, -1_000],
             &samples,
             &recording,
+            &microphone_level,
             2,
         );
 
         assert_eq!(*samples.lock().expect("read captured samples"), [500, -500]);
+        assert_eq!(microphone_level.load(Ordering::Acquire), 1_000);
     }
 
     #[test]
     fn local_pipeline_only_keeps_audio_while_ptt_is_active() {
         let samples = Arc::new(Mutex::new(Vec::new()));
         let recording = Arc::new(AtomicBool::new(false));
+        let microphone_level = Arc::new(AtomicU32::new(0));
 
-        LocalVoicePipeline::append_captured_samples(&[100_i16, 200], &samples, &recording, 1);
+        LocalVoicePipeline::append_captured_samples(
+            &[100_i16, 200],
+            &samples,
+            &recording,
+            &microphone_level,
+            1,
+        );
         recording.store(true, Ordering::Release);
-        LocalVoicePipeline::append_captured_samples(&[300_i16, 400], &samples, &recording, 1);
+        LocalVoicePipeline::append_captured_samples(
+            &[300_i16, 400],
+            &samples,
+            &recording,
+            &microphone_level,
+            1,
+        );
         recording.store(false, Ordering::Release);
-        LocalVoicePipeline::append_captured_samples(&[500_i16, 600], &samples, &recording, 1);
+        LocalVoicePipeline::append_captured_samples(
+            &[500_i16, 600],
+            &samples,
+            &recording,
+            &microphone_level,
+            1,
+        );
 
         assert_eq!(*samples.lock().expect("read captured samples"), [300, 400]);
+        assert_eq!(microphone_level.load(Ordering::Acquire), 600);
     }
 
     #[test]
