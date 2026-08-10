@@ -257,8 +257,8 @@ An authored step within a Story Thread, expressed as a Call Premise or non-call 
 _Avoid_: Quest step, generated plot, dialogue scene
 
 **Ending**:
-An authored terminal conclusion reached through an explicit decision or authoritative Run state, after which the Run cannot advance. An Ending may be universally available or exist only through a Story Thread selected in the Run Manifest.
-_Avoid_: Ending family, predetermined ending, score tier, ending roll
+The single authored terminal conclusion selected for a Run through precedence after an explicit terminal decision, an occurred terminal Story Event, or an eligible Run Outcome State condition. It normally resolves at Shift settlement; only the Operator Detained and Operator Killed Endings may terminate a Shift immediately. It contains one core conclusion and up to three eligible authored closure passages about materially connected people or Story Threads, never an exhaustive set of layered epilogues. An Ending may be universally available or exist only through the Story Graph.
+_Avoid_: Ending family, exhaustive epilogue, predetermined ending, score tier, ending roll
 
 **Content Profile**:
 The pre-Run boundary that admits or excludes Subscribers and Story Events according to their authored subject and intensity tags. Disallowed material never enters the selected Run or its improvised conversations.
