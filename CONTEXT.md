@@ -109,8 +109,16 @@ An NPC whose telephone line can originate or receive calls through the exchange.
 _Avoid_: User, customer, phone
 
 **Subscriber Profile**:
-The authored starting description of a Subscriber, including their identity, voice, personality, baseline goals, initial perspective, relationships, and permitted actions. Changes during a Run do not rewrite the Profile.
+The authored starting description of a Subscriber, including their identity, voice, personality, baseline goals, initial perspective, relationships, and maximum permitted subset of Subscriber Actions. Changes during a Run do not rewrite the Profile or grant capabilities outside that subset.
 _Avoid_: Character file, NPC prompt, mutable subscriber state
+
+**Subscriber State**:
+The Run-specific mutable condition of a Subscriber, including availability, pressure, their current Subscriber Goal, status flags, and only those quantities that game rules actually inspect. It remains separate from the immutable Subscriber Profile rather than becoming a generic collection of character statistics.
+_Avoid_: Mutable profile, NPC stat sheet, attribute bag
+
+**Subscriber Goal**:
+An authored objective currently guiding a Subscriber. Interactions and Story Events may keep it or select another currently permitted goal, but Improvised Dialogue cannot invent an authoritative goal.
+_Avoid_: Free-form plan, LLM objective
 
 **Caller**:
 The subscriber who initiates a particular call.
@@ -244,6 +252,10 @@ _Avoid_: Lore prompt, generated fact
 A short validated text recollection independently written for a Subscriber after each meaningful conversation they experience and persisted between Shifts within the current Run. Memories are not rewritten; later corrections become new Memories or changed Beliefs.
 _Avoid_: Chat history, transcript, cross-run memory
 
+**Conversation Note**:
+A Subscriber's short private statement of their immediate conversational intention, valid only during the current conversation. It neither establishes facts nor persists as a Subscriber Memory, Subscriber Belief, or current goal.
+_Avoid_: Chain of thought, hidden memory, private fact
+
 **Subscriber Knowledge**:
 Canonical information available to a particular Subscriber, recorded with where they learned it. It arises through authored starting knowledge, participation, witnessing, validated transfer, or an observable public consequence rather than becoming universally available.
 _Avoid_: Global lore, prompt context
@@ -253,11 +265,11 @@ A proposition a Subscriber accepts that may be mistaken, incomplete, or contradi
 _Avoid_: Canonical fact, generated fact
 
 **Subscriber Action**:
-A typed consequential change an AI-controlled Subscriber may propose from their individual subset of a shared action catalogue. It affects authoritative state only after validation by the game, and Story Events may further constrain its availability.
+A typed, immediately validated consequential act that an AI-controlled Subscriber may propose from their individual subset of a shared action catalogue. A valid proposal applies its defined effect and produces an Action Record; Story Events may activate, parameterize, narrow, or forbid actions without granting capabilities outside the Subscriber Profile.
 _Avoid_: NPC tool call, LLM action, unrestricted command
 
 **Action Record**:
-The authoritative, uniquely identified record of an accepted Subscriber Action and its pending, succeeded, failed, or cancelled status. It belongs to the acting Subscriber; other Subscribers learn its meaningful effects only through permitted observation or knowledge transfer.
+The authoritative, uniquely identified record of a completed Subscriber Action and its result. Its existence means the action happened; it belongs to the acting Subscriber, while others learn its meaningful effects only through permitted observation or knowledge transfer.
 _Avoid_: Tool log, action memory, dialogue claim
 
 **State Query**:
