@@ -82,7 +82,7 @@ fn handle_client(
     let printer = output.printer.join("|");
     writeln!(
         &mut stream.try_clone()?,
-        "{{\"sequence\":{},\"clock_minutes\":{},\"phase\":\"{}\",\"reset_status\":\"{}\",\"routing_status\":\"{}\",\"line_lamps\":[{}],\"directory\":\"{}\",\"printer\":\"{}\",\"monitor_active\":{},\"speaker_active\":{}}}",
+        "{{\"sequence\":{},\"clock_minutes\":{},\"phase\":\"{}\",\"reset_status\":\"{}\",\"routing_status\":\"{}\",\"line_lamps\":[{}],\"directory\":\"{}\",\"printer\":\"{}\",\"monitor_active\":{},\"speaker_active\":{},\"microphone_level\":{}}}",
         output.sequence,
         output.clock_minutes,
         output.phase.label(),
@@ -93,6 +93,7 @@ fn handle_client(
         escape(&printer),
         output.monitor_active,
         output.speaker_active,
+        output.microphone_level,
     )
 }
 
