@@ -1,6 +1,9 @@
 use backend::{CabinetSnapshot, Cord, MvpCore};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::time::Duration;
+
+const CLIENT_TIMEOUT: Duration = Duration::from_millis(250);
 
 fn main() -> std::io::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:48129")?;
@@ -20,6 +23,8 @@ fn main() -> std::io::Result<()> {
 }
 
 fn handle_client(stream: TcpStream, core: &mut MvpCore) -> std::io::Result<()> {
+    stream.set_read_timeout(Some(CLIENT_TIMEOUT))?;
+    stream.set_write_timeout(Some(CLIENT_TIMEOUT))?;
     let mut line = String::new();
     BufReader::new(stream.try_clone()?).read_line(&mut line)?;
     let input = parse_snapshot(&line).unwrap_or_else(|| CabinetSnapshot {
