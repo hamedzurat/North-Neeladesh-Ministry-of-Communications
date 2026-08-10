@@ -12,10 +12,11 @@ fn main() -> std::io::Result<()> {
     let listener = TcpListener::bind(&address)?;
     eprintln!("North Neeladesh MVP core listening on {address} (offline only)");
     let mut core = MvpCore::new();
+    let mut printed_receipt = Vec::new();
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                if let Err(error) = handle_client(stream, &mut core) {
+                if let Err(error) = handle_client(stream, &mut core, &mut printed_receipt) {
                     eprintln!("cabinet request failed: {error}");
                 }
             }
@@ -25,7 +26,11 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-fn handle_client(stream: TcpStream, core: &mut MvpCore) -> std::io::Result<()> {
+fn handle_client(
+    stream: TcpStream,
+    core: &mut MvpCore,
+    printed_receipt: &mut Vec<String>,
+) -> std::io::Result<()> {
     stream.set_read_timeout(Some(CLIENT_TIMEOUT))?;
     stream.set_write_timeout(Some(CLIENT_TIMEOUT))?;
     let mut line = String::new();
@@ -62,6 +67,13 @@ fn handle_client(stream: TcpStream, core: &mut MvpCore) -> std::io::Result<()> {
         output.printer.len(),
         output.printer.last(),
     );
+    if output.printer != *printed_receipt {
+        eprintln!("[thermal printer]");
+        for line in &output.printer {
+            eprintln!("{line}");
+        }
+        *printed_receipt = output.printer.clone();
+    }
     let lamps = output
         .line_lamps
         .map(|lit| if lit { "true" } else { "false" })
