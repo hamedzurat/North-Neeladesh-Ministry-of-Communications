@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -13,10 +13,10 @@ impl Drop for RunningCore {
     }
 }
 
-fn connect_to_core() -> TcpStream {
+fn connect_to_core(port: u16) -> TcpStream {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
-        match TcpStream::connect("127.0.0.1:48129") {
+        match TcpStream::connect(("127.0.0.1", port)) {
             Ok(stream) => return stream,
             Err(error) if Instant::now() < deadline => {
                 let _ = error;
@@ -27,8 +27,8 @@ fn connect_to_core() -> TcpStream {
     }
 }
 
-fn request(snapshot: &str) -> String {
-    let mut stream = connect_to_core();
+fn request(port: u16, snapshot: &str) -> String {
+    let mut stream = connect_to_core(port);
     stream.write_all(snapshot.as_bytes()).unwrap();
     stream.write_all(b"\n").unwrap();
     let mut response = String::new();
@@ -38,10 +38,21 @@ fn request(snapshot: &str) -> String {
 
 #[test]
 fn loopback_protocol_returns_backend_state_and_accepts_a_reset_on_a_new_connection() {
+    let port = TcpListener::bind("127.0.0.1:0")
+        .expect("reserve a test loopback port")
+        .local_addr()
+        .expect("read reserved test port")
+        .port();
     let binary = env!("CARGO_BIN_EXE_backend");
-    let _core = RunningCore(Command::new(binary).spawn().expect("start MVP core"));
+    let _core = RunningCore(
+        Command::new(binary)
+            .env("NN_MVP_BACKEND_PORT", port.to_string())
+            .spawn()
+            .expect("start MVP core"),
+    );
 
     let initial = request(
+        port,
         r#"{"sequence":1,"cords":[],"active_action":-1,"crank_complete":false,"directory_id":4101,"speaker_enabled":true,"reset":false}"#,
     );
     assert!(initial.contains(r#""sequence":1"#));
@@ -49,6 +60,7 @@ fn loopback_protocol_returns_backend_state_and_accepts_a_reset_on_a_new_connecti
     assert!(initial.contains("NILA DAS"));
 
     let reset = request(
+        port,
         r#"{"sequence":2,"cords":[],"active_action":-1,"crank_complete":false,"directory_id":9999,"speaker_enabled":true,"reset":true}"#,
     );
     assert!(reset.contains(r#""sequence":2"#));
