@@ -581,21 +581,14 @@ impl VoicePipeline for LocalVoicePipeline {
                     std::env::var("NN_MVP_PLAY_COMMAND").unwrap_or_else(|_| "paplay".into());
                 Command::new(player)
                     .arg(&speech_path)
-                    .status()
+                    .spawn()
                     .map_err(|error| {
                         VoicePipelineError::new(
                             VoiceStage::Tts,
                             format!("SPEAKER UNAVAILABLE: {error}"),
                         )
                     })
-                    .and_then(|status| {
-                        status.success().then_some(()).ok_or_else(|| {
-                            VoicePipelineError::new(
-                                VoiceStage::Tts,
-                                format!("SPEAKER EXITED {status}"),
-                            )
-                        })
-                    })
+                    .map(|_| ())
             } else {
                 Ok(())
             };
