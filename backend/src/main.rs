@@ -27,16 +27,38 @@ fn handle_client(stream: TcpStream, core: &mut MvpCore) -> std::io::Result<()> {
     stream.set_write_timeout(Some(CLIENT_TIMEOUT))?;
     let mut line = String::new();
     BufReader::new(stream.try_clone()?).read_line(&mut line)?;
-    let input = parse_snapshot(&line).unwrap_or_else(|| CabinetSnapshot {
-        sequence: 0,
-        cords: Vec::new(),
-        active_action: -1,
-        crank_complete: false,
-        directory_id: 0,
-        speaker_enabled: true,
-        reset: false,
+    let input = parse_snapshot(&line).unwrap_or_else(|| {
+        eprintln!("[cabinet] malformed snapshot: {line:?}");
+        CabinetSnapshot {
+            sequence: 0,
+            cords: Vec::new(),
+            active_action: -1,
+            crank_complete: false,
+            directory_id: 0,
+            speaker_enabled: true,
+            reset: false,
+        }
     });
+    eprintln!(
+        "[cabinet] input sequence={} cords={:?} action={} crank_complete={} directory_id={} speaker_enabled={} reset={}",
+        input.sequence,
+        input.cords,
+        input.active_action,
+        input.crank_complete,
+        input.directory_id,
+        input.speaker_enabled,
+        input.reset,
+    );
     let output = core.apply(input);
+    eprintln!(
+        "[cabinet] output sequence={} phase={} lamps={:?} reset_status={} printer_lines={} latest_printer={:?}",
+        output.sequence,
+        output.phase.label(),
+        output.line_lamps,
+        output.reset_status,
+        output.printer.len(),
+        output.printer.last(),
+    );
     let lamps = output
         .line_lamps
         .map(|lit| if lit { "true" } else { "false" })
