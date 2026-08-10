@@ -174,6 +174,7 @@ pub trait VoicePipeline {
 struct ActiveCapture {
     process: Child,
     path: PathBuf,
+    session_id: u128,
 }
 
 struct LocalVoicePipeline {
@@ -187,15 +188,22 @@ impl Default for LocalVoicePipeline {
 }
 
 impl LocalVoicePipeline {
-    fn temporary_audio_path(extension: &str) -> PathBuf {
-        let timestamp = SystemTime::now()
+    fn voice_artifact_path(
+        stage: VoiceStage,
+        filename: &str,
+    ) -> Result<PathBuf, VoicePipelineError> {
+        let directory = PathBuf::from("runtime/voice");
+        fs::create_dir_all(&directory).map_err(|error| {
+            VoicePipelineError::new(stage, format!("COULD NOT CREATE VOICE ARTIFACTS: {error}"))
+        })?;
+        Ok(directory.join(filename))
+    }
+
+    fn next_session_id() -> u128 {
+        SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "north-neeladesh-mvp-{}-{timestamp}.{extension}",
-            std::process::id()
-        ))
+            .as_nanos()
     }
 
     fn captured_audio_has_frames(audio_path: &PathBuf) -> Result<(), VoicePipelineError> {
@@ -283,7 +291,61 @@ impl LocalVoicePipeline {
                 format!("LOCAL WORKER RETURNED HTTP {status}"),
             ));
         }
-        Ok(response[divider + 4..].to_vec())
+        let body = &response[divider + 4..];
+        let chunked = head.lines().any(|line| {
+            let Some((name, value)) = line.split_once(':') else {
+                return false;
+            };
+            name.eq_ignore_ascii_case("transfer-encoding")
+                && value
+                    .split(',')
+                    .any(|encoding| encoding.trim().eq_ignore_ascii_case("chunked"))
+        });
+        if chunked {
+            Self::decode_chunked_body(stage, body)
+        } else {
+            Ok(body.to_vec())
+        }
+    }
+
+    fn decode_chunked_body(
+        stage: VoiceStage,
+        encoded: &[u8],
+    ) -> Result<Vec<u8>, VoicePipelineError> {
+        let mut cursor = 0;
+        let mut decoded = Vec::new();
+        loop {
+            let line_end = encoded[cursor..]
+                .windows(2)
+                .position(|part| part == b"\r\n")
+                .map(|offset| cursor + offset)
+                .ok_or_else(|| {
+                    VoicePipelineError::new(stage, "LOCAL WORKER SENT AN INVALID CHUNK")
+                })?;
+            let size = std::str::from_utf8(&encoded[cursor..line_end])
+                .ok()
+                .and_then(|size| size.split(';').next())
+                .and_then(|size| usize::from_str_radix(size.trim(), 16).ok())
+                .ok_or_else(|| {
+                    VoicePipelineError::new(stage, "LOCAL WORKER SENT AN INVALID CHUNK SIZE")
+                })?;
+            cursor = line_end + 2;
+            if size == 0 {
+                return Ok(decoded);
+            }
+            let end = cursor
+                .checked_add(size)
+                .filter(|end| *end + 2 <= encoded.len())
+                .ok_or_else(|| VoicePipelineError::new(stage, "LOCAL WORKER TRUNCATED A CHUNK"))?;
+            decoded.extend_from_slice(&encoded[cursor..end]);
+            if &encoded[end..end + 2] != b"\r\n" {
+                return Err(VoicePipelineError::new(
+                    stage,
+                    "LOCAL WORKER SENT AN INVALID CHUNK TERMINATOR",
+                ));
+            }
+            cursor = end + 2;
+        }
     }
 
     fn append_form_field(body: &mut Vec<u8>, boundary: &str, name: &str, value: &[u8]) {
@@ -420,7 +482,6 @@ impl LocalVoicePipeline {
                     )
                 })
             });
-        let _ = fs::remove_file(raw_path);
         result
     }
 
@@ -448,7 +509,9 @@ impl VoicePipeline for LocalVoicePipeline {
                 "PTT CAPTURE IS ALREADY ACTIVE",
             ));
         }
-        let path = Self::temporary_audio_path("wav");
+        let session_id = Self::next_session_id();
+        let path =
+            Self::voice_artifact_path(VoiceStage::Capture, &format!("{session_id}-operator.wav"))?;
         let child = Command::new("pw-record")
             .args(["--rate", "16000", "--channels", "1", "--format", "s16"])
             .arg(&path)
@@ -462,6 +525,7 @@ impl VoicePipeline for LocalVoicePipeline {
         self.capture = Some(ActiveCapture {
             process: child,
             path,
+            session_id,
         });
         Ok(())
     }
@@ -471,7 +535,11 @@ impl VoicePipeline for LocalVoicePipeline {
         profile: &SubscriberProfile,
         speaker_enabled: bool,
     ) -> Result<OperatorSession, VoicePipelineError> {
-        let ActiveCapture { mut process, path } = self.capture.take().ok_or_else(|| {
+        let ActiveCapture {
+            mut process,
+            path,
+            session_id,
+        } = self.capture.take().ok_or_else(|| {
             VoicePipelineError::new(VoiceStage::Capture, "NO PTT RECORDING WAS STARTED")
         })?;
         Self::finish_recording(&mut process);
@@ -499,11 +567,13 @@ impl VoicePipeline for LocalVoicePipeline {
                 first_response
             };
 
-            let speech_path = Self::temporary_audio_path("wav");
+            let speech_path = Self::voice_artifact_path(
+                VoiceStage::Tts,
+                &format!("{session_id}-subscriber.wav"),
+            )?;
             let synthesis =
                 self.synthesize(profile.local_voice_configuration, &response, &speech_path);
             if let Err(error) = synthesis {
-                let _ = fs::remove_file(&speech_path);
                 return Err(error);
             }
             let playback = if speaker_enabled {
@@ -529,14 +599,12 @@ impl VoicePipeline for LocalVoicePipeline {
             } else {
                 Ok(())
             };
-            let _ = fs::remove_file(&speech_path);
             playback?;
             Ok(OperatorSession {
                 transcript,
                 response,
             })
         })();
-        let _ = fs::remove_file(path);
         result
     }
 
@@ -544,7 +612,6 @@ impl VoicePipeline for LocalVoicePipeline {
         if let Some(mut capture) = self.capture.take() {
             let _ = capture.process.kill();
             let _ = capture.process.wait();
-            let _ = fs::remove_file(capture.path);
         }
     }
 }
@@ -1417,7 +1484,8 @@ mod tests {
 
     #[test]
     fn local_pipeline_rejects_a_wav_header_without_microphone_frames() {
-        let path = LocalVoicePipeline::temporary_audio_path("wav");
+        let path = LocalVoicePipeline::voice_artifact_path(VoiceStage::Capture, "test-empty.wav")
+            .expect("create the voice artifact directory");
         fs::write(&path, [0_u8; 44]).expect("write a header-only WAV fixture");
 
         let result = LocalVoicePipeline::captured_audio_has_frames(&path);
@@ -1430,5 +1498,15 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn local_http_client_decodes_chunked_tts_audio() {
+        let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: audio/wav\r\n\r\n4\r\nRIFF\r\n4\r\nWAVE\r\n0\r\n\r\n";
+
+        let body = LocalVoicePipeline::http_response_body(VoiceStage::Tts, response)
+            .expect("decode the local Pocket TTS response");
+
+        assert_eq!(body, b"RIFFWAVE");
     }
 }
