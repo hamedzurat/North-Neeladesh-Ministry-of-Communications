@@ -78,13 +78,9 @@ Cord :: struct {
 	active: bool,
 }
 
-Cabinet_Cord :: struct {
-	a, b: int,
-}
-
 Cabinet_Snapshot :: struct {
 	sequence:        u64,
-	cords:           [dynamic]Cabinet_Cord,
+	cords:           [dynamic][2]int,
 	active_action:   int,
 	crank_complete:  bool,
 	directory_id:    u16,
@@ -494,7 +490,7 @@ snapshot_json :: proc(state: ^App_State) -> ([]byte, json.Marshal_Error) {
 		reset           = state.reset_requested,
 	}
 	for cord in state.cords {
-		if cord.active do append(&snapshot.cords, Cabinet_Cord{cord.a, cord.b})
+		if cord.active do append(&snapshot.cords, [2]int{cord.a, cord.b})
 	}
 	directory_id := state.digits[0] * 1000 + state.digits[1] * 100 + state.digits[2] * 10 + state.digits[3]
 	snapshot.directory_id = u16(directory_id)
