@@ -7,8 +7,8 @@ backend:
 stt:
 	./scripts/run-stt.sh
 
-dialogue:
-	./scripts/run-dialogue.sh
+llm:
+	./scripts/run-llm.sh
 
 tts:
 	./scripts/run-tts.sh
