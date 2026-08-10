@@ -1,8 +1,11 @@
-// PROTOTYPE - standalone interaction model. Cabinet Link integration comes later.
+// Cabinet Frontend: responsive device mechanics and rendering for Rust authority output.
 package switchboard_prototype
 
 import "core:fmt"
 import "core:math"
+import "core:encoding/json"
+import "core:net"
+import "core:strings"
 import rl "vendor:raylib"
 
 WINDOW_W :: 1440
@@ -30,17 +33,17 @@ CAMERA: rl.Camera2D
 
 LINE_LABELS := [LINE_COUNT]cstring {
 	"RAIL DISPATCH",
-	"CITY CLINIC",
+	"KHARAD CLINIC",
 	"RATION OFFICE",
 	"FIRE STATION",
-	"TEXTILE MILL",
+	"FOUNDRY APTS",
 	"BORDER POST",
 	"LABOUR OFFICE",
 	"MINISTRY DESK",
 	"RIVER MARKET",
 	"GRAND HOTEL",
 	"POLICE POST",
-	"POWER STATION",
+	"STEEL WORKS",
 	"PHARMACY",
 	"FREIGHT YARD",
 	"POST OFFICE",
@@ -69,36 +72,21 @@ ACTION_LABELS := [ACTION_COUNT]cstring {
 	"TAP 2 LISTEN",
 }
 
-RECEIPT_LINES := [24]cstring {
-	"MINISTRY OF COMMUNICATIONS",
-	"KHARAD PROVINCIAL EXCHANGE",
-	"------------------------------",
-	"SHIFT OPENED          09:00",
-	"ROUTING  RAIL > POWER     +6",
-	"ROUTING  CLINIC > POLICE  +6",
-	"CALL     BORDER POST       --",
-	"ROUTING  MILL > FREIGHT    +6",
-	"------------------------------",
-	"SERVICE RECORD",
-	"COMPLETED ROUTINGS          3",
-	"SERVICE ERRORS              0",
-	"DIRECT SERVICE CALLS        1",
-	"------------------------------",
-	"ACCOUNT",
-	"ROUTING EARNINGS        N 18",
-	"DEDUCTIONS               N 0",
-	"SHIFT EARNINGS          N 18",
-	"------------------------------",
-	"CABINET LINK           READY",
-	"PRINTER JOB     DEMO-SHIFT-1",
-	"STATUS              COMPLETED",
-	"------------------------------",
-	"END OF RECEIPT",
-}
-
 Cord :: struct {
 	a, b:   int,
 	active: bool,
+}
+
+Backend_Output :: struct {
+	sequence:       u64,
+	phase:          string,
+	health:         string,
+	reset_status:   string,
+	line_lamps:     [LINE_COUNT]bool,
+	directory:      string,
+	printer:        string,
+	monitor_active: bool,
+	speaker_active: bool,
 }
 
 App_State :: struct {
@@ -118,6 +106,16 @@ App_State :: struct {
 	receipt_scroll:   f32,
 	receipt_dragging: bool,
 	line_lamps:       [LINE_COUNT]bool,
+	backend_sequence: u64,
+	backend_timer:    f32,
+	backend_online:   bool,
+	backend_phase:    string,
+	backend_health:   string,
+	reset_status:     string,
+	directory_page:   string,
+	printer_feed:     string,
+	reset_requested:  bool,
+	speaker_enabled:  bool,
 }
 
 rect :: proc(x, y, width, height: f32) -> rl.Rectangle {
@@ -357,6 +355,9 @@ draw_shift_time :: proc(state: ^App_State, delta: f32) {
 	}
 	rl.DrawCircleV(point(area.x + 239, area.y + 57), 5, AMBER)
 	rl.DrawCircleV(point(area.x + 239, area.y + 86), 5, AMBER)
+	status_color := state.backend_online ? GREEN : AMBER
+	draw_text(fmt.ctprintf("%s", state.backend_health), area.x + 16, area.y + 116, 11, status_color)
+	draw_text(fmt.ctprintf("%s", state.reset_status), area.x + 286, area.y + 116, 11, MUTED)
 }
 
 draw_directory :: proc(state: ^App_State, delta: f32) {
@@ -392,22 +393,17 @@ draw_directory :: proc(state: ^App_State, delta: f32) {
 		draw_text("SEARCHING", right.x + 14, right.y + 18, 17, PAPER_INK)
 		return
 	}
-	selected :=
-		state.digits[0] * 1000 + state.digits[1] * 100 + state.digits[2] * 10 + state.digits[3]
-	if selected >= 1001 && selected <= 1016 {
-		line_index := selected - 1001
-		draw_text(LINE_LABELS[line_index], right.x + 14, right.y + 18, 15, PAPER_INK)
-		draw_text(fmt.ctprintf("LINE %d", selected), right.x + 14, right.y + 50, 12, PAPER_INK)
-		draw_text("KHARAD EXCHANGE", right.x + 14, right.y + 72, 12, PAPER_INK)
-	} else {
-		draw_text("NO RECORD", right.x + 14, right.y + 18, 17, PAPER_INK)
+	directory_lines := strings.split(state.directory_page, "|", context.temp_allocator)
+	for line, index in directory_lines {
+		if index >= 4 do break
+		draw_text(fmt.ctprintf("%s", line), right.x + 14, right.y + 18 + f32(index) * 31, index == 0 ? 15 : 11, PAPER_INK)
 	}
 }
 
 draw_speaker :: proc(state: ^App_State, delta: f32) {
 	area := rect(940, 450, 480, 70)
 	draw_panel(area)
-	if rl.IsMouseButtonPressed(.LEFT) && contains(area, ui_mouse()) do state.speaker_playing = !state.speaker_playing
+	if rl.IsMouseButtonPressed(.LEFT) && contains(area, ui_mouse()) do state.speaker_enabled = !state.speaker_enabled
 	if state.speaker_playing do state.speaker_phase += delta * 7
 	bar_width: f32 = 12
 	for index in 0 ..< 24 {
@@ -433,11 +429,13 @@ draw_printer :: proc(state: ^App_State, delta: f32) {
 	paper := rect(area.x + 24, area.y + 18, area.width - 48, area.height - 36)
 	rl.DrawRectangleRec(paper, PAPER)
 
-	state.receipt_revealed = min(f32(len(RECEIPT_LINES)), state.receipt_revealed + delta * 2.6)
+	printer_lines := strings.split(state.printer_feed, "|", context.temp_allocator)
+	if len(printer_lines) == 0 do return
+	state.receipt_revealed = min(f32(len(printer_lines)), state.receipt_revealed + delta * 2.6)
 	revealed := int(state.receipt_revealed)
 	visible_lines := 13
 	max_scroll := max(0, revealed - visible_lines)
-	printing := revealed < len(RECEIPT_LINES)
+	printing := revealed < len(printer_lines)
 	if printing {
 		state.receipt_scroll = f32(max_scroll)
 	} else if contains(paper, ui_mouse()) {
@@ -469,9 +467,77 @@ draw_printer :: proc(state: ^App_State, delta: f32) {
 	end_line := min(revealed, start_line + visible_lines)
 	y := paper.y + 14
 	for index in start_line ..< end_line {
-		draw_text(RECEIPT_LINES[index], paper.x + 16, y, 12, PAPER_INK)
+		draw_text(fmt.ctprintf("%s", printer_lines[index]), paper.x + 16, y, 12, PAPER_INK)
 		y += 21
 	}
+}
+
+snapshot_json :: proc(state: ^App_State) -> string {
+	builder := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(&builder, `{"sequence":%d,"cords":[`, state.backend_sequence)
+	first := true
+	for cord in state.cords {
+		if !cord.active do continue
+		if !first do strings.write_string(&builder, ",")
+		fmt.sbprintf(&builder, "[%d,%d]", cord.a, cord.b)
+		first = false
+	}
+	directory_id := state.digits[0] * 1000 + state.digits[1] * 100 + state.digits[2] * 10 + state.digits[3]
+	fmt.sbprintf(
+		&builder,
+		`],"active_action":%d,"crank_complete":%t,"directory_id":%d,"speaker_enabled":%t,"reset":%t}\n`,
+		state.active_action,
+		state.crank_flash > 0,
+		directory_id,
+		state.speaker_enabled,
+		state.reset_requested,
+	)
+	return strings.to_string(builder)
+}
+
+sync_backend :: proc(state: ^App_State) {
+	state.backend_sequence += 1
+	socket, dial_error := net.dial_tcp_from_hostname_and_port_string("127.0.0.1:48129")
+	if dial_error != nil {
+		state.backend_online = false
+		state.backend_health = "RUST CORE OFFLINE"
+		return
+	}
+	defer net.close(socket)
+	request := snapshot_json(state)
+	_, send_error := net.send_tcp(socket, transmute([]byte)request)
+	if send_error != nil {
+		state.backend_online = false
+		state.backend_health = "RUST CORE SEND ERROR"
+		return
+	}
+	buffer: [8192]byte
+	read_count, receive_error := net.recv_tcp(socket, buffer[:])
+	if receive_error != nil || read_count == 0 {
+		state.backend_online = false
+		state.backend_health = "RUST CORE NO RESPONSE"
+		return
+	}
+	output: Backend_Output
+	decode_error := json.unmarshal(buffer[:read_count], &output)
+	if decode_error != nil {
+		state.backend_online = false
+		state.backend_health = "RUST CORE PROTOCOL ERROR"
+		return
+	}
+	state.backend_online = true
+	state.backend_phase = output.phase
+	state.backend_health = output.health
+	state.reset_status = output.reset_status
+	state.line_lamps = output.line_lamps
+	state.directory_page = output.directory
+	if output.reset_status == "RESET COMPLETE" {
+		state.receipt_revealed = 0
+		state.receipt_scroll = 0
+	}
+	state.printer_feed = output.printer
+	state.speaker_playing = output.speaker_active
+	state.reset_requested = false
 }
 
 endpoint_cord :: proc(state: ^App_State, endpoint: int) -> int {
@@ -576,15 +642,15 @@ initial_state :: proc() -> App_State {
 	state := App_State {
 		drag_start      = -1,
 		active_action   = -1,
-		digits          = {1, 0, 0, 2},
+		digits          = {4, 1, 0, 1},
 		tuning          = {0.64, 0.38},
 		work_minutes    = 9 * 60,
-		speaker_playing = true,
+		backend_health  = "RUST CORE STARTING",
+		reset_status    = "PRESS R TO RESET",
+		directory_page  = "SEARCHING",
+		printer_feed    = "WAITING FOR RUST CORE",
+		speaker_enabled = true,
 	}
-	// Mock backend output: Line Lamps are never changed by frontend interaction.
-	state.line_lamps[1] = true
-	state.line_lamps[7] = true
-	state.line_lamps[13] = true
 	return state
 }
 
@@ -620,6 +686,12 @@ main :: proc() {
 		draw_speaker(&state, delta)
 		draw_printer(&state, delta)
 		draw_cords_and_handle_input(&state, &jacks)
+		if rl.IsKeyPressed(.R) do state.reset_requested = true
+		state.backend_timer -= delta
+		if state.backend_timer <= 0 {
+			sync_backend(&state)
+			state.backend_timer = 0.15
+		}
 		rl.EndMode2D()
 		rl.EndDrawing()
 		free_all(context.temp_allocator)
