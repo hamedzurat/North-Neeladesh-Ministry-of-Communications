@@ -7,7 +7,7 @@ Run each offline component in its own terminal, in this order:
 just stt
 
 # Terminal 2
-just dialogue
+just llm
 
 # Terminal 3
 just tts
@@ -19,7 +19,7 @@ just backend
 just frontend
 ```
 
-`just stt`, `just dialogue`, and `just tts` own the local Whisper, Qwen, and Pocket TTS workers respectively. `just backend` is only the Rust authority; it calls those loopback-only workers when an Operator Session finishes. The default asset workspace is `$HOME/.local/share/north-neeladesh/voice-benchmark`; set `NN_MVP_VOICE_BENCHMARK_ROOT` to use another prepared local workspace.
+`just stt`, `just llm`, and `just tts` own the local Whisper, Qwen, and Pocket TTS workers respectively. `just backend` is only the Rust authority; it calls those loopback-only workers when an Operator Session finishes. The default asset workspace is `$HOME/.local/share/north-neeladesh/voice-benchmark`; set `NN_MVP_VOICE_BENCHMARK_ROOT` to use another prepared local workspace.
 
 ## Required local commands
 

@@ -16,7 +16,7 @@ Run the MVP in separate terminals so each component's logs remain visible:
 just stt
 
 # Terminal 2
-just dialogue
+just llm
 
 # Terminal 3
 just tts
