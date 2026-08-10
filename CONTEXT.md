@@ -109,7 +109,7 @@ A typed current condition of the Operator Household: shared Housing Status (`sec
 _Avoid_: Family score, household pressure meter, free-form family state
 
 **Subscriber**:
-An NPC whose telephone line can originate or receive calls through the exchange.
+A named NPC who can originate or receive calls through a Subscriber Line. Several Subscribers may share one line when they use the same residence, workplace, or institution.
 _Avoid_: User, customer, phone
 
 **Subscriber Profile**:
@@ -133,8 +133,16 @@ The subscriber whom the caller asks the Exchange Operator to reach.
 _Avoid_: Receiver, destination NPC
 
 **Subscriber Line**:
-A telephone endpoint assigned to a Subscriber and represented on the switchboard by a Line Jack and lamp.
+A telephone endpoint assigned to one stable Line Listing and represented on the switchboard by a Line Jack and lamp. Authored content determines which Subscribers may use it during a Run.
 _Avoid_: Phone port, NPC port
+
+**Line Listing**:
+The stable place, residence, workplace, or institution printed beside a Subscriber Line on the Cabinet. It identifies the physical destination rather than any one Subscriber who may speak through it.
+_Avoid_: NPC label, character slot, line owner
+
+**Line Service Status**:
+Whether a Line Listing is `active` and may originate or receive calls, or `inactive` and remains silent. A full-game Run begins with four active listings, while authored Story Graph progression may activate others.
+_Avoid_: Unlocked line, disabled jack, hidden port
 
 **Line Lamp**:
 The binary physical indicator of whether a Subscriber is holding their receiver off-hook. A lit lamp means off-hook and a dark lamp means on-hook; it does not encode call state through colour.
@@ -180,6 +188,10 @@ _Avoid_: Embedded game controller, secondary game core
 The local terminal interface through which the operator starts, resumes, pauses, exports, or ends a Run and inspects frontend, worker, persistence, and device health. It sends management commands to the authoritative core but provides no gameplay controls.
 _Avoid_: Gameplay frontend, admin website, debug switchboard
 
+**Shift Guidance**:
+Optional spoken instructions played before a Shift to explain mechanics that its calls may require. A pre-Run Control Console setting enables or disables the guidance without changing Story Graph eligibility or game difficulty.
+_Avoid_: Mandatory onboarding, tutorial mode, story announcement
+
 **Cabinet Snapshot**:
 A complete observation of the Cabinet Frontend's current controls, Cord Topology, and device health at one sample point. It describes hardware state without assigning gameplay meaning.
 _Avoid_: Input event batch, game-state snapshot
@@ -200,9 +212,13 @@ _Avoid_: Campaign, playthrough
 A top-level authored configuration that composes the content, pacing, difficulty, and seed policy for a Run.
 _Avoid_: Mode, preset, master config
 
+**Story Graph**:
+The Scenario-wide directed acyclic network of authored Story Beats, Story Events, and Endings whose eligibility follows authoritative state. It may have a fixed opening and seeded choices among authored alternatives, but free-form dialogue cannot create nodes, edges, or consequences.
+_Avoid_: Generated plot, monolithic story file, LLM story state
+
 **Run Manifest**:
-The seeded selection created from a Scenario at the start of a Run, identifying the small subset of authored Story Threads and their participating Subscribers that exist in that Run. Content belonging only to unselected Story Threads is absent from the Run's world state.
-_Avoid_: Generated campaign, predetermined plot, seed output
+The seeded initialization created from a Scenario at the start of a Run, fixing the Story Graph version, Content Profile, starting conditions, Line Listing assignments, and any authored initial branch selections. It preserves reproducible inputs without predetermining which later paths become eligible.
+_Avoid_: Generated campaign, predetermined plot, story bundle
 
 **Recovery Point**:
 The latest completed authoritative transition from which a paused or interrupted Run can safely resume without repeating or losing a consequential change. Unfinished speech and external work are not part of a Recovery Point.
@@ -225,11 +241,11 @@ The authoritative concrete conditions and event-derived counters shared across S
 _Avoid_: Attribute bag, ending score, player statistics
 
 **Story Thread**:
-An authored multi-Shift chain involving a small group of Subscribers whose branches follow authoritative outcomes and always affect state relevant to common Endings. It continues through heard, unheard, missed, or offscreen outcomes and may also make its own Ending available.
+A named connected region of the Story Graph that groups related multi-Shift Story Beats and participants for authoring and navigation. It is not independently generated or selected, and may connect with other Story Threads through shared nodes or authoritative conditions.
 _Avoid_: Side quest, random event chain, fixed subplot
 
 **Household Story Thread**:
-The required Story Thread category from which every Run Manifest selects exactly one entry, defining that Run's Operator Household, related Subscribers, pressures, and possible story-specific Endings.
+The required Story Graph region whose seeded starting branch defines the Run's Operator Household, related Subscribers, pressures, and possible household-specific Endings.
 _Avoid_: Family storyline, universal family
 
 **Household Need**:
