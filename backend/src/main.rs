@@ -8,7 +8,11 @@ fn main() -> std::io::Result<()> {
     let mut core = MvpCore::new();
     for stream in listener.incoming() {
         match stream {
-            Ok(stream) => handle_client(stream, &mut core)?,
+            Ok(stream) => {
+                if let Err(error) = handle_client(stream, &mut core) {
+                    eprintln!("cabinet request failed: {error}");
+                }
+            }
             Err(error) => eprintln!("cabinet connection failed: {error}"),
         }
     }
