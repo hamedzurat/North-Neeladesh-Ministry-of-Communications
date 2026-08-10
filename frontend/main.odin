@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:math"
 import "core:encoding/json"
 import "core:net"
+import "core:os"
 import "core:strings"
 import "core:time"
 import rl "vendor:raylib"
@@ -510,7 +511,9 @@ reset_cabinet_interactions :: proc(state: ^App_State) {
 
 sync_backend :: proc(state: ^App_State) {
 	state.backend_sequence += 1
-	socket, dial_error := net.dial_tcp_from_hostname_and_port_string("127.0.0.1:48129")
+	backend_port := os.get_env("NN_MVP_BACKEND_PORT", context.temp_allocator)
+	if backend_port == "" do backend_port = "48129"
+	socket, dial_error := net.dial_tcp_from_hostname_and_port_string(fmt.tprintf("127.0.0.1:%s", backend_port))
 	if dial_error != nil {
 		state.backend_online = false
 		return
