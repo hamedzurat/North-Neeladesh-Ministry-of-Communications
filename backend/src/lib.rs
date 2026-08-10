@@ -198,12 +198,21 @@ impl LocalVoicePipeline {
     }
 
     fn configured_command(variable: &str, stage: VoiceStage) -> Result<String, VoicePipelineError> {
-        std::env::var(variable).map_err(|_| {
-            VoicePipelineError::new(
-                stage,
-                format!("{variable} IS NOT CONFIGURED — CHECK docs/mvp-local-voice.md"),
-            )
-        })
+        if let Ok(command) = std::env::var(variable) {
+            return Ok(command);
+        }
+        let default = match variable {
+            "NN_MVP_STT_COMMAND" => "scripts/local-stt.sh",
+            "NN_MVP_DIALOGUE_COMMAND" => "scripts/local-dialogue.sh",
+            "NN_MVP_TTS_COMMAND" => "scripts/local-tts.sh",
+            _ => {
+                return Err(VoicePipelineError::new(
+                    stage,
+                    format!("{variable} HAS NO LOCAL MVP ADAPTER"),
+                ));
+            }
+        };
+        Ok(default.into())
     }
 
     fn command_output(
@@ -1251,5 +1260,27 @@ mod tests {
 
         assert!(cancelled.load(Ordering::SeqCst));
         assert_eq!(output.reset_status, "RESET COMPLETE");
+    }
+
+    #[test]
+    fn local_pipeline_defaults_to_the_three_separately_started_worker_adapters() {
+        assert_eq!(
+            LocalVoicePipeline::configured_command("NN_MVP_STT_COMMAND", VoiceStage::Stt)
+                .as_deref(),
+            Ok("scripts/local-stt.sh")
+        );
+        assert_eq!(
+            LocalVoicePipeline::configured_command(
+                "NN_MVP_DIALOGUE_COMMAND",
+                VoiceStage::Dialogue,
+            )
+            .as_deref(),
+            Ok("scripts/local-dialogue.sh")
+        );
+        assert_eq!(
+            LocalVoicePipeline::configured_command("NN_MVP_TTS_COMMAND", VoiceStage::Tts)
+                .as_deref(),
+            Ok("scripts/local-tts.sh")
+        );
     }
 }
