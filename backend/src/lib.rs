@@ -214,6 +214,14 @@ impl LocalVoicePipeline {
         Ok(())
     }
 
+    fn finish_recording(process: &mut Child) {
+        let stopped = unsafe { libc::kill(process.id() as libc::pid_t, libc::SIGINT) } == 0;
+        if !stopped {
+            let _ = process.kill();
+        }
+        let _ = process.wait();
+    }
+
     fn worker_port(variable: &str, stage: VoiceStage) -> Result<String, VoicePipelineError> {
         std::env::var(variable).map_err(|_| {
             VoicePipelineError::new(stage, "LOCAL WORKER PORT IS MISSING: USE just backend")
@@ -397,9 +405,18 @@ impl LocalVoicePipeline {
             })
             .and_then(|output| {
                 output.status.success().then_some(()).ok_or_else(|| {
+                    let detail = String::from_utf8_lossy(&output.stderr)
+                        .split_whitespace()
+                        .take(12)
+                        .collect::<Vec<_>>()
+                        .join(" ");
                     VoicePipelineError::new(
                         stage,
-                        format!("SPEECH RENDERER EXITED {}", output.status),
+                        if detail.is_empty() {
+                            format!("SPEECH RENDERER EXITED {}", output.status)
+                        } else {
+                            format!("SPEECH RENDERER FAILED: {detail}")
+                        },
                     )
                 })
             });
@@ -457,8 +474,7 @@ impl VoicePipeline for LocalVoicePipeline {
         let ActiveCapture { mut process, path } = self.capture.take().ok_or_else(|| {
             VoicePipelineError::new(VoiceStage::Capture, "NO PTT RECORDING WAS STARTED")
         })?;
-        let _ = process.kill();
-        let _ = process.wait();
+        Self::finish_recording(&mut process);
 
         let result = (|| {
             Self::captured_audio_has_frames(&path)?;
