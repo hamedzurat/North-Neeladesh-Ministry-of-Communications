@@ -6,6 +6,7 @@ import "core:math"
 import "core:encoding/json"
 import "core:net"
 import "core:strings"
+import "core:time"
 import rl "vendor:raylib"
 
 WINDOW_W :: 1440
@@ -504,6 +505,11 @@ sync_backend :: proc(state: ^App_State) {
 		return
 	}
 	defer net.close(socket)
+	if net.set_option(socket, .Receive_Timeout, time.Millisecond * 250) != nil {
+		state.backend_online = false
+		state.backend_health = "RUST CORE SOCKET ERROR"
+		return
+	}
 	request := snapshot_json(state)
 	_, send_error := net.send_tcp(socket, transmute([]byte)request)
 	if send_error != nil {
