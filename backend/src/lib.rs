@@ -46,6 +46,7 @@ pub struct CabinetOutput {
     pub phase: Phase,
     pub health: &'static str,
     pub reset_status: &'static str,
+    pub routing_status: &'static str,
     pub line_lamps: [bool; 16],
     pub directory: Vec<String>,
     pub printer: Vec<String>,
@@ -161,6 +162,7 @@ pub struct MvpCore {
     call_index: usize,
     phase: Phase,
     receipts: Vec<String>,
+    routing_status: &'static str,
     saw_operator_ptt: bool,
     active_tap_action: i32,
 }
@@ -182,6 +184,7 @@ impl MvpCore {
                 "MVP CORE ONLINE — OFFLINE AUTHORITY READY".into(),
                 "--------------------------------".into(),
             ],
+            routing_status: "CALLER OFF-HOOK: CONNECT TO OPERATOR",
             saw_operator_ptt: false,
             active_tap_action: -1,
         }
@@ -201,27 +204,61 @@ impl MvpCore {
 
         let (caller, callee) = self.current_pair();
         let connected_to_operator = has_pair(&input.cords, caller.line, OPERATOR_JACK);
-        let ringing_callee = has_pair(&input.cords, callee.line, RING_JACK) && input.crank_complete;
+        let ringing_attempt =
+            has_pair(&input.cords, callee.line, RING_JACK) || input.crank_complete;
+        let holding_ring_connection =
+            input.cords.len() == 1 && has_pair(&input.cords, callee.line, RING_JACK);
+        let valid_ringing_callee = holding_ring_connection && input.crank_complete;
         let direct = has_pair(&input.cords, caller.line, callee.line);
+        let valid_direct = input.cords.len() == 1 && direct;
         let tap_action = tapped_bridge(&input.cords, caller.line, callee.line);
         let tapped = tap_action.is_some();
+
+        if matches!(self.phase, Phase::AwaitingRouting) && direct {
+            self.reject_routing("DIRECT CIRCUIT REJECTED: RING CALLEE FIRST");
+            return self.output(
+                input.sequence,
+                "READY",
+                input.directory_id,
+                false,
+                input.speaker_enabled,
+            );
+        }
 
         if input.active_action == 0 {
             self.saw_operator_ptt = true;
         }
         match self.phase {
             Phase::IncomingCaller if connected_to_operator => {
-                self.phase = Phase::ConnectedToOperator
+                self.phase = Phase::ConnectedToOperator;
+                self.routing_status = "OPERATOR CONNECTED: HOLD PTT";
             }
             Phase::ConnectedToOperator if self.saw_operator_ptt && input.active_action != 0 => {
-                self.phase = Phase::AwaitingRouting
+                self.phase = Phase::AwaitingRouting;
+                self.routing_status = "AWAITING ROUTING: RING CALLEE";
             }
-            Phase::AwaitingRouting if ringing_callee => self.phase = Phase::CalleeRinging,
-            Phase::CalleeRinging if direct || tapped => {
+            Phase::AwaitingRouting if valid_ringing_callee => {
+                self.phase = Phase::CalleeRinging;
+                self.routing_status = "CALLEE RINGING: MAKE DIRECT CIRCUIT";
+            }
+            Phase::AwaitingRouting if ringing_attempt => {
+                self.reject_routing("RINGING REJECTED: INVALID CORD TOPOLOGY");
+            }
+            Phase::CalleeRinging
+                if (direct && !valid_direct)
+                    || (!input.cords.is_empty()
+                        && !holding_ring_connection
+                        && !valid_direct
+                        && !tapped) =>
+            {
+                self.reject_routing("DIRECT CIRCUIT REJECTED: INVALID CORD TOPOLOGY");
+            }
+            Phase::CalleeRinging if valid_direct || tapped => {
                 self.complete_call(caller, callee, tap_action)
             }
             Phase::CircuitConnected { .. } if !direct && !tapped => {
-                self.phase = Phase::IncomingCaller
+                self.phase = Phase::IncomingCaller;
+                self.routing_status = "NEXT CALLER OFF-HOOK: CONNECT TO OPERATOR";
             }
             _ => {}
         }
@@ -255,14 +292,23 @@ impl MvpCore {
         self.saw_operator_ptt = false;
         self.active_tap_action = tap_action.unwrap_or(-1);
         self.call_index += 1;
+        self.routing_status = "ROUTING COMPLETE: CLEAR CIRCUIT";
         self.phase = if self.call_index == 2 {
             self.receipts
                 .push("MVP SUMMARY: BOTH CALLS COMPLETE".into());
             self.receipts.push("ALL FOUR SUBSCRIBERS EXERCISED".into());
+            self.routing_status = "DEMONSTRATION COMPLETE";
             Phase::DemonstrationComplete
         } else {
             Phase::CircuitConnected { tapped }
         };
+    }
+
+    fn reject_routing(&mut self, reason: &'static str) {
+        if self.routing_status != reason {
+            self.receipts.push(reason.into());
+        }
+        self.routing_status = reason;
     }
 
     fn current_pair(&self) -> (SubscriberProfile, SubscriberProfile) {
@@ -290,6 +336,7 @@ impl MvpCore {
             phase: self.phase,
             health: "RUST CORE READY",
             reset_status,
+            routing_status: self.routing_status,
             line_lamps: lamps,
             directory: directory_page(directory_id),
             printer: self.receipts.clone(),
@@ -352,10 +399,10 @@ mod tests {
     #[test]
     fn fixed_call_transitions_from_incoming_to_direct_routing_receipt() {
         let mut core = MvpCore::new();
-        assert_eq!(
-            core.apply(snapshot(&[], -1, false)).phase,
-            Phase::IncomingCaller
-        );
+        let incoming = core.apply(snapshot(&[], -1, false));
+        assert_eq!(incoming.phase, Phase::IncomingCaller);
+        assert!(incoming.line_lamps[4]);
+        assert!(!incoming.line_lamps[1]);
         assert_eq!(
             core.apply(snapshot(&[(4, 16)], -1, false)).phase,
             Phase::ConnectedToOperator
@@ -376,6 +423,96 @@ mod tests {
                 .printer
                 .iter()
                 .any(|line| line.contains("FOUNDRY APARTMENTS"))
+        );
+        assert!(
+            output
+                .printer
+                .iter()
+                .any(|line| line == "CIRCUIT: DIRECT — SUCCESS")
+        );
+    }
+
+    #[test]
+    fn direct_circuit_requires_the_callee_to_be_rung_first() {
+        let mut core = MvpCore::new();
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        core.apply(snapshot(&[(4, 16)], 0, false));
+        core.apply(snapshot(&[(4, 16)], -1, false));
+
+        let output = core.apply(snapshot(&[(4, 1)], -1, false));
+
+        assert_eq!(output.phase, Phase::AwaitingRouting);
+        assert_eq!(
+            output.routing_status,
+            "DIRECT CIRCUIT REJECTED: RING CALLEE FIRST"
+        );
+        assert!(
+            output
+                .printer
+                .iter()
+                .any(|line| line == "DIRECT CIRCUIT REJECTED: RING CALLEE FIRST")
+        );
+    }
+
+    #[test]
+    fn ringing_rejects_extra_or_unrelated_cords() {
+        let mut core = MvpCore::new();
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        core.apply(snapshot(&[(4, 16)], 0, false));
+        core.apply(snapshot(&[(4, 16)], -1, false));
+
+        let output = core.apply(snapshot(&[(1, 17), (0, 2)], -1, true));
+
+        assert_eq!(output.phase, Phase::AwaitingRouting);
+        assert_eq!(
+            output.routing_status,
+            "RINGING REJECTED: INVALID CORD TOPOLOGY"
+        );
+        assert!(
+            output
+                .printer
+                .iter()
+                .any(|line| line == "RINGING REJECTED: INVALID CORD TOPOLOGY")
+        );
+    }
+
+    #[test]
+    fn direct_circuit_rejects_extra_or_unrelated_cords() {
+        let mut core = MvpCore::new();
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        core.apply(snapshot(&[(4, 16)], 0, false));
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        core.apply(snapshot(&[(1, 17)], -1, true));
+
+        let output = core.apply(snapshot(&[(4, 1), (0, 2)], -1, false));
+
+        assert_eq!(output.phase, Phase::CalleeRinging);
+        assert_eq!(
+            output.routing_status,
+            "DIRECT CIRCUIT REJECTED: INVALID CORD TOPOLOGY"
+        );
+        assert!(
+            output
+                .printer
+                .iter()
+                .any(|line| line == "DIRECT CIRCUIT REJECTED: INVALID CORD TOPOLOGY")
+        );
+    }
+
+    #[test]
+    fn direct_circuit_rejects_the_caller_connected_to_the_wrong_line() {
+        let mut core = MvpCore::new();
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        core.apply(snapshot(&[(4, 16)], 0, false));
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        core.apply(snapshot(&[(1, 17)], -1, true));
+
+        let output = core.apply(snapshot(&[(4, 2)], -1, false));
+
+        assert_eq!(output.phase, Phase::CalleeRinging);
+        assert_eq!(
+            output.routing_status,
+            "DIRECT CIRCUIT REJECTED: INVALID CORD TOPOLOGY"
         );
     }
 
@@ -407,6 +544,41 @@ mod tests {
         let output = core.apply(reset);
         assert_eq!(output.reset_status, "RESET COMPLETE");
         assert_eq!(output.phase, Phase::IncomingCaller);
+    }
+
+    #[test]
+    fn reset_discards_completed_routing_and_is_repeatable() {
+        let mut core = MvpCore::new();
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        core.apply(snapshot(&[(4, 16)], 0, false));
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        core.apply(snapshot(&[(1, 17)], -1, true));
+        let completed = core.apply(snapshot(&[(4, 1)], -1, false));
+        assert!(
+            completed
+                .printer
+                .iter()
+                .any(|line| line.starts_with("ROUTING RECEIPT:"))
+        );
+
+        let mut reset = snapshot(&[], -1, false);
+        reset.reset = true;
+        let first_reset = core.apply(reset.clone());
+        let second_reset = core.apply(reset);
+
+        assert_eq!(first_reset.phase, Phase::IncomingCaller);
+        assert_eq!(
+            first_reset.routing_status,
+            "CALLER OFF-HOOK: CONNECT TO OPERATOR"
+        );
+        assert!(first_reset.line_lamps[4]);
+        assert_eq!(first_reset.printer, second_reset.printer);
+        assert!(
+            !first_reset
+                .printer
+                .iter()
+                .any(|line| line.starts_with("ROUTING RECEIPT:"))
+        );
     }
 
     #[test]

@@ -83,6 +83,7 @@ Backend_Output :: struct {
 	phase:          string,
 	health:         string,
 	reset_status:   string,
+	routing_status: string,
 	line_lamps:     [LINE_COUNT]bool,
 	directory:      string,
 	printer:        string,
@@ -113,6 +114,7 @@ App_State :: struct {
 	backend_phase:    string,
 	backend_health:   string,
 	reset_status:     string,
+	routing_status:   string,
 	directory_page:   string,
 	printer_feed:     string,
 	reset_requested:  bool,
@@ -359,6 +361,7 @@ draw_shift_time :: proc(state: ^App_State, delta: f32) {
 	status_color := state.backend_online ? GREEN : AMBER
 	draw_text(fmt.ctprintf("%s", state.backend_health), area.x + 16, area.y + 116, 11, status_color)
 	draw_text(fmt.ctprintf("%s", state.reset_status), area.x + 286, area.y + 116, 11, MUTED)
+	draw_text(fmt.ctprintf("%s", state.routing_status), area.x + 16, area.y + 137, 11, AMBER)
 }
 
 draw_directory :: proc(state: ^App_State, delta: f32) {
@@ -496,6 +499,16 @@ snapshot_json :: proc(state: ^App_State) -> string {
 	return strings.to_string(builder)
 }
 
+reset_cabinet_interactions :: proc(state: ^App_State) {
+	for index in 0 ..< CORD_COUNT do state.cords[index] = Cord{}
+	state.dragging_cord = false
+	state.drag_start = -1
+	state.active_action = -1
+	state.crank_fill = 0
+	state.crank_flash = 0
+	state.speaker_enabled = true
+}
+
 sync_backend :: proc(state: ^App_State) {
 	state.backend_sequence += 1
 	socket, dial_error := net.dial_tcp_from_hostname_and_port_string("127.0.0.1:48129")
@@ -535,9 +548,11 @@ sync_backend :: proc(state: ^App_State) {
 	state.backend_phase = output.phase
 	state.backend_health = output.health
 	state.reset_status = output.reset_status
+	state.routing_status = output.routing_status
 	state.line_lamps = output.line_lamps
 	state.directory_page = output.directory
 	if output.reset_status == "RESET COMPLETE" {
+		reset_cabinet_interactions(state)
 		state.receipt_revealed = 0
 		state.receipt_scroll = 0
 	}
@@ -653,6 +668,7 @@ initial_state :: proc() -> App_State {
 		work_minutes    = 9 * 60,
 		backend_health  = "RUST CORE STARTING",
 		reset_status    = "PRESS R TO RESET",
+		routing_status  = "WAITING FOR RUST CORE",
 		directory_page  = "SEARCHING",
 		printer_feed    = "WAITING FOR RUST CORE",
 		speaker_enabled = true,
@@ -692,7 +708,10 @@ main :: proc() {
 		draw_speaker(&state, delta)
 		draw_printer(&state, delta)
 		draw_cords_and_handle_input(&state, &jacks)
-		if rl.IsKeyPressed(.R) do state.reset_requested = true
+		if rl.IsKeyPressed(.R) {
+			reset_cabinet_interactions(&state)
+			state.reset_requested = true
+		}
 		state.backend_timer -= delta
 		if state.backend_timer <= 0 {
 			sync_backend(&state)
