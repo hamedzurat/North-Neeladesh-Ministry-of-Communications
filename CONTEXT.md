@@ -217,7 +217,7 @@ The reconstruction of authoritative Run state by reapplying recorded commands, e
 _Avoid_: Rerun, AI regeneration, video recording
 
 **Run Outcome State**:
-The small authoritative set of concrete conditions shared across Story Threads and inspected by common Endings, including finances, employment, housing, Operator Household members, and elapsed Shifts.
+The authoritative concrete conditions and event-derived counters shared across Story Threads and inspected by common Endings, including finances, employment, housing, Operator Household members, completed Shifts, service volume, and per-type Service Errors. It excludes generic scores and Story or Ending history.
 _Avoid_: Attribute bag, ending score, player statistics
 
 **Story Thread**:
@@ -320,8 +320,20 @@ _Avoid_: Ring command, automatic ring
 A Call Attempt connected to a Callee other than the one requested by the Caller. A Misroute is a recoverable operator mistake that may provoke both Subscribers, trigger a retry, and reduce the Shift's earnings.
 _Avoid_: Wrong route, invalid connection
 
+**Service Rule**:
+A mechanically verifiable exchange obligation printed at the start of a Shift by a narratively identified Ministry authority. Active Service Rules cannot conflict; failure is reported immediately and settled as a typed Service Error at Shift end.
+_Avoid_: Narrative order, Ministry Assignment, hidden rule
+
+**Ministry Assignment**:
+An authored narrative instruction that the Exchange Operator may obey, refuse, or betray and that may deliberately conflict with a Service Rule. Its consequences require an authoritative action, record, or Story Event rather than inference from free-form dialogue.
+_Avoid_: Service Rule, automatic offence, dialogue instruction
+
+**Operator Report**:
+A structured submission by the Exchange Operator whose existence and timing are authoritative while its truth, omissions, and consequences are resolved through Canonical Facts and Story Events. Free-form dialogue alone is not an Operator Report.
+_Avoid_: Dialogue transcript, LLM verdict, service log
+
 **Service Error**:
-A recorded breach of a disclosed, player-verifiable exchange rule, such as a Misroute or an unjustified premature disconnection. A system failure or unknowable fact cannot create a Service Error; a physically similar action taken for a permitted story reason is a consequential choice instead.
+A recorded breach of an applicable Service Rule, classified by failure type and backed by authoritative mechanical evidence. A system failure, unknowable fact, or free-form dialogue cannot create one; the same act may also obey or betray a Ministry Assignment without erasing the Service Error.
 _Avoid_: Player mistake, invalid move
 
 **Shift Earnings**:
@@ -333,11 +345,11 @@ Money carried between Shifts within the current Run. Its transaction history rec
 _Avoid_: Total score, wallet
 
 **Service Record**:
-The history of the Exchange Operator's logged service performance during the current Run. It affects earnings and may trigger disciplinary Story Events, including dismissal for excessive Service Errors.
+The history of the Exchange Operator's logged service performance during the current Run, retaining service volume and separate counters for each Service Error type. It affects earnings and may satisfy disclosed warning, probation, dismissal, or retirement conditions without becoming one aggregate score.
 _Avoid_: Mistake counter, penalty score
 
 **Disciplinary Status**:
-The Exchange Operator's standing under the government rules currently in force, progressing through declared warnings or probation toward possible dismissal. Dismissal ends the Run unless a Scenario explicitly defines another outcome.
+The Exchange Operator's standing under the Service Rules currently in force, progressing through disclosed counter-based conditions from good standing to warning, probation, or dismissal. Dismissal ends the Run unless a Scenario explicitly defines another outcome.
 _Avoid_: Lives, failure meter
 
 **Service Call**:
