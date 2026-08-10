@@ -19,19 +19,13 @@ just backend
 just frontend
 ```
 
-`just stt`, `just llm`, and `just tts` own the local Whisper, Qwen, and Pocket TTS workers respectively. `just backend` is only the Rust authority; it calls those loopback-only workers when an Operator Session finishes. The default asset workspace is `$HOME/.local/share/north-neeladesh/voice-benchmark`; set `NN_MVP_VOICE_BENCHMARK_ROOT` to use another prepared local workspace.
+`just stt`, `just llm`, and `just tts` own the local Whisper, Qwen, and Pocket TTS workers respectively. `just backend` is only the Rust authority; it calls those three hardcoded loopback-only workers when an Operator Session finishes. The prepared asset workspace is `$HOME/.local/share/north-neeladesh/voice-benchmark`.
+
+The justfile owns the local ports: STT `18080`, LLM `18081`, TTS `18082`, and backend `48129`. Keep the matching `just` recipes together; there is no command-path or endpoint setup to export.
 
 ## Required local commands
 
-The included adapters use the selected local benchmark workspace. To replace any stage, set these environment variables to executable, already-prepared local adapters:
-
-```sh
-export NN_MVP_STT_COMMAND=/absolute/path/to/local-stt
-export NN_MVP_DIALOGUE_COMMAND=/absolute/path/to/local-dialogue
-export NN_MVP_TTS_COMMAND=/absolute/path/to/local-tts
-```
-
-The adapters intentionally have a small, inspectable contract:
+The hardcoded adapters intentionally have a small, inspectable contract:
 
 - `local-stt <captured-wav>` writes a transcript to stdout.
 - `local-dialogue` receives the bounded Subscriber Profile prompt on stdin and writes one reply to stdout. It must use the local Qwen/llama.cpp model.
