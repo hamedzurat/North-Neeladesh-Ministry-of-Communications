@@ -53,50 +53,103 @@ pub struct CabinetOutput {
     pub speaker_active: bool,
 }
 
-#[derive(Clone, Copy)]
-struct Subscriber {
-    id: u16,
-    line: usize,
-    name: &'static str,
-    listing: &'static str,
-    role: &'static str,
-    note: &'static str,
+/// Typed consequential changes available to the MVP's hardcoded Subscribers.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum SubscriberAction {
+    RequestKharadClinicRouting,
+    AssessIncomingHouseholdCall,
+    RequestSteelWorksRouting,
+    ConfirmSteelWorksFreightStatus,
 }
 
-const SUBSCRIBERS: [Subscriber; 4] = [
-    Subscriber {
+/// Authored MVP data owned by the Rust core. The Directory Terminal presents
+/// the concise listing fields while dialogue and speech stages consume the
+/// remaining profile fields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SubscriberProfile {
+    id: u16,
+    line: usize,
+    pub identity: &'static str,
+    pub line_listing: &'static str,
+    pub occupation_or_role: &'static str,
+    pub identifying_note: &'static str,
+    pub personality: &'static str,
+    pub speaking_style: &'static str,
+    pub immediate_goal: &'static str,
+    pub initial_perspective: &'static str,
+    pub paired_relationship: &'static str,
+    pub permitted_actions: &'static [SubscriberAction],
+    pub local_voice_configuration: &'static str,
+}
+
+const SUBSCRIBERS: [SubscriberProfile; 4] = [
+    SubscriberProfile {
         id: 4101,
         line: 4,
-        name: "NILA DAS",
-        listing: "FOUNDRY APARTMENTS",
-        role: "Foundry Apartments resident",
-        note: "Worried, informal, and protective of her household.",
+        identity: "NILA DAS",
+        line_listing: "FOUNDRY APARTMENTS",
+        occupation_or_role: "Foundry Apartments resident",
+        identifying_note: "Keeps a sick household together on a foundry wage.",
+        personality: "Worried, informal, impatient under stress, and fiercely protective of her household.",
+        speaking_style: "Plainspoken and quick; asks directly when frightened.",
+        immediate_goal: "Reach Kharad Clinic to arrange urgent care for her parent.",
+        initial_perspective: "The clinic may be the only safe place left for her household tonight.",
+        paired_relationship: "Seeking practical help from Dr. Sorin Vale at Kharad Clinic.",
+        permitted_actions: &[SubscriberAction::RequestKharadClinicRouting],
+        local_voice_configuration: "pocket-tts:nila-low-warm",
     },
-    Subscriber {
+    SubscriberProfile {
         id: 4102,
         line: 1,
-        name: "DR. SORIN VALE",
-        listing: "KHARAD CLINIC",
-        role: "Clinic intake worker",
-        note: "Calm and concise; needs the facts to help.",
+        identity: "DR. SORIN VALE",
+        line_listing: "KHARAD CLINIC",
+        occupation_or_role: "Clinic intake worker",
+        identifying_note: "Intake desk worker trusted to make scarce clinic time count.",
+        personality: "Calm, concise, and empathetic; focused on facts that let the clinic help.",
+        speaking_style: "Even-paced, precise questions followed by a brief reassurance.",
+        immediate_goal: "Assess Nila Das's household emergency and secure the next safe step.",
+        initial_perspective: "Care is scarce, but a clear account can still secure the right response.",
+        paired_relationship: "Clinic contact for Nila Das, whose household needs urgent help.",
+        permitted_actions: &[SubscriberAction::AssessIncomingHouseholdCall],
+        local_voice_configuration: "pocket-tts:sorin-clear-neutral",
     },
-    Subscriber {
+    SubscriberProfile {
         id: 4103,
         line: 0,
-        name: "ARUN MEREK",
-        listing: "RAILWAY DISPATCH",
-        role: "Railway Dispatch clerk",
-        note: "Brisk, procedural, and pressed for time.",
+        identity: "ARUN MEREK",
+        line_listing: "RAILWAY DISPATCH",
+        occupation_or_role: "Railway Dispatch clerk",
+        identifying_note: "Dispatch ledger clerk responsible for an urgent freight interruption.",
+        personality: "Brisk, procedural, and time-conscious; hates leaving an operational risk unlogged.",
+        speaking_style: "Uses dispatch terms, short clauses, and numbered facts.",
+        immediate_goal: "Reach Steel Works to resolve an urgent freight movement problem.",
+        initial_perspective: "A missed rail window becomes a citywide delay unless Steel Works decides now.",
+        paired_relationship: "Needs a decision from Leela Voss at Steel Works before the rail window closes.",
+        permitted_actions: &[SubscriberAction::RequestSteelWorksRouting],
+        local_voice_configuration: "pocket-tts:arun-brisk-mid",
     },
-    Subscriber {
+    SubscriberProfile {
         id: 4104,
         line: 11,
-        name: "LEELA VOSS",
-        listing: "STEEL WORKS",
-        role: "Steel Works manager",
-        note: "Measured, guarded, and status-conscious.",
+        identity: "LEELA VOSS",
+        line_listing: "STEEL WORKS",
+        occupation_or_role: "Steel Works manager",
+        identifying_note: "Manager whose plant schedule can disrupt the city's freight plans.",
+        personality: "Measured, guarded, and status-conscious; reluctant to disclose more than necessary.",
+        speaking_style: "Formal and deliberate, answering only the question she considers necessary.",
+        immediate_goal: "Protect Steel Works' schedule while resolving Railway Dispatch's urgent problem.",
+        initial_perspective: "The plant's commitments matter, but an unmanaged freight problem could expose her authority.",
+        paired_relationship: "The Steel Works decision-maker sought by Arun Merek at Railway Dispatch.",
+        permitted_actions: &[SubscriberAction::ConfirmSteelWorksFreightStatus],
+        local_voice_configuration: "pocket-tts:leela-measured-low",
     },
 ];
+
+/// Returns the core-owned profile selected by a four-digit Directory ID.
+/// Unknown IDs intentionally resolve to no profile and therefore no record.
+pub fn subscriber_profile(id: u16) -> Option<&'static SubscriberProfile> {
+    SUBSCRIBERS.iter().find(|subscriber| subscriber.id == id)
+}
 
 const OPERATOR_JACK: usize = 16;
 const RING_JACK: usize = 17;
@@ -184,12 +237,17 @@ impl MvpCore {
         )
     }
 
-    fn complete_call(&mut self, caller: Subscriber, callee: Subscriber, tap_action: Option<i32>) {
+    fn complete_call(
+        &mut self,
+        caller: SubscriberProfile,
+        callee: SubscriberProfile,
+        tap_action: Option<i32>,
+    ) {
         let tapped = tap_action.is_some();
         let route = if tapped { "TAP BRIDGE" } else { "DIRECT" };
         self.receipts.push(format!(
             "ROUTING RECEIPT: {} → {}",
-            caller.listing, callee.listing
+            caller.line_listing, callee.line_listing
         ));
         self.receipts.push(format!("CIRCUIT: {route} — SUCCESS"));
         self.receipts
@@ -207,7 +265,7 @@ impl MvpCore {
         };
     }
 
-    fn current_pair(&self) -> (Subscriber, Subscriber) {
+    fn current_pair(&self) -> (SubscriberProfile, SubscriberProfile) {
         if self.call_index == 0 {
             (SUBSCRIBERS[0], SUBSCRIBERS[1])
         } else {
@@ -259,12 +317,12 @@ fn tapped_bridge(cords: &[Cord], caller: usize, callee: usize) -> Option<i32> {
 }
 
 fn directory_page(id: u16) -> Vec<String> {
-    match SUBSCRIBERS.iter().find(|subscriber| subscriber.id == id) {
+    match subscriber_profile(id) {
         Some(subscriber) => vec![
-            subscriber.name.into(),
-            format!("{} · {}", subscriber.id, subscriber.listing),
-            subscriber.role.into(),
-            subscriber.note.into(),
+            subscriber.identity.into(),
+            format!("{} · {}", subscriber.id, subscriber.line_listing),
+            subscriber.occupation_or_role.into(),
+            subscriber.identifying_note.into(),
         ],
         None => vec!["NO RECORD".into()],
     }
@@ -273,6 +331,7 @@ fn directory_page(id: u16) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     fn snapshot(
         cords: &[(usize, usize)],
@@ -348,6 +407,95 @@ mod tests {
         let output = core.apply(reset);
         assert_eq!(output.reset_status, "RESET COMPLETE");
         assert_eq!(output.phase, Phase::IncomingCaller);
+    }
+
+    #[test]
+    fn directory_lookup_returns_each_complete_backend_owned_subscriber_profile() {
+        let expected_records = [
+            (
+                4101,
+                "NILA DAS",
+                "FOUNDRY APARTMENTS",
+                "Foundry Apartments resident",
+                "pocket-tts:nila-low-warm",
+            ),
+            (
+                4102,
+                "DR. SORIN VALE",
+                "KHARAD CLINIC",
+                "Clinic intake worker",
+                "pocket-tts:sorin-clear-neutral",
+            ),
+            (
+                4103,
+                "ARUN MEREK",
+                "RAILWAY DISPATCH",
+                "Railway Dispatch clerk",
+                "pocket-tts:arun-brisk-mid",
+            ),
+            (
+                4104,
+                "LEELA VOSS",
+                "STEEL WORKS",
+                "Steel Works manager",
+                "pocket-tts:leela-measured-low",
+            ),
+        ];
+
+        let mut core = MvpCore::new();
+        for (id, identity, listing, role, voice) in expected_records {
+            let profile = subscriber_profile(id).expect("known directory ID has a profile");
+            assert_eq!(profile.identity, identity);
+            assert_eq!(profile.line_listing, listing);
+            assert_eq!(profile.occupation_or_role, role);
+            assert_eq!(profile.local_voice_configuration, voice);
+            assert!(!profile.identifying_note.is_empty());
+            assert!(!profile.personality.is_empty());
+            assert!(!profile.speaking_style.is_empty());
+            assert!(!profile.immediate_goal.is_empty());
+            assert!(!profile.initial_perspective.is_empty());
+            assert!(!profile.paired_relationship.is_empty());
+            assert!(!profile.permitted_actions.is_empty());
+
+            let mut input = snapshot(&[], -1, false);
+            input.directory_id = id;
+            assert_eq!(
+                core.apply(input).directory,
+                vec![
+                    identity.into(),
+                    format!("{id} · {listing}"),
+                    role.into(),
+                    profile.identifying_note.into(),
+                ]
+            );
+        }
+
+        assert!(subscriber_profile(9999).is_none());
+
+        let profiles = [4101, 4102, 4103, 4104]
+            .map(|id| subscriber_profile(id).expect("known directory ID has a profile"));
+        for field_values in [
+            profiles.map(|profile| profile.identity),
+            profiles.map(|profile| profile.line_listing),
+            profiles.map(|profile| profile.occupation_or_role),
+            profiles.map(|profile| profile.identifying_note),
+            profiles.map(|profile| profile.personality),
+            profiles.map(|profile| profile.speaking_style),
+            profiles.map(|profile| profile.immediate_goal),
+            profiles.map(|profile| profile.initial_perspective),
+            profiles.map(|profile| profile.paired_relationship),
+            profiles.map(|profile| profile.local_voice_configuration),
+        ] {
+            assert_eq!(field_values.into_iter().collect::<HashSet<_>>().len(), 4);
+        }
+        assert_eq!(
+            profiles
+                .map(|profile| profile.permitted_actions[0])
+                .into_iter()
+                .collect::<HashSet<_>>()
+                .len(),
+            4
+        );
     }
 
     #[test]
