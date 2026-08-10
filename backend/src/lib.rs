@@ -198,6 +198,22 @@ impl LocalVoicePipeline {
         ))
     }
 
+    fn captured_audio_has_frames(audio_path: &PathBuf) -> Result<(), VoicePipelineError> {
+        let metadata = fs::metadata(audio_path).map_err(|error| {
+            VoicePipelineError::new(
+                VoiceStage::Capture,
+                format!("CAPTURED AUDIO IS UNAVAILABLE: {error}"),
+            )
+        })?;
+        if metadata.len() <= 44 {
+            return Err(VoicePipelineError::new(
+                VoiceStage::Capture,
+                "MICROPHONE RECORDED NO AUDIO",
+            ));
+        }
+        Ok(())
+    }
+
     fn worker_port(variable: &str, stage: VoiceStage) -> Result<String, VoicePipelineError> {
         std::env::var(variable).map_err(|_| {
             VoicePipelineError::new(stage, "LOCAL WORKER PORT IS MISSING: USE just backend")
@@ -445,6 +461,7 @@ impl VoicePipeline for LocalVoicePipeline {
         let _ = process.wait();
 
         let result = (|| {
+            Self::captured_audio_has_frames(&path)?;
             let transcript = Self::bounded_text(&self.transcribe(&path)?);
             if transcript.is_empty() {
                 return Err(VoicePipelineError::new(
@@ -1380,5 +1397,22 @@ mod tests {
             LocalVoicePipeline::audio_filter("pocket-tts:arun-brisk-mid").as_deref(),
             Ok("asetrate=24000,atempo=1.08,aresample=24000")
         );
+    }
+
+    #[test]
+    fn local_pipeline_rejects_a_wav_header_without_microphone_frames() {
+        let path = LocalVoicePipeline::temporary_audio_path("wav");
+        fs::write(&path, [0_u8; 44]).expect("write a header-only WAV fixture");
+
+        let result = LocalVoicePipeline::captured_audio_has_frames(&path);
+
+        let _ = fs::remove_file(path);
+        assert!(matches!(
+            result,
+            Err(VoicePipelineError {
+                stage: VoiceStage::Capture,
+                ..
+            })
+        ));
     }
 }
