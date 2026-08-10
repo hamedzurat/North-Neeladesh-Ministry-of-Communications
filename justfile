@@ -2,7 +2,16 @@ frontend:
 	odin run frontend
 
 backend:
-	./scripts/run-backend.sh
+	cargo run --manifest-path backend/Cargo.toml --bin backend
+
+stt:
+	./scripts/run-stt.sh
+
+dialogue:
+	./scripts/run-dialogue.sh
+
+tts:
+	./scripts/run-tts.sh
 
 check:
 	cargo test --manifest-path backend/Cargo.toml

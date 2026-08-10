@@ -9,14 +9,22 @@ just check      # Rust tests and Odin frontend check
 just build      # Release-build both programs
 ```
 
-Run the MVP in two terminals so the Rust authority's local STT, dialogue, and
-TTS logs remain visible while you use the Cabinet Frontend:
+Run the MVP in separate terminals so each component's logs remain visible:
 
 ```sh
-# Terminal 1: verifies prepared local voice assets, then starts Rust
+# Terminal 1
+just stt
+
+# Terminal 2
+just dialogue
+
+# Terminal 3
+just tts
+
+# Terminal 4
 just backend
 
-# Terminal 2: starts the Cabinet Frontend
+# Terminal 5
 just frontend
 ```
 

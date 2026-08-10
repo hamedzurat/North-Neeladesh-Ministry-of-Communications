@@ -1,18 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-benchmark_root=${NN_MVP_VOICE_BENCHMARK_ROOT:?Set NN_MVP_VOICE_BENCHMARK_ROOT to the prepared local voice workspace.}
 voice_configuration=${1:?Usage: local-tts.sh <voice-configuration> <output-wav>}
 output_path=${2:?Usage: local-tts.sh <voice-configuration> <output-wav>}
-pocket_tts="$benchmark_root/envs/tts-screening/bin/pocket-tts"
-export HF_HOME="$benchmark_root/huggingface"
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-
-[[ -x "$pocket_tts" ]] || {
-  printf 'Prepared Pocket TTS runtime is unavailable for %s.\n' "$voice_configuration" >&2
-  exit 1
-}
+tts_url=${NN_MVP_TTS_URL:-http://127.0.0.1:18082/tts}
 
 text=$(cat)
 [[ -n "$text" ]] || {
@@ -26,7 +17,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$pocket_tts" generate --text "$text" --language english --device cpu --quiet --output-path "$raw_output_path"
+curl --fail-with-body --silent --show-error \
+  --max-time 30 \
+  --form "text=${text}" \
+  "$tts_url" > "$raw_output_path"
 
 case "$voice_configuration" in
   pocket-tts:nila-low-warm) filter='asetrate=21800,aresample=24000' ;;
