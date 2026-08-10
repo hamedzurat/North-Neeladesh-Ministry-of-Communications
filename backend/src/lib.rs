@@ -10,7 +10,9 @@ use std::process::Command;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
+    mpsc::{self, Receiver},
 };
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const SHIFT_START_MINUTES: u16 = 9 * 60;
@@ -20,6 +22,7 @@ const SHIFT_END_MINUTES: u16 = 17 * 60;
 pub enum Phase {
     IncomingCaller,
     ConnectedToOperator,
+    OperatorResponding,
     RecoverableSystemFailure,
     AwaitingRouting,
     CalleeRinging,
@@ -32,6 +35,7 @@ impl Phase {
         match self {
             Self::IncomingCaller => "INCOMING CALLER",
             Self::ConnectedToOperator => "CONNECTED TO OPERATOR",
+            Self::OperatorResponding => "OPERATOR RESPONSE IN PROGRESS",
             Self::RecoverableSystemFailure => "RECOVERABLE SYSTEM FAILURE",
             Self::AwaitingRouting => "AWAITING ROUTING",
             Self::CalleeRinging => "CALLEE RINGING",
@@ -93,6 +97,7 @@ pub struct SubscriberProfile {
     pub personality: &'static str,
     pub speaking_style: &'static str,
     pub immediate_goal: &'static str,
+    pub authoritative_callee: Option<&'static str>,
     pub initial_perspective: &'static str,
     pub paired_relationship: &'static str,
     pub permitted_actions: &'static [SubscriberAction],
@@ -102,12 +107,16 @@ pub struct SubscriberProfile {
 impl SubscriberProfile {
     fn operator_session_prompt(&self, transcript: &str) -> String {
         format!(
-            "You are {identity}, {role}. Personality: {personality} Speaking style: {style} Immediate goal: {goal} Relationship: {relationship} The Exchange Operator said: {transcript} Reply in character in one or two sentences, maximum 35 words. Do not invent facts or actions.",
+            "You are {identity}, {role}. Personality: {personality} Speaking style: {style} Immediate goal: {goal} {routing_instruction} Relationship: {relationship} The Exchange Operator said: {transcript} Reply in character in one or two sentences, maximum 35 words. Do not invent facts or actions.",
             identity = self.identity,
             role = self.occupation_or_role,
             personality = self.personality,
             style = self.speaking_style,
             goal = self.immediate_goal,
+            routing_instruction = self.authoritative_callee.map_or_else(
+                || "".into(),
+                |callee| format!("If requesting routing, explicitly name {callee}."),
+            ),
             relationship = self.paired_relationship,
         )
     }
@@ -164,7 +173,7 @@ impl VoicePipelineError {
 /// Disposable MVP boundary around the local STT → dialogue → TTS pipeline.
 /// Tests use a deterministic implementation; the runtime implementation uses
 /// only the fixed local loopback workers.
-pub trait VoicePipeline {
+pub trait VoicePipeline: Send {
     fn begin_capture(&mut self) -> Result<(), VoicePipelineError>;
     fn finish_operator_session(
         &mut self,
@@ -173,6 +182,13 @@ pub trait VoicePipeline {
     ) -> Result<OperatorSession, VoicePipelineError>;
 
     fn cancel_capture(&mut self) {}
+}
+
+struct FinishedOperatorSession {
+    pipeline: Box<dyn VoicePipeline>,
+    profile: SubscriberProfile,
+    caller: SubscriberProfile,
+    result: Result<OperatorSession, VoicePipelineError>,
 }
 
 struct ActiveCapture {
@@ -500,7 +516,7 @@ impl LocalVoicePipeline {
         let mut stream = TcpStream::connect(&address).map_err(|error| {
             VoicePipelineError::new(stage, format!("LOCAL WORKER UNAVAILABLE: {error}"))
         })?;
-        let timeout = Some(Duration::from_secs(30));
+        let timeout = Some(Duration::from_secs(8));
         stream.set_read_timeout(timeout).map_err(|error| {
             VoicePipelineError::new(stage, format!("LOCAL WORKER TIMEOUT UNAVAILABLE: {error}"))
         })?;
@@ -616,6 +632,23 @@ impl LocalVoicePipeline {
         body.extend_from_slice(b"\r\n");
     }
 
+    fn pocket_tts_voice(profile: &SubscriberProfile) -> Result<String, VoicePipelineError> {
+        let voice = profile
+            .local_voice_configuration
+            .strip_prefix("pocket-tts:")
+            .filter(|voice| !voice.is_empty())
+            .ok_or_else(|| {
+                VoicePipelineError::new(
+                    VoiceStage::Tts,
+                    format!(
+                        "INVALID POCKET TTS VOICE PROFILE: {}",
+                        profile.local_voice_configuration
+                    ),
+                )
+            })?;
+        Ok(voice.to_owned())
+    }
+
     fn transcribe(&self, audio_path: &PathBuf) -> Result<String, VoicePipelineError> {
         let stage = VoiceStage::Stt;
         let audio = fs::read(audio_path).map_err(|error| {
@@ -650,7 +683,7 @@ impl LocalVoicePipeline {
         let body = serde_json::json!({
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
-            "max_tokens": 70,
+            "max_tokens": 48,
             "stream": false,
         })
         .to_string();
@@ -672,11 +705,22 @@ impl LocalVoicePipeline {
             .ok_or_else(|| VoicePipelineError::new(stage, "LOCAL WORKER OMITTED THE REPLY"))
     }
 
-    fn synthesize(&self, response: &str, output_path: &PathBuf) -> Result<(), VoicePipelineError> {
+    fn synthesize(
+        &self,
+        profile: &SubscriberProfile,
+        response: &str,
+        output_path: &PathBuf,
+    ) -> Result<(), VoicePipelineError> {
         let stage = VoiceStage::Tts;
         let boundary = "north-neeladesh-mvp-tts";
         let mut body = Vec::new();
         Self::append_form_field(&mut body, boundary, "text", response.as_bytes());
+        Self::append_form_field(
+            &mut body,
+            boundary,
+            "voice_url",
+            Self::pocket_tts_voice(profile)?.as_bytes(),
+        );
         body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
         let port = Self::worker_port("NN_MVP_TTS_PORT", stage)?;
         let wave = Self::post_local_worker(
@@ -703,6 +747,12 @@ impl LocalVoicePipeline {
             .take(35)
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    fn response_is_on_goal(profile: &SubscriberProfile, response: &str) -> bool {
+        profile
+            .authoritative_callee
+            .is_none_or(|callee| response.to_lowercase().contains(&callee.to_lowercase()))
     }
 
     fn fallback_response(profile: &SubscriberProfile) -> String {
@@ -808,9 +858,11 @@ impl VoicePipeline for LocalVoicePipeline {
 
             let prompt = profile.operator_session_prompt(&transcript);
             let first_response = Self::bounded_text(&self.request_llm(&prompt)?);
-            let response = if first_response.is_empty() {
+            let response = if first_response.is_empty()
+                || !Self::response_is_on_goal(profile, &first_response)
+            {
                 let retry = Self::bounded_text(&self.request_llm(&prompt)?);
-                if retry.is_empty() {
+                if retry.is_empty() || !Self::response_is_on_goal(profile, &retry) {
                     Self::fallback_response(profile)
                 } else {
                     retry
@@ -823,7 +875,7 @@ impl VoicePipeline for LocalVoicePipeline {
                 VoiceStage::Tts,
                 &format!("{session_id}-subscriber.wav"),
             )?;
-            let synthesis = self.synthesize(&response, &speech_path);
+            let synthesis = self.synthesize(profile, &response, &speech_path);
             if let Err(error) = synthesis {
                 return Err(error);
             }
@@ -878,10 +930,11 @@ const SUBSCRIBERS: [SubscriberProfile; 4] = [
         personality: "Worried, informal, impatient under stress, and fiercely protective of her household.",
         speaking_style: "Plainspoken and quick; asks directly when frightened.",
         immediate_goal: "Reach Kharad Clinic to arrange urgent care for her parent.",
+        authoritative_callee: Some("Kharad Clinic"),
         initial_perspective: "The clinic may be the only safe place left for her household tonight.",
         paired_relationship: "Seeking practical help from Dr. Sorin Vale at Kharad Clinic.",
         permitted_actions: &[SubscriberAction::RequestKharadClinicRouting],
-        local_voice_configuration: "pocket-tts:nila-low-warm",
+        local_voice_configuration: "pocket-tts:anna",
     },
     SubscriberProfile {
         id: 4102,
@@ -893,10 +946,11 @@ const SUBSCRIBERS: [SubscriberProfile; 4] = [
         personality: "Calm, concise, and empathetic; focused on facts that let the clinic help.",
         speaking_style: "Even-paced, precise questions followed by a brief reassurance.",
         immediate_goal: "Assess Nila Das's household emergency and secure the next safe step.",
+        authoritative_callee: None,
         initial_perspective: "Care is scarce, but a clear account can still secure the right response.",
         paired_relationship: "Clinic contact for Nila Das, whose household needs urgent help.",
         permitted_actions: &[SubscriberAction::AssessIncomingHouseholdCall],
-        local_voice_configuration: "pocket-tts:sorin-clear-neutral",
+        local_voice_configuration: "pocket-tts:alba",
     },
     SubscriberProfile {
         id: 4103,
@@ -908,10 +962,11 @@ const SUBSCRIBERS: [SubscriberProfile; 4] = [
         personality: "Brisk, procedural, and time-conscious; hates leaving an operational risk unlogged.",
         speaking_style: "Uses dispatch terms, short clauses, and numbered facts.",
         immediate_goal: "Reach Steel Works to resolve an urgent freight movement problem.",
+        authoritative_callee: Some("Steel Works"),
         initial_perspective: "A missed rail window becomes a citywide delay unless Steel Works decides now.",
         paired_relationship: "Needs a decision from Leela Voss at Steel Works before the rail window closes.",
         permitted_actions: &[SubscriberAction::RequestSteelWorksRouting],
-        local_voice_configuration: "pocket-tts:arun-brisk-mid",
+        local_voice_configuration: "pocket-tts:charles",
     },
     SubscriberProfile {
         id: 4104,
@@ -923,10 +978,11 @@ const SUBSCRIBERS: [SubscriberProfile; 4] = [
         personality: "Measured, guarded, and status-conscious; reluctant to disclose more than necessary.",
         speaking_style: "Formal and deliberate, answering only the question she considers necessary.",
         immediate_goal: "Protect Steel Works' schedule while resolving Railway Dispatch's urgent problem.",
+        authoritative_callee: None,
         initial_perspective: "The plant's commitments matter, but an unmanaged freight problem could expose her authority.",
         paired_relationship: "The Steel Works decision-maker sought by Arun Merek at Railway Dispatch.",
         permitted_actions: &[SubscriberAction::ConfirmSteelWorksFreightStatus],
-        local_voice_configuration: "pocket-tts:leela-measured-low",
+        local_voice_configuration: "pocket-tts:vera",
     },
 ];
 
@@ -947,9 +1003,12 @@ pub struct MvpCore {
     phase: Phase,
     receipts: Vec<String>,
     routing_status: &'static str,
-    voice_pipeline: Box<dyn VoicePipeline>,
+    voice_pipeline: Option<Box<dyn VoicePipeline>>,
+    voice_completion: Option<Receiver<FinishedOperatorSession>>,
     ptt_held: bool,
     capture_active: bool,
+    operator_session_profile: Option<SubscriberProfile>,
+    caller_ready_to_route: bool,
     active_tap_action: i32,
 }
 
@@ -976,16 +1035,21 @@ impl MvpCore {
                 "--------------------------------".into(),
             ],
             routing_status: "CALLER OFF-HOOK: CONNECT TO OPERATOR",
-            voice_pipeline: Box::new(pipeline),
+            voice_pipeline: Some(Box::new(pipeline)),
+            voice_completion: None,
             ptt_held: false,
             capture_active: false,
+            operator_session_profile: None,
+            caller_ready_to_route: false,
             active_tap_action: -1,
         }
     }
 
     pub fn apply(&mut self, input: CabinetSnapshot) -> CabinetOutput {
         if input.reset {
-            self.voice_pipeline.cancel_capture();
+            if let Some(pipeline) = self.voice_pipeline.as_mut() {
+                pipeline.cancel_capture();
+            }
             *self = Self::new();
             return self.output(
                 input.sequence,
@@ -996,8 +1060,11 @@ impl MvpCore {
             );
         }
 
+        self.collect_finished_operator_session();
+
         let (caller, callee) = self.current_pair();
-        let connected_to_operator = has_pair(&input.cords, caller.line, OPERATOR_JACK);
+        let connected_profile = operator_profile(&input.cords);
+        let connected_to_operator = connected_profile.is_some();
         let ringing_attempt =
             has_pair(&input.cords, callee.line, RING_JACK) || input.crank_complete;
         let holding_ring_connection =
@@ -1007,6 +1074,14 @@ impl MvpCore {
         let valid_direct = input.cords.len() == 1 && direct;
         let tap_action = tapped_bridge(&input.cords, caller.line, callee.line);
         let tapped = tap_action.is_some();
+
+        if matches!(self.phase, Phase::ConnectedToOperator)
+            && !connected_to_operator
+            && self.caller_ready_to_route
+        {
+            self.phase = Phase::AwaitingRouting;
+            self.routing_status = "AWAITING ROUTING: RING CALLEE";
+        }
 
         if matches!(self.phase, Phase::AwaitingRouting) && direct {
             self.reject_routing("DIRECT CIRCUIT REJECTED: RING CALLEE FIRST");
@@ -1026,17 +1101,23 @@ impl MvpCore {
         match self.phase {
             Phase::IncomingCaller if connected_to_operator => {
                 self.phase = Phase::ConnectedToOperator;
+                self.operator_session_profile = connected_profile;
                 self.routing_status = "OPERATOR CONNECTED: HOLD PTT";
             }
             Phase::ConnectedToOperator | Phase::RecoverableSystemFailure
                 if connected_to_operator && ptt_pressed =>
             {
+                self.operator_session_profile = connected_profile;
                 self.start_capture();
             }
             Phase::ConnectedToOperator | Phase::RecoverableSystemFailure
                 if ptt_released && self.capture_active =>
             {
-                self.finish_operator_session(caller, input.speaker_enabled);
+                self.finish_operator_session(
+                    self.operator_session_profile.unwrap_or(caller),
+                    caller,
+                    input.speaker_enabled,
+                );
             }
             Phase::AwaitingRouting if valid_ringing_callee => {
                 self.phase = Phase::CalleeRinging;
@@ -1113,7 +1194,14 @@ impl MvpCore {
     }
 
     fn start_capture(&mut self) {
-        match self.voice_pipeline.begin_capture() {
+        let Some(pipeline) = self.voice_pipeline.as_mut() else {
+            self.record_voice_error(VoicePipelineError::new(
+                VoiceStage::Dialogue,
+                "VOICE PIPELINE IS STILL PROCESSING",
+            ));
+            return;
+        };
+        match pipeline.begin_capture() {
             Ok(()) => {
                 self.capture_active = true;
                 self.phase = Phase::ConnectedToOperator;
@@ -1123,25 +1211,65 @@ impl MvpCore {
         }
     }
 
-    fn finish_operator_session(&mut self, caller: SubscriberProfile, speaker_enabled: bool) {
+    fn finish_operator_session(
+        &mut self,
+        profile: SubscriberProfile,
+        caller: SubscriberProfile,
+        speaker_enabled: bool,
+    ) {
         self.capture_active = false;
-        match self
-            .voice_pipeline
-            .finish_operator_session(&caller, speaker_enabled)
-        {
+        let Some(mut pipeline) = self.voice_pipeline.take() else {
+            self.record_voice_error(VoicePipelineError::new(
+                VoiceStage::Dialogue,
+                "VOICE PIPELINE IS STILL PROCESSING",
+            ));
+            return;
+        };
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let result = pipeline.finish_operator_session(&profile, speaker_enabled);
+            let _ = sender.send(FinishedOperatorSession {
+                pipeline,
+                profile,
+                caller,
+                result,
+            });
+        });
+        self.voice_completion = Some(receiver);
+        self.phase = Phase::OperatorResponding;
+        self.routing_status = "VOICE PROCESSING: CABINET REMAINS RESPONSIVE";
+    }
+
+    fn collect_finished_operator_session(&mut self) {
+        let Some(receiver) = self.voice_completion.as_ref() else {
+            return;
+        };
+        let Ok(finished) = receiver.try_recv() else {
+            return;
+        };
+        self.voice_completion = None;
+        self.voice_pipeline = Some(finished.pipeline);
+        match finished.result {
             Ok(exchange) => {
                 self.receipts
                     .push(format!("OPERATOR: {}", exchange.transcript));
-                self.receipts
-                    .push(format!("{}: {}", caller.identity, exchange.response));
+                self.receipts.push(format!(
+                    "{}: {}",
+                    finished.profile.identity, exchange.response
+                ));
                 self.receipts.push(format!(
                     "VOICE: {} — LOCAL STT / DIALOGUE / TTS COMPLETE",
-                    caller.local_voice_configuration
+                    finished.profile.local_voice_configuration
                 ));
                 self.receipts
                     .push("--------------------------------".into());
-                self.phase = Phase::AwaitingRouting;
-                self.routing_status = "AWAITING ROUTING: RING CALLEE";
+                self.caller_ready_to_route = finished.profile.line == finished.caller.line;
+                self.phase = Phase::ConnectedToOperator;
+                self.routing_status = if self.caller_ready_to_route {
+                    "OPERATOR SESSION ACTIVE: HOLD PTT TO CONTINUE OR CLEAR TO ROUTE"
+                } else {
+                    "OPERATOR SESSION ACTIVE: HOLD PTT TO CONTINUE"
+                };
             }
             Err(error) => self.record_voice_error(error),
         }
@@ -1184,7 +1312,9 @@ impl MvpCore {
     ) -> CabinetOutput {
         let mut lamps = [false; 16];
         if !matches!(self.phase, Phase::DemonstrationComplete) {
-            lamps[self.current_pair().0.line] = true;
+            for profile in SUBSCRIBERS {
+                lamps[profile.line] = true;
+            }
         }
         CabinetOutput {
             sequence,
@@ -1205,6 +1335,13 @@ fn has_pair(cords: &[Cord], left: usize, right: usize) -> bool {
     cords
         .iter()
         .any(|Cord(a, b)| (*a == left && *b == right) || (*a == right && *b == left))
+}
+
+fn operator_profile(cords: &[Cord]) -> Option<SubscriberProfile> {
+    SUBSCRIBERS
+        .iter()
+        .copied()
+        .find(|profile| has_pair(cords, profile.line, OPERATOR_JACK))
 }
 
 fn tapped_bridge(cords: &[Cord], caller: usize, callee: usize) -> Option<i32> {
@@ -1339,6 +1476,17 @@ mod tests {
         })
     }
 
+    fn complete_operator_session(core: &mut MvpCore, cords: &[(usize, usize)]) -> CabinetOutput {
+        for _ in 0..100 {
+            let output = core.apply(snapshot(cords, -1, false));
+            if output.phase != Phase::OperatorResponding {
+                return output;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        panic!("test voice pipeline did not finish")
+    }
+
     #[test]
     fn fixed_call_transitions_from_incoming_to_direct_routing_receipt() {
         let mut core = test_core();
@@ -1346,15 +1494,16 @@ mod tests {
         assert_eq!(incoming.phase, Phase::IncomingCaller);
         assert_eq!(incoming.clock_minutes, 9 * 60);
         assert!(incoming.line_lamps[4]);
-        assert!(!incoming.line_lamps[1]);
+        assert!(incoming.line_lamps[1]);
         assert_eq!(
             core.apply(snapshot(&[(4, 16)], -1, false)).phase,
             Phase::ConnectedToOperator
         );
         core.apply(snapshot(&[(4, 16)], 0, false));
+        core.apply(snapshot(&[(4, 16)], -1, false));
         assert_eq!(
-            core.apply(snapshot(&[(4, 16)], -1, false)).phase,
-            Phase::AwaitingRouting
+            complete_operator_session(&mut core, &[(4, 16)]).phase,
+            Phase::ConnectedToOperator
         );
         assert_eq!(
             core.apply(snapshot(&[(1, 17)], -1, true)).phase,
@@ -1382,6 +1531,7 @@ mod tests {
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
+        complete_operator_session(&mut core, &[(4, 16)]);
 
         let output = core.apply(snapshot(&[(4, 1)], -1, false));
 
@@ -1404,6 +1554,7 @@ mod tests {
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
+        complete_operator_session(&mut core, &[(4, 16)]);
 
         let output = core.apply(snapshot(&[(1, 17), (0, 2)], -1, true));
 
@@ -1426,6 +1577,7 @@ mod tests {
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
+        complete_operator_session(&mut core, &[(4, 16)]);
         core.apply(snapshot(&[(1, 17)], -1, true));
 
         let output = core.apply(snapshot(&[(4, 1), (0, 2)], -1, false));
@@ -1449,6 +1601,7 @@ mod tests {
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
+        complete_operator_session(&mut core, &[(4, 16)]);
         core.apply(snapshot(&[(1, 17)], -1, true));
 
         let output = core.apply(snapshot(&[(4, 2)], -1, false));
@@ -1466,6 +1619,7 @@ mod tests {
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
+        complete_operator_session(&mut core, &[(4, 16)]);
         core.apply(snapshot(&[(1, 17)], -1, true));
         let output = core.apply(snapshot(&[(4, 18), (1, 19)], 4, false));
         assert_eq!(output.phase, Phase::CircuitConnected { tapped: true });
@@ -1496,6 +1650,7 @@ mod tests {
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
+        complete_operator_session(&mut core, &[(4, 16)]);
         core.apply(snapshot(&[(1, 17)], -1, true));
         let completed = core.apply(snapshot(&[(4, 1)], -1, false));
         assert!(
@@ -1533,28 +1688,28 @@ mod tests {
                 "NILA DAS",
                 "FOUNDRY APARTMENTS",
                 "Foundry Apartments resident",
-                "pocket-tts:nila-low-warm",
+                "pocket-tts:anna",
             ),
             (
                 4102,
                 "DR. SORIN VALE",
                 "KHARAD CLINIC",
                 "Clinic intake worker",
-                "pocket-tts:sorin-clear-neutral",
+                "pocket-tts:alba",
             ),
             (
                 4103,
                 "ARUN MEREK",
                 "RAILWAY DISPATCH",
                 "Railway Dispatch clerk",
-                "pocket-tts:arun-brisk-mid",
+                "pocket-tts:charles",
             ),
             (
                 4104,
                 "LEELA VOSS",
                 "STEEL WORKS",
                 "Steel Works manager",
-                "pocket-tts:leela-measured-low",
+                "pocket-tts:vera",
             ),
         ];
 
@@ -1615,11 +1770,52 @@ mod tests {
     }
 
     #[test]
+    fn every_subscriber_selects_a_distinct_pocket_tts_voice_profile() {
+        let voice_urls = SUBSCRIBERS.map(|profile| {
+            LocalVoicePipeline::pocket_tts_voice(&profile)
+                .expect("subscriber has a usable Pocket TTS voice profile")
+        });
+
+        assert_eq!(
+            SUBSCRIBERS.map(|profile| profile.local_voice_configuration),
+            [
+                "pocket-tts:anna",
+                "pocket-tts:alba",
+                "pocket-tts:charles",
+                "pocket-tts:vera",
+            ]
+        );
+        assert_eq!(voice_urls, ["anna", "alba", "charles", "vera"]);
+        assert_eq!(voice_urls.iter().collect::<HashSet<_>>().len(), 4);
+    }
+
+    #[test]
+    fn fixed_callers_only_accept_a_request_that_names_their_authoritative_callee() {
+        assert!(LocalVoicePipeline::response_is_on_goal(
+            &SUBSCRIBERS[0],
+            "Operator, please put me through to Kharad Clinic right away."
+        ));
+        assert!(!LocalVoicePipeline::response_is_on_goal(
+            &SUBSCRIBERS[0],
+            "Operator, I need help with my parent."
+        ));
+        assert!(LocalVoicePipeline::response_is_on_goal(
+            &SUBSCRIBERS[2],
+            "Connect Railway Dispatch to Steel Works before the rail window closes."
+        ));
+        assert!(LocalVoicePipeline::response_is_on_goal(
+            &SUBSCRIBERS[1],
+            "Tell me the fever and when it began."
+        ));
+    }
+
+    #[test]
     fn clearing_a_completed_circuit_advances_to_the_second_fixed_call() {
         let mut core = test_core();
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
+        complete_operator_session(&mut core, &[(4, 16)]);
         core.apply(snapshot(&[(1, 17)], -1, true));
         core.apply(snapshot(&[(4, 1)], -1, false));
 
@@ -1627,7 +1823,7 @@ mod tests {
 
         assert_eq!(output.phase, Phase::IncomingCaller);
         assert!(output.line_lamps[0]);
-        assert!(!output.line_lamps[4]);
+        assert!(output.line_lamps[4]);
     }
 
     #[test]
@@ -1653,10 +1849,14 @@ mod tests {
         assert_eq!(recording.phase, Phase::ConnectedToOperator);
         assert_eq!(recording.routing_status, "PTT RECORDING: RELEASE TO SEND");
 
-        let response = core.apply(snapshot(&[(4, 16)], -1, false));
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        let response = complete_operator_session(&mut core, &[(4, 16)]);
 
-        assert_eq!(response.phase, Phase::AwaitingRouting);
-        assert_eq!(response.routing_status, "AWAITING ROUTING: RING CALLEE");
+        assert_eq!(response.phase, Phase::ConnectedToOperator);
+        assert_eq!(
+            response.routing_status,
+            "OPERATOR SESSION ACTIVE: HOLD PTT TO CONTINUE OR CLEAR TO ROUTE"
+        );
         assert!(response.speaker_active);
         assert!(
             response
@@ -1673,12 +1873,92 @@ mod tests {
     }
 
     #[test]
+    fn every_active_subscriber_is_lit_and_can_hold_a_multi_turn_operator_session() {
+        let mut core = test_core();
+
+        let initial = core.apply(snapshot(&[], -1, false));
+        for profile in SUBSCRIBERS {
+            assert!(
+                initial.line_lamps[profile.line],
+                "{} is available",
+                profile.identity
+            );
+        }
+
+        for profile in SUBSCRIBERS {
+            core.apply(snapshot(&[(profile.line, OPERATOR_JACK)], -1, false));
+            core.apply(snapshot(&[(profile.line, OPERATOR_JACK)], 0, false));
+            core.apply(snapshot(&[(profile.line, OPERATOR_JACK)], -1, false));
+            let first_response =
+                complete_operator_session(&mut core, &[(profile.line, OPERATOR_JACK)]);
+            assert_eq!(first_response.phase, Phase::ConnectedToOperator);
+
+            core.apply(snapshot(&[(profile.line, OPERATOR_JACK)], 0, false));
+            core.apply(snapshot(&[(profile.line, OPERATOR_JACK)], -1, false));
+            let second_response =
+                complete_operator_session(&mut core, &[(profile.line, OPERATOR_JACK)]);
+            assert_eq!(second_response.phase, Phase::ConnectedToOperator);
+        }
+    }
+
+    #[test]
+    fn releasing_ptt_returns_promptly_while_voice_work_continues_in_the_background() {
+        use std::sync::mpsc;
+
+        struct BlockingVoicePipeline(mpsc::Receiver<()>);
+
+        impl VoicePipeline for BlockingVoicePipeline {
+            fn begin_capture(&mut self) -> Result<(), VoicePipelineError> {
+                Ok(())
+            }
+
+            fn finish_operator_session(
+                &mut self,
+                _: &SubscriberProfile,
+                _: bool,
+            ) -> Result<OperatorSession, VoicePipelineError> {
+                self.0.recv().expect("test releases the voice worker");
+                Ok(OperatorSession {
+                    transcript: "Please connect me.".into(),
+                    response: "I am ready.".into(),
+                })
+            }
+        }
+
+        let (release, blocked_worker) = mpsc::channel();
+        let mut core = MvpCore::with_voice_pipeline(BlockingVoicePipeline(blocked_worker));
+        core.apply(snapshot(&[(4, OPERATOR_JACK)], -1, false));
+        core.apply(snapshot(&[(4, OPERATOR_JACK)], 0, false));
+
+        let started = Instant::now();
+        let queued = core.apply(snapshot(&[(4, OPERATOR_JACK)], -1, false));
+
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert_eq!(queued.phase, Phase::OperatorResponding);
+        assert_eq!(
+            queued.routing_status,
+            "VOICE PROCESSING: CABINET REMAINS RESPONSIVE"
+        );
+
+        release.send(()).expect("release voice worker");
+        for _ in 0..20 {
+            let completed = core.apply(snapshot(&[(4, OPERATOR_JACK)], -1, false));
+            if completed.phase == Phase::ConnectedToOperator {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("voice worker did not complete");
+    }
+
+    #[test]
     fn a_voice_stage_failure_stops_only_the_exchange_and_ptt_retries_it() {
         let mut core = MvpCore::with_voice_pipeline(RetriableVoicePipeline { exchanges: 0 });
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
 
-        let failed = core.apply(snapshot(&[(4, 16)], -1, false));
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        let failed = complete_operator_session(&mut core, &[(4, 16)]);
         assert_eq!(failed.phase, Phase::RecoverableSystemFailure);
         assert_eq!(failed.routing_status, "SYSTEM FAILURE: HOLD PTT TO RETRY");
         assert!(
@@ -1691,9 +1971,13 @@ mod tests {
         assert!(failed.line_lamps[4]);
 
         core.apply(snapshot(&[(4, 16)], 0, false));
-        let retried = core.apply(snapshot(&[(4, 16)], -1, false));
-        assert_eq!(retried.phase, Phase::AwaitingRouting);
-        assert_eq!(retried.routing_status, "AWAITING ROUTING: RING CALLEE");
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        let retried = complete_operator_session(&mut core, &[(4, 16)]);
+        assert_eq!(retried.phase, Phase::ConnectedToOperator);
+        assert_eq!(
+            retried.routing_status,
+            "OPERATOR SESSION ACTIVE: HOLD PTT TO CONTINUE OR CLEAR TO ROUTE"
+        );
     }
 
     #[test]

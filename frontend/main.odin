@@ -519,7 +519,7 @@ sync_backend :: proc(state: ^App_State) {
 		return
 	}
 	defer net.close(socket)
-	if net.set_option(socket, .Receive_Timeout, time.Second * 30) != nil {
+	if net.set_option(socket, .Receive_Timeout, time.Second) != nil {
 		state.backend_online = false
 		return
 	}
