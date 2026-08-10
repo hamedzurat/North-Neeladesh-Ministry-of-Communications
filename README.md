@@ -7,9 +7,17 @@ Offline MVP of the Cabinet Frontend and Rust authority backend.
 ```sh
 just check      # Rust tests and Odin frontend check
 just build      # Release-build both programs
+just mvp        # Verify local voice assets and launch the complete MVP
 ```
 
-Start the backend in one terminal, then the frontend in another:
+`just mvp` is the normal demonstration command. It starts the Rust authority,
+uses the prepared offline STT, dialogue, and TTS adapters, and launches the
+Cabinet Frontend. See [the local voice setup guide](docs/mvp-local-voice.md)
+when the prepared voice workspace is stored somewhere other than its default
+location.
+
+For backend/frontend work without local voice services, start the programs in
+separate terminals:
 
 ```sh
 just backend
