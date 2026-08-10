@@ -2,7 +2,11 @@
 //! The newline-delimited JSON protocol is disposable: it exists only to make
 //! the Odin/Rust boundary inspectable during the MVP demonstration.
 
-use std::time::Instant;
+use std::fs;
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const SHIFT_START_MINUTES: u16 = 9 * 60;
 const SHIFT_END_MINUTES: u16 = 17 * 60;
@@ -11,6 +15,7 @@ const SHIFT_END_MINUTES: u16 = 17 * 60;
 pub enum Phase {
     IncomingCaller,
     ConnectedToOperator,
+    RecoverableSystemFailure,
     AwaitingRouting,
     CalleeRinging,
     CircuitConnected { tapped: bool },
@@ -22,6 +27,7 @@ impl Phase {
         match self {
             Self::IncomingCaller => "INCOMING CALLER",
             Self::ConnectedToOperator => "CONNECTED TO OPERATOR",
+            Self::RecoverableSystemFailure => "RECOVERABLE SYSTEM FAILURE",
             Self::AwaitingRouting => "AWAITING ROUTING",
             Self::CalleeRinging => "CALLEE RINGING",
             Self::CircuitConnected { tapped: false } => "DIRECT CIRCUIT CONNECTED",
@@ -86,6 +92,321 @@ pub struct SubscriberProfile {
     pub paired_relationship: &'static str,
     pub permitted_actions: &'static [SubscriberAction],
     pub local_voice_configuration: &'static str,
+}
+
+impl SubscriberProfile {
+    fn operator_session_prompt(&self, transcript: &str) -> String {
+        format!(
+            "You are {identity}, {role}. Personality: {personality} Speaking style: {style} Immediate goal: {goal} Relationship: {relationship} The Exchange Operator said: {transcript} Reply in character in one or two sentences, maximum 35 words. Do not invent facts or actions.",
+            identity = self.identity,
+            role = self.occupation_or_role,
+            personality = self.personality,
+            style = self.speaking_style,
+            goal = self.immediate_goal,
+            relationship = self.paired_relationship,
+        )
+    }
+}
+
+/// A completed Operator Session ready for the Cabinet's existing speaker
+/// and thermal-printer presentation surfaces.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OperatorSession {
+    pub transcript: String,
+    pub response: String,
+}
+
+/// The local stage that stopped an Operator Session. The Cabinet presents these
+/// errors as retryable instead of advancing the active Call Attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoiceStage {
+    Capture,
+    Stt,
+    Dialogue,
+    Tts,
+}
+
+impl VoiceStage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Capture => "CAPTURE",
+            Self::Stt => "STT",
+            Self::Dialogue => "DIALOGUE",
+            Self::Tts => "TTS",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VoicePipelineError {
+    stage: VoiceStage,
+    message: String,
+}
+
+impl VoicePipelineError {
+    pub fn new(stage: VoiceStage, message: impl Into<String>) -> Self {
+        Self {
+            stage,
+            message: message.into(),
+        }
+    }
+
+    fn presentation(&self) -> String {
+        format!("{} FAILED: {}", self.stage.label(), self.message)
+    }
+}
+
+/// Disposable MVP boundary around the local STT → dialogue → TTS pipeline.
+/// Tests use a deterministic implementation; the runtime implementation uses
+/// only locally configured commands and never makes a network request.
+pub trait VoicePipeline {
+    fn begin_capture(&mut self) -> Result<(), VoicePipelineError>;
+    fn finish_operator_session(
+        &mut self,
+        profile: &SubscriberProfile,
+        speaker_enabled: bool,
+    ) -> Result<OperatorSession, VoicePipelineError>;
+
+    fn cancel_capture(&mut self) {}
+}
+
+struct ActiveCapture {
+    process: Child,
+    path: PathBuf,
+}
+
+struct LocalVoicePipeline {
+    capture: Option<ActiveCapture>,
+}
+
+impl Default for LocalVoicePipeline {
+    fn default() -> Self {
+        Self { capture: None }
+    }
+}
+
+impl LocalVoicePipeline {
+    fn temporary_audio_path(extension: &str) -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "north-neeladesh-mvp-{}-{timestamp}.{extension}",
+            std::process::id()
+        ))
+    }
+
+    fn configured_command(variable: &str, stage: VoiceStage) -> Result<String, VoicePipelineError> {
+        std::env::var(variable).map_err(|_| {
+            VoicePipelineError::new(
+                stage,
+                format!("{variable} IS NOT CONFIGURED — CHECK docs/mvp-local-voice.md"),
+            )
+        })
+    }
+
+    fn command_output(
+        mut command: Command,
+        stage: VoiceStage,
+        input: Option<&str>,
+    ) -> Result<String, VoicePipelineError> {
+        if input.is_some() {
+            command.stdin(Stdio::piped());
+        }
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = command.spawn().map_err(|error| {
+            VoicePipelineError::new(stage, format!("COULD NOT START LOCAL COMMAND: {error}"))
+        })?;
+        if let Some(input) = input {
+            child
+                .stdin
+                .take()
+                .expect("piped stdin is available")
+                .write_all(input.as_bytes())
+                .map_err(|error| {
+                    VoicePipelineError::new(stage, format!("COULD NOT SEND INPUT: {error}"))
+                })?;
+        }
+        let output = child.wait_with_output().map_err(|error| {
+            VoicePipelineError::new(stage, format!("LOCAL COMMAND DID NOT COMPLETE: {error}"))
+        })?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr)
+                .split_whitespace()
+                .take(12)
+                .collect::<Vec<_>>()
+                .join(" ");
+            return Err(VoicePipelineError::new(
+                stage,
+                if detail.is_empty() {
+                    format!("LOCAL COMMAND EXITED {}", output.status)
+                } else {
+                    detail
+                },
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    fn bounded_text(value: &str) -> String {
+        value
+            .split_whitespace()
+            .take(35)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn fallback_response(profile: &SubscriberProfile) -> String {
+        Self::bounded_text(&format!(
+            "Operator, please connect me. {}",
+            profile.immediate_goal
+        ))
+    }
+}
+
+impl VoicePipeline for LocalVoicePipeline {
+    fn begin_capture(&mut self) -> Result<(), VoicePipelineError> {
+        if self.capture.is_some() {
+            return Err(VoicePipelineError::new(
+                VoiceStage::Capture,
+                "PTT CAPTURE IS ALREADY ACTIVE",
+            ));
+        }
+        let path = Self::temporary_audio_path("wav");
+        let child = Command::new("pw-record")
+            .args(["--rate", "16000", "--channels", "1", "--format", "s16"])
+            .arg(&path)
+            .spawn()
+            .map_err(|error| {
+                VoicePipelineError::new(
+                    VoiceStage::Capture,
+                    format!("MICROPHONE UNAVAILABLE: {error}"),
+                )
+            })?;
+        self.capture = Some(ActiveCapture {
+            process: child,
+            path,
+        });
+        Ok(())
+    }
+
+    fn finish_operator_session(
+        &mut self,
+        profile: &SubscriberProfile,
+        speaker_enabled: bool,
+    ) -> Result<OperatorSession, VoicePipelineError> {
+        let ActiveCapture { mut process, path } = self.capture.take().ok_or_else(|| {
+            VoicePipelineError::new(VoiceStage::Capture, "NO PTT RECORDING WAS STARTED")
+        })?;
+        let _ = process.kill();
+        let _ = process.wait();
+
+        let result = (|| {
+            let stt_command = Self::configured_command("NN_MVP_STT_COMMAND", VoiceStage::Stt)?;
+            let transcript = Self::bounded_text(&Self::command_output(
+                {
+                    let mut command = Command::new(stt_command);
+                    command.arg(&path);
+                    command
+                },
+                VoiceStage::Stt,
+                None,
+            )?);
+            if transcript.is_empty() {
+                return Err(VoicePipelineError::new(
+                    VoiceStage::Stt,
+                    "NO SPEECH WAS TRANSCRIBED",
+                ));
+            }
+
+            let dialogue_command =
+                Self::configured_command("NN_MVP_DIALOGUE_COMMAND", VoiceStage::Dialogue)?;
+            let prompt = profile.operator_session_prompt(&transcript);
+            let first_response = Self::bounded_text(&Self::command_output(
+                Command::new(&dialogue_command),
+                VoiceStage::Dialogue,
+                Some(&prompt),
+            )?);
+            let response = if first_response.is_empty() {
+                let retry = Self::bounded_text(&Self::command_output(
+                    Command::new(dialogue_command),
+                    VoiceStage::Dialogue,
+                    Some(&prompt),
+                )?);
+                if retry.is_empty() {
+                    Self::fallback_response(profile)
+                } else {
+                    retry
+                }
+            } else {
+                first_response
+            };
+
+            let speech_path = Self::temporary_audio_path("wav");
+            let tts_command = Self::configured_command("NN_MVP_TTS_COMMAND", VoiceStage::Tts)?;
+            let synthesis = Self::command_output(
+                {
+                    let mut command = Command::new(tts_command);
+                    command
+                        .arg(profile.local_voice_configuration)
+                        .arg(&speech_path);
+                    command
+                },
+                VoiceStage::Tts,
+                Some(&response),
+            );
+            if let Err(error) = synthesis {
+                let _ = fs::remove_file(&speech_path);
+                return Err(error);
+            }
+            let playback = if speaker_enabled {
+                let player =
+                    std::env::var("NN_MVP_PLAY_COMMAND").unwrap_or_else(|_| "paplay".into());
+                Command::new(player)
+                    .arg(&speech_path)
+                    .status()
+                    .map_err(|error| {
+                        VoicePipelineError::new(
+                            VoiceStage::Tts,
+                            format!("SPEAKER UNAVAILABLE: {error}"),
+                        )
+                    })
+                    .and_then(|status| {
+                        status.success().then_some(()).ok_or_else(|| {
+                            VoicePipelineError::new(
+                                VoiceStage::Tts,
+                                format!("SPEAKER EXITED {status}"),
+                            )
+                        })
+                    })
+            } else {
+                Ok(())
+            };
+            let _ = fs::remove_file(&speech_path);
+            playback?;
+            Ok(OperatorSession {
+                transcript,
+                response,
+            })
+        })();
+        let _ = fs::remove_file(path);
+        result
+    }
+
+    fn cancel_capture(&mut self) {
+        if let Some(mut capture) = self.capture.take() {
+            let _ = capture.process.kill();
+            let _ = capture.process.wait();
+            let _ = fs::remove_file(capture.path);
+        }
+    }
+}
+
+impl Drop for LocalVoicePipeline {
+    fn drop(&mut self) {
+        self.cancel_capture();
+    }
 }
 
 const SUBSCRIBERS: [SubscriberProfile; 4] = [
@@ -162,14 +483,15 @@ const RING_JACK: usize = 17;
 const TAP_ONE: (usize, usize) = (18, 19);
 const TAP_TWO: (usize, usize) = (20, 21);
 
-#[derive(Debug)]
 pub struct MvpCore {
     call_index: usize,
     clock_started_at: Instant,
     phase: Phase,
     receipts: Vec<String>,
     routing_status: &'static str,
-    saw_operator_ptt: bool,
+    voice_pipeline: Box<dyn VoicePipeline>,
+    ptt_held: bool,
+    capture_active: bool,
     active_tap_action: i32,
 }
 
@@ -181,6 +503,10 @@ impl Default for MvpCore {
 
 impl MvpCore {
     pub fn new() -> Self {
+        Self::with_voice_pipeline(LocalVoicePipeline::default())
+    }
+
+    pub fn with_voice_pipeline(pipeline: impl VoicePipeline + 'static) -> Self {
         Self {
             call_index: 0,
             clock_started_at: Instant::now(),
@@ -192,13 +518,16 @@ impl MvpCore {
                 "--------------------------------".into(),
             ],
             routing_status: "CALLER OFF-HOOK: CONNECT TO OPERATOR",
-            saw_operator_ptt: false,
+            voice_pipeline: Box::new(pipeline),
+            ptt_held: false,
+            capture_active: false,
             active_tap_action: -1,
         }
     }
 
     pub fn apply(&mut self, input: CabinetSnapshot) -> CabinetOutput {
         if input.reset {
+            self.voice_pipeline.cancel_capture();
             *self = Self::new();
             return self.output(
                 input.sequence,
@@ -232,17 +561,24 @@ impl MvpCore {
             );
         }
 
-        if input.active_action == 0 {
-            self.saw_operator_ptt = true;
-        }
+        let ptt_held = input.active_action == 0;
+        let ptt_pressed = ptt_held && !self.ptt_held;
+        let ptt_released = !ptt_held && self.ptt_held;
+        self.ptt_held = ptt_held;
         match self.phase {
             Phase::IncomingCaller if connected_to_operator => {
                 self.phase = Phase::ConnectedToOperator;
                 self.routing_status = "OPERATOR CONNECTED: HOLD PTT";
             }
-            Phase::ConnectedToOperator if self.saw_operator_ptt && input.active_action != 0 => {
-                self.phase = Phase::AwaitingRouting;
-                self.routing_status = "AWAITING ROUTING: RING CALLEE";
+            Phase::ConnectedToOperator | Phase::RecoverableSystemFailure
+                if connected_to_operator && ptt_pressed =>
+            {
+                self.start_capture();
+            }
+            Phase::ConnectedToOperator | Phase::RecoverableSystemFailure
+                if ptt_released && self.capture_active =>
+            {
+                self.finish_operator_session(caller, input.speaker_enabled);
             }
             Phase::AwaitingRouting if valid_ringing_callee => {
                 self.phase = Phase::CalleeRinging;
@@ -296,7 +632,7 @@ impl MvpCore {
         self.receipts.push(format!("CIRCUIT: {route} — SUCCESS"));
         self.receipts
             .push("--------------------------------".into());
-        self.saw_operator_ptt = false;
+        self.capture_active = false;
         self.active_tap_action = tap_action.unwrap_or(-1);
         self.call_index += 1;
         self.routing_status = "ROUTING COMPLETE: CLEAR CIRCUIT";
@@ -316,6 +652,51 @@ impl MvpCore {
             self.receipts.push(reason.into());
         }
         self.routing_status = reason;
+    }
+
+    fn start_capture(&mut self) {
+        match self.voice_pipeline.begin_capture() {
+            Ok(()) => {
+                self.capture_active = true;
+                self.phase = Phase::ConnectedToOperator;
+                self.routing_status = "PTT RECORDING: RELEASE TO SEND";
+            }
+            Err(error) => self.record_voice_error(error),
+        }
+    }
+
+    fn finish_operator_session(&mut self, caller: SubscriberProfile, speaker_enabled: bool) {
+        self.capture_active = false;
+        match self
+            .voice_pipeline
+            .finish_operator_session(&caller, speaker_enabled)
+        {
+            Ok(exchange) => {
+                self.receipts
+                    .push(format!("OPERATOR: {}", exchange.transcript));
+                self.receipts
+                    .push(format!("{}: {}", caller.identity, exchange.response));
+                self.receipts.push(format!(
+                    "VOICE: {} — LOCAL STT / DIALOGUE / TTS COMPLETE",
+                    caller.local_voice_configuration
+                ));
+                self.receipts
+                    .push("--------------------------------".into());
+                self.phase = Phase::AwaitingRouting;
+                self.routing_status = "AWAITING ROUTING: RING CALLEE";
+            }
+            Err(error) => self.record_voice_error(error),
+        }
+    }
+
+    fn record_voice_error(&mut self, error: VoicePipelineError) {
+        let presentation = error.presentation();
+        self.receipts
+            .push(format!("OPERATOR SESSION FAILED: {presentation}"));
+        self.receipts
+            .push("HOLD PTT TO RETRY OR PRESS R TO RESET".into());
+        self.phase = Phase::RecoverableSystemFailure;
+        self.routing_status = "SYSTEM FAILURE: HOLD PTT TO RETRY";
     }
 
     fn current_pair(&self) -> (SubscriberProfile, SubscriberProfile) {
@@ -395,6 +776,86 @@ fn directory_page(id: u16) -> Vec<String> {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    struct SuccessfulVoicePipeline {
+        started: bool,
+        profile_identity: Option<&'static str>,
+        speaker_enabled: bool,
+    }
+
+    impl VoicePipeline for SuccessfulVoicePipeline {
+        fn begin_capture(&mut self) -> Result<(), VoicePipelineError> {
+            self.started = true;
+            Ok(())
+        }
+
+        fn finish_operator_session(
+            &mut self,
+            profile: &SubscriberProfile,
+            speaker_enabled: bool,
+        ) -> Result<OperatorSession, VoicePipelineError> {
+            self.profile_identity = Some(profile.identity);
+            self.speaker_enabled = speaker_enabled;
+            Ok(OperatorSession {
+                transcript: "My parent needs Kharad Clinic tonight.".into(),
+                response: "Stay calm. Tell me their fever and I will prepare the intake desk."
+                    .into(),
+            })
+        }
+    }
+
+    struct RetriableVoicePipeline {
+        exchanges: usize,
+    }
+
+    struct CaptureCancellationPipeline(Arc<AtomicBool>);
+
+    impl VoicePipeline for CaptureCancellationPipeline {
+        fn begin_capture(&mut self) -> Result<(), VoicePipelineError> {
+            Ok(())
+        }
+
+        fn finish_operator_session(
+            &mut self,
+            _: &SubscriberProfile,
+            _: bool,
+        ) -> Result<OperatorSession, VoicePipelineError> {
+            unreachable!("reset cancels the active capture before PTT release")
+        }
+
+        fn cancel_capture(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl VoicePipeline for RetriableVoicePipeline {
+        fn begin_capture(&mut self) -> Result<(), VoicePipelineError> {
+            Ok(())
+        }
+
+        fn finish_operator_session(
+            &mut self,
+            _: &SubscriberProfile,
+            _: bool,
+        ) -> Result<OperatorSession, VoicePipelineError> {
+            self.exchanges += 1;
+            if self.exchanges == 1 {
+                Err(VoicePipelineError::new(
+                    VoiceStage::Stt,
+                    "MICROPHONE INPUT WAS EMPTY",
+                ))
+            } else {
+                Ok(OperatorSession {
+                    transcript: "Please connect me now.".into(),
+                    response: "I am ready at the intake desk.".into(),
+                })
+            }
+        }
+    }
 
     fn snapshot(
         cords: &[(usize, usize)],
@@ -412,9 +873,17 @@ mod tests {
         }
     }
 
+    fn test_core() -> MvpCore {
+        MvpCore::with_voice_pipeline(SuccessfulVoicePipeline {
+            started: false,
+            profile_identity: None,
+            speaker_enabled: false,
+        })
+    }
+
     #[test]
     fn fixed_call_transitions_from_incoming_to_direct_routing_receipt() {
-        let mut core = MvpCore::new();
+        let mut core = test_core();
         let incoming = core.apply(snapshot(&[], -1, false));
         assert_eq!(incoming.phase, Phase::IncomingCaller);
         assert_eq!(incoming.clock_minutes, 9 * 60);
@@ -451,7 +920,7 @@ mod tests {
 
     #[test]
     fn direct_circuit_requires_the_callee_to_be_rung_first() {
-        let mut core = MvpCore::new();
+        let mut core = test_core();
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
@@ -473,7 +942,7 @@ mod tests {
 
     #[test]
     fn ringing_rejects_extra_or_unrelated_cords() {
-        let mut core = MvpCore::new();
+        let mut core = test_core();
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
@@ -495,7 +964,7 @@ mod tests {
 
     #[test]
     fn direct_circuit_rejects_extra_or_unrelated_cords() {
-        let mut core = MvpCore::new();
+        let mut core = test_core();
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
@@ -518,7 +987,7 @@ mod tests {
 
     #[test]
     fn direct_circuit_rejects_the_caller_connected_to_the_wrong_line() {
-        let mut core = MvpCore::new();
+        let mut core = test_core();
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
@@ -535,7 +1004,7 @@ mod tests {
 
     #[test]
     fn tap_bridge_requires_both_bridge_ports_and_only_monitors_when_held() {
-        let mut core = MvpCore::new();
+        let mut core = test_core();
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
@@ -552,7 +1021,7 @@ mod tests {
 
     #[test]
     fn unknown_directory_id_and_reset_are_backend_owned() {
-        let mut core = MvpCore::new();
+        let mut core = test_core();
         let mut unknown = snapshot(&[], -1, false);
         unknown.directory_id = 9999;
         assert_eq!(core.apply(unknown).directory, vec!["NO RECORD"]);
@@ -565,7 +1034,7 @@ mod tests {
 
     #[test]
     fn reset_discards_completed_routing_and_is_repeatable() {
-        let mut core = MvpCore::new();
+        let mut core = test_core();
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
@@ -631,7 +1100,7 @@ mod tests {
             ),
         ];
 
-        let mut core = MvpCore::new();
+        let mut core = test_core();
         for (id, identity, listing, role, voice) in expected_records {
             let profile = subscriber_profile(id).expect("known directory ID has a profile");
             assert_eq!(profile.identity, identity);
@@ -689,7 +1158,7 @@ mod tests {
 
     #[test]
     fn clearing_a_completed_circuit_advances_to_the_second_fixed_call() {
-        let mut core = MvpCore::new();
+        let mut core = test_core();
         core.apply(snapshot(&[(4, 16)], -1, false));
         core.apply(snapshot(&[(4, 16)], 0, false));
         core.apply(snapshot(&[(4, 16)], -1, false));
@@ -705,10 +1174,82 @@ mod tests {
 
     #[test]
     fn speaker_control_is_echoed_as_rust_owned_cabinet_output() {
-        let mut core = MvpCore::new();
+        let mut core = test_core();
         let mut input = snapshot(&[], -1, false);
         input.speaker_enabled = false;
 
         assert!(!core.apply(input).speaker_active);
+    }
+
+    #[test]
+    fn releasing_ptt_runs_a_bounded_profile_grounded_voice_exchange() {
+        let pipeline = SuccessfulVoicePipeline {
+            started: false,
+            profile_identity: None,
+            speaker_enabled: false,
+        };
+        let mut core = MvpCore::with_voice_pipeline(pipeline);
+
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        let recording = core.apply(snapshot(&[(4, 16)], 0, false));
+        assert_eq!(recording.phase, Phase::ConnectedToOperator);
+        assert_eq!(recording.routing_status, "PTT RECORDING: RELEASE TO SEND");
+
+        let response = core.apply(snapshot(&[(4, 16)], -1, false));
+
+        assert_eq!(response.phase, Phase::AwaitingRouting);
+        assert_eq!(response.routing_status, "AWAITING ROUTING: RING CALLEE");
+        assert!(response.speaker_active);
+        assert!(
+            response
+                .printer
+                .iter()
+                .any(|line| line == "OPERATOR: My parent needs Kharad Clinic tonight.")
+        );
+        assert!(
+            response
+                .printer
+                .iter()
+                .any(|line| line.starts_with("NILA DAS: Stay calm."))
+        );
+    }
+
+    #[test]
+    fn a_voice_stage_failure_stops_only_the_exchange_and_ptt_retries_it() {
+        let mut core = MvpCore::with_voice_pipeline(RetriableVoicePipeline { exchanges: 0 });
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        core.apply(snapshot(&[(4, 16)], 0, false));
+
+        let failed = core.apply(snapshot(&[(4, 16)], -1, false));
+        assert_eq!(failed.phase, Phase::RecoverableSystemFailure);
+        assert_eq!(failed.routing_status, "SYSTEM FAILURE: HOLD PTT TO RETRY");
+        assert!(
+            failed
+                .printer
+                .iter()
+                .any(|line| line
+                    == "OPERATOR SESSION FAILED: STT FAILED: MICROPHONE INPUT WAS EMPTY")
+        );
+        assert!(failed.line_lamps[4]);
+
+        core.apply(snapshot(&[(4, 16)], 0, false));
+        let retried = core.apply(snapshot(&[(4, 16)], -1, false));
+        assert_eq!(retried.phase, Phase::AwaitingRouting);
+        assert_eq!(retried.routing_status, "AWAITING ROUTING: RING CALLEE");
+    }
+
+    #[test]
+    fn reset_cancels_an_active_ptt_capture_before_replacing_the_core() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let mut core = MvpCore::with_voice_pipeline(CaptureCancellationPipeline(cancelled.clone()));
+        core.apply(snapshot(&[(4, 16)], -1, false));
+        core.apply(snapshot(&[(4, 16)], 0, false));
+
+        let mut reset = snapshot(&[], -1, false);
+        reset.reset = true;
+        let output = core.apply(reset);
+
+        assert!(cancelled.load(Ordering::SeqCst));
+        assert_eq!(output.reset_status, "RESET COMPLETE");
     }
 }
