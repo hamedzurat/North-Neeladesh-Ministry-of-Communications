@@ -1,16 +1,25 @@
 # Local MVP voice configuration
 
-Run the offline MVP in separate terminals:
+Run each offline component in its own terminal, in this order:
 
 ```sh
 # Terminal 1
-just backend
+just stt
 
 # Terminal 2
+just dialogue
+
+# Terminal 3
+just tts
+
+# Terminal 4
+just backend
+
+# Terminal 5
 just frontend
 ```
 
-`just backend` verifies the prepared local Whisper, Qwen, and Pocket TTS assets before starting the Rust authority. Its terminal then retains the stage logs while the frontend runs separately. Both programs make no network request. The default asset workspace is `$HOME/.local/share/north-neeladesh/voice-benchmark`; set `NN_MVP_VOICE_BENCHMARK_ROOT` to use another prepared local workspace.
+`just stt`, `just dialogue`, and `just tts` own the local Whisper, Qwen, and Pocket TTS workers respectively. `just backend` is only the Rust authority; it calls those loopback-only workers when an Operator Session finishes. The default asset workspace is `$HOME/.local/share/north-neeladesh/voice-benchmark`; set `NN_MVP_VOICE_BENCHMARK_ROOT` to use another prepared local workspace.
 
 ## Required local commands
 

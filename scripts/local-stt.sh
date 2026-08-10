@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-benchmark_root=${NN_MVP_VOICE_BENCHMARK_ROOT:?Set NN_MVP_VOICE_BENCHMARK_ROOT to the prepared local voice workspace.}
 audio_path=${1:?Usage: local-stt.sh <captured-wav>}
-whisper_cli="$benchmark_root/tools/whisper.cpp-v1.9.2/build-cpu/bin/whisper-cli"
-model="$benchmark_root/tools/whisper.cpp-v1.9.2/models/ggml-base.en.bin"
+stt_url=${NN_MVP_STT_URL:-http://127.0.0.1:18080/inference}
 
-[[ -x "$whisper_cli" && -f "$model" && -f "$audio_path" ]] || {
-  printf 'Prepared whisper.cpp base.en runtime, model, or captured audio is unavailable.\n' >&2
+[[ -f "$audio_path" ]] || {
+  printf 'Captured audio is unavailable: %s\n' "$audio_path" >&2
   exit 1
 }
 
-"$whisper_cli" --model "$model" --file "$audio_path" --no-timestamps --no-prints 2>/dev/null
+curl --fail-with-body --silent --show-error \
+  --max-time 30 \
+  --form "file=@${audio_path};type=audio/wav" \
+  --form temperature=0.0 \
+  --form response_format=json \
+  "$stt_url" | jq --raw-output '.text'
