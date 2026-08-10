@@ -78,6 +78,20 @@ Cord :: struct {
 	active: bool,
 }
 
+Cabinet_Cord :: struct {
+	a, b: int,
+}
+
+Cabinet_Snapshot :: struct {
+	sequence:        u64,
+	cords:           [dynamic]Cabinet_Cord,
+	active_action:   int,
+	crank_complete:  bool,
+	directory_id:    u16,
+	speaker_enabled: bool,
+	reset:           bool,
+}
+
 Backend_Output :: struct {
 	sequence:       u64,
 	clock_minutes:  u16,
@@ -471,28 +485,21 @@ draw_printer :: proc(state: ^App_State, delta: f32) {
 	}
 }
 
-snapshot_json :: proc(state: ^App_State) -> string {
-	builder := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&builder, `{"sequence":%d,"cords":[`, state.backend_sequence)
-	first := true
+snapshot_json :: proc(state: ^App_State) -> ([]byte, json.Marshal_Error) {
+	snapshot := Cabinet_Snapshot {
+		sequence        = state.backend_sequence,
+		active_action   = state.active_action,
+		crank_complete  = state.crank_flash > 0,
+		speaker_enabled = state.speaker_enabled,
+		reset           = state.reset_requested,
+	}
 	for cord in state.cords {
-		if !cord.active do continue
-		if !first do strings.write_string(&builder, ",")
-		fmt.sbprintf(&builder, "[%d,%d]", cord.a, cord.b)
-		first = false
+		if cord.active do append(&snapshot.cords, Cabinet_Cord{cord.a, cord.b})
 	}
 	directory_id := state.digits[0] * 1000 + state.digits[1] * 100 + state.digits[2] * 10 + state.digits[3]
-	fmt.sbprintf(
-		&builder,
-		`],"active_action":%d,"crank_complete":%t,"directory_id":%d,"speaker_enabled":%t,"reset":%t}`,
-		state.active_action,
-		state.crank_flash > 0,
-		directory_id,
-		state.speaker_enabled,
-		state.reset_requested,
-	)
-	strings.write_string(&builder, "\n")
-	return strings.to_string(builder)
+	snapshot.directory_id = u16(directory_id)
+	request, marshal_error := json.marshal(snapshot, allocator = context.temp_allocator)
+	return request, marshal_error
 }
 
 reset_cabinet_interactions :: proc(state: ^App_State) {
@@ -517,9 +524,18 @@ sync_backend :: proc(state: ^App_State) {
 		state.backend_online = false
 		return
 	}
-	request := snapshot_json(state)
-	_, send_error := net.send_tcp(socket, transmute([]byte)request)
+	request, marshal_error := snapshot_json(state)
+	if marshal_error != nil {
+		state.backend_online = false
+		return
+	}
+	_, send_error := net.send_tcp(socket, request)
 	if send_error != nil {
+		state.backend_online = false
+		return
+	}
+	_, terminator_error := net.send_tcp(socket, []byte{'\n'})
+	if terminator_error != nil {
 		state.backend_online = false
 		return
 	}
