@@ -2,6 +2,7 @@
 //! The newline-delimited JSON protocol is disposable: it exists only to make
 //! the Odin/Rust boundary inspectable during the MVP demonstration.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -106,9 +107,9 @@ pub struct SubscriberProfile {
 }
 
 impl SubscriberProfile {
-    fn operator_session_prompt(&self, transcript: &str) -> String {
+    fn operator_session_prompt(&self, recent_dialogue: &[String], transcript: &str) -> String {
         format!(
-            "You are {identity}, {role}. Personality: {personality} Speaking style: {style} Immediate goal: {goal} {routing_instruction} Relationship: {relationship} The Exchange Operator said: {transcript} Reply in character in one or two sentences, maximum 35 words. Do not invent facts or actions.",
+            "You are {identity}, {role}. Personality: {personality} Speaking style: {style} Immediate goal: {goal} {routing_instruction} Relationship: {relationship} Recent conversation: {recent_dialogue} The Exchange Operator said: {transcript} Reply in character in one or two sentences, maximum 35 words. Do not invent facts or actions.",
             identity = self.identity,
             role = self.occupation_or_role,
             personality = self.personality,
@@ -118,6 +119,7 @@ impl SubscriberProfile {
                 || "".into(),
                 |callee| format!("If requesting routing, explicitly name {callee}."),
             ),
+            recent_dialogue = recent_dialogue.join(" "),
             relationship = self.paired_relationship,
         )
     }
@@ -214,6 +216,7 @@ struct LocalVoicePipeline {
     recorder: Option<ContinuousRecorder>,
     recorder_failure: Option<VoicePipelineError>,
     capture: Option<ActiveCapture>,
+    recent_dialogue: BTreeMap<u16, Vec<String>>,
 }
 
 impl Default for LocalVoicePipeline {
@@ -225,12 +228,14 @@ impl Default for LocalVoicePipeline {
                 recorder: Some(recorder),
                 recorder_failure: None,
                 capture: None,
+                recent_dialogue: BTreeMap::new(),
             },
             Err(error) => Self {
                 microphone_level,
                 recorder: None,
                 recorder_failure: Some(error),
                 capture: None,
+                recent_dialogue: BTreeMap::new(),
             },
         }
     }
@@ -809,6 +814,17 @@ impl LocalVoicePipeline {
             profile.immediate_goal
         ))
     }
+
+    fn remember_dialogue(&mut self, profile: &SubscriberProfile, transcript: &str, response: &str) {
+        const RECENT_DIALOGUE_LINES: usize = 4;
+
+        let history = self.recent_dialogue.entry(profile.id).or_default();
+        history.push(format!("OPERATOR: {transcript}"));
+        history.push(format!("{}: {response}", profile.identity));
+        if history.len() > RECENT_DIALOGUE_LINES {
+            history.drain(..history.len() - RECENT_DIALOGUE_LINES);
+        }
+    }
 }
 
 impl VoicePipeline for LocalVoicePipeline {
@@ -908,7 +924,12 @@ impl VoicePipeline for LocalVoicePipeline {
                 ));
             }
 
-            let prompt = profile.operator_session_prompt(&transcript);
+            let recent_dialogue = self
+                .recent_dialogue
+                .get(&profile.id)
+                .cloned()
+                .unwrap_or_default();
+            let prompt = profile.operator_session_prompt(&recent_dialogue, &transcript);
             let first_response = Self::bounded_text(&self.request_llm(&prompt)?);
             let response = if first_response.is_empty()
                 || !Self::response_is_on_goal(profile, &first_response)
@@ -948,6 +969,7 @@ impl VoicePipeline for LocalVoicePipeline {
                 Ok(())
             };
             playback?;
+            self.remember_dialogue(profile, &transcript, &response);
             Ok(OperatorSession {
                 transcript,
                 response,
@@ -1367,6 +1389,8 @@ impl MvpCore {
     ) -> CabinetOutput {
         let mut lamps = [false; 16];
         if !matches!(self.phase, Phase::DemonstrationComplete) {
+            // The MVP authors all four demonstrable Subscribers as off-hook so
+            // the Exchange Operator can select any profile for a session.
             for profile in SUBSCRIBERS {
                 lamps[profile.line] = true;
             }
@@ -1873,6 +1897,20 @@ mod tests {
     }
 
     #[test]
+    fn operator_prompt_keeps_only_a_small_subscriber_specific_dialogue_window() {
+        let history = vec![
+            "OPERATOR: Is the intake desk ready?".into(),
+            "DR. SORIN VALE: Yes, tell me the fever.".into(),
+        ];
+
+        let prompt = SUBSCRIBERS[1].operator_session_prompt(&history, "The fever began tonight.");
+
+        assert!(prompt.contains("Recent conversation: OPERATOR: Is the intake desk ready?"));
+        assert!(prompt.contains("The fever began tonight."));
+        assert!(prompt.contains("DR. SORIN VALE"));
+    }
+
+    #[test]
     fn clearing_a_completed_circuit_advances_to_the_second_fixed_call() {
         let mut core = test_core();
         core.apply(snapshot(&[(4, 16)], -1, false));
@@ -1950,7 +1988,7 @@ mod tests {
         for profile in SUBSCRIBERS {
             assert!(
                 initial.line_lamps[profile.line],
-                "{} is available",
+                "{} starts off-hook for the MVP",
                 profile.identity
             );
         }
