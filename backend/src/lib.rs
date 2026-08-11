@@ -189,6 +189,8 @@ pub trait VoicePipeline: Send {
     fn microphone_level(&self) -> Arc<AtomicU32> {
         Arc::new(AtomicU32::new(0))
     }
+
+    fn set_session_cancellation(&mut self, _: Arc<AtomicBool>) {}
 }
 
 struct FinishedOperatorSession {
@@ -217,6 +219,7 @@ struct LocalVoicePipeline {
     recorder_failure: Option<VoicePipelineError>,
     capture: Option<ActiveCapture>,
     recent_dialogue: BTreeMap<u16, Vec<String>>,
+    session_cancellation: Option<Arc<AtomicBool>>,
 }
 
 impl Default for LocalVoicePipeline {
@@ -229,6 +232,7 @@ impl Default for LocalVoicePipeline {
                 recorder_failure: None,
                 capture: None,
                 recent_dialogue: BTreeMap::new(),
+                session_cancellation: None,
             },
             Err(error) => Self {
                 microphone_level,
@@ -236,6 +240,7 @@ impl Default for LocalVoicePipeline {
                 recorder_failure: Some(error),
                 capture: None,
                 recent_dialogue: BTreeMap::new(),
+                session_cancellation: None,
             },
         }
     }
@@ -815,6 +820,20 @@ impl LocalVoicePipeline {
         ))
     }
 
+    fn ensure_session_is_current(&self) -> Result<(), VoicePipelineError> {
+        if self
+            .session_cancellation
+            .as_ref()
+            .is_some_and(|cancelled| cancelled.load(Ordering::Acquire))
+        {
+            return Err(VoicePipelineError::new(
+                VoiceStage::Dialogue,
+                "OPERATOR SESSION CANCELLED",
+            ));
+        }
+        Ok(())
+    }
+
     fn remember_dialogue(&mut self, profile: &SubscriberProfile, transcript: &str, response: &str) {
         const RECENT_DIALOGUE_LINES: usize = 4;
 
@@ -828,6 +847,10 @@ impl LocalVoicePipeline {
 }
 
 impl VoicePipeline for LocalVoicePipeline {
+    fn set_session_cancellation(&mut self, cancellation: Arc<AtomicBool>) {
+        self.session_cancellation = Some(cancellation);
+    }
+
     fn microphone_level(&self) -> Arc<AtomicU32> {
         self.microphone_level.clone()
     }
@@ -914,6 +937,7 @@ impl VoicePipeline for LocalVoicePipeline {
         );
 
         let result = (|| {
+            self.ensure_session_is_current()?;
             Self::captured_audio_has_frames(&path)?;
             Self::captured_audio_has_signal(&captured_samples)?;
             let transcript = Self::bounded_text(&self.transcribe(&path)?);
@@ -943,6 +967,7 @@ impl VoicePipeline for LocalVoicePipeline {
             } else {
                 first_response
             };
+            self.ensure_session_is_current()?;
 
             let speech_path = Self::voice_artifact_path(
                 VoiceStage::Tts,
@@ -952,6 +977,7 @@ impl VoicePipeline for LocalVoicePipeline {
             if let Err(error) = synthesis {
                 return Err(error);
             }
+            self.ensure_session_is_current()?;
             let playback = if speaker_enabled {
                 let player =
                     std::env::var("NN_MVP_PLAY_COMMAND").unwrap_or_else(|_| "paplay".into());
@@ -1079,6 +1105,7 @@ pub struct MvpCore {
     routing_status: &'static str,
     voice_pipeline: Option<Box<dyn VoicePipeline>>,
     voice_completion: Option<Receiver<FinishedOperatorSession>>,
+    voice_cancellation: Arc<AtomicBool>,
     microphone_level: Arc<AtomicU32>,
     ptt_held: bool,
     capture_active: bool,
@@ -1113,6 +1140,7 @@ impl MvpCore {
             routing_status: "CALLER OFF-HOOK: CONNECT TO OPERATOR",
             voice_pipeline: Some(Box::new(pipeline)),
             voice_completion: None,
+            voice_cancellation: Arc::new(AtomicBool::new(false)),
             microphone_level,
             ptt_held: false,
             capture_active: false,
@@ -1124,6 +1152,7 @@ impl MvpCore {
 
     pub fn apply(&mut self, input: CabinetSnapshot) -> CabinetOutput {
         if input.reset {
+            self.voice_cancellation.store(true, Ordering::Release);
             if let Some(pipeline) = self.voice_pipeline.as_mut() {
                 pipeline.cancel_capture();
             }
@@ -1302,6 +1331,7 @@ impl MvpCore {
             ));
             return;
         };
+        pipeline.set_session_cancellation(self.voice_cancellation.clone());
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
             let result = pipeline.finish_operator_session(&profile, speaker_enabled);
@@ -2013,7 +2043,11 @@ mod tests {
     fn releasing_ptt_returns_promptly_while_voice_work_continues_in_the_background() {
         use std::sync::mpsc;
 
-        struct BlockingVoicePipeline(mpsc::Receiver<()>);
+        struct BlockingVoicePipeline {
+            release: mpsc::Receiver<()>,
+            cancellation: Option<Arc<AtomicBool>>,
+            cancellation_observed: Arc<AtomicBool>,
+        }
 
         impl VoicePipeline for BlockingVoicePipeline {
             fn begin_capture(&mut self) -> Result<(), VoicePipelineError> {
@@ -2025,16 +2059,36 @@ mod tests {
                 _: &SubscriberProfile,
                 _: bool,
             ) -> Result<OperatorSession, VoicePipelineError> {
-                self.0.recv().expect("test releases the voice worker");
+                self.release.recv().expect("test releases the voice worker");
+                if self
+                    .cancellation
+                    .as_ref()
+                    .is_some_and(|cancelled| cancelled.load(Ordering::Acquire))
+                {
+                    self.cancellation_observed.store(true, Ordering::Release);
+                    return Err(VoicePipelineError::new(
+                        VoiceStage::Dialogue,
+                        "OPERATOR SESSION CANCELLED",
+                    ));
+                }
                 Ok(OperatorSession {
                     transcript: "Please connect me.".into(),
                     response: "I am ready.".into(),
                 })
             }
+
+            fn set_session_cancellation(&mut self, cancellation: Arc<AtomicBool>) {
+                self.cancellation = Some(cancellation);
+            }
         }
 
         let (release, blocked_worker) = mpsc::channel();
-        let mut core = MvpCore::with_voice_pipeline(BlockingVoicePipeline(blocked_worker));
+        let cancellation_observed = Arc::new(AtomicBool::new(false));
+        let mut core = MvpCore::with_voice_pipeline(BlockingVoicePipeline {
+            release: blocked_worker,
+            cancellation: None,
+            cancellation_observed: cancellation_observed.clone(),
+        });
         core.apply(snapshot(&[(4, OPERATOR_JACK)], -1, false));
         core.apply(snapshot(&[(4, OPERATOR_JACK)], 0, false));
 
@@ -2049,14 +2103,33 @@ mod tests {
         );
 
         release.send(()).expect("release voice worker");
+        let mut completed = false;
         for _ in 0..20 {
-            let completed = core.apply(snapshot(&[(4, OPERATOR_JACK)], -1, false));
-            if completed.phase == Phase::ConnectedToOperator {
+            let output = core.apply(snapshot(&[(4, OPERATOR_JACK)], -1, false));
+            if output.phase == Phase::ConnectedToOperator {
+                completed = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(completed, "voice worker did not complete");
+
+        core.apply(snapshot(&[(4, OPERATOR_JACK)], 0, false));
+        assert_eq!(
+            core.apply(snapshot(&[(4, OPERATOR_JACK)], -1, false)).phase,
+            Phase::OperatorResponding
+        );
+        let mut reset = snapshot(&[], -1, false);
+        reset.reset = true;
+        assert_eq!(core.apply(reset).reset_status, "RESET COMPLETE");
+        release.send(()).expect("release cancelled voice worker");
+        for _ in 0..20 {
+            if cancellation_observed.load(Ordering::Acquire) {
                 return;
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        panic!("voice worker did not complete");
+        panic!("reset did not cancel the background voice worker");
     }
 
     #[test]
