@@ -97,6 +97,54 @@ python3 prototypes/half-duplex-voice-benchmark/benchmark_pocket_tts.py \
   --voice alba --torch-threads 2
 ```
 
+## Generate one-actor casting samples
+
+This is the focused prototype for the voice-casting decision. It uses Pocket
+TTS itself and writes WAV files to a private results directory. `alba` is the
+neutral catalog voice; replace it with a consented local WAV when appropriate.
+
+```bash
+python3 prototypes/half-duplex-voice-benchmark/voice_casting.py \
+  --results-dir /path/to/private-results \
+  --neutral-voice alba
+```
+
+To compare directed reference recordings for the same actor, pass consented
+WAV files from outside the repository. Omitted states use the neutral voice.
+
+```bash
+python3 prototypes/half-duplex-voice-benchmark/voice_casting.py \
+  --results-dir /path/to/private-results \
+  --neutral-voice /path/to/consented-neutral.wav \
+  --state-voice urgent=/path/to/consented-urgent.wav \
+  --state-voice quiet=/path/to/consented-quiet.wav \
+  --state-voice angry=/path/to/consented-angry.wav \
+  --state-voice interrupted=/path/to/consented-interrupted.wav
+```
+
+Pocket TTS can also download a reference directly from Hugging Face. This is
+useful for testing NPC casting without recording new voices. Use the catalog
+voice names (`alba`, `anna`, `charles`, `cosette`, and others) for distinct NPC
+identities. The `tts-voices` repository also contains expressive Expresso
+references; inspect their per-file licensing before use.
+
+```bash
+python3 prototypes/half-duplex-voice-benchmark/voice_casting.py \
+  --results-dir /path/to/private-results \
+  --neutral-voice hf://kyutai/tts-voices/vctk/p254_023_enhanced.wav \
+  --state-voice urgent=hf://kyutai/tts-voices/expresso/ex04-ex02_confused_001_channel1_499s.wav
+```
+
+The Hugging Face cache should remain outside the repository. Pocket TTS's
+model and voice references may be gated; authenticate with `hf auth login`
+when prompted. Never use a real person's voice without explicit consent, and
+do not treat a stock expressive clip's emotion label as a guarantee that the
+generated line will match it.
+
+The generated samples are private and are not committed. Pocket TTS does not
+provide a separate emotion parameter; directed delivery is tested by changing
+the consented audio reference, while the text remains fixed per state.
+
 ## Run the blind listening test
 
 Pass only private sample/result directories outside the repository. Candidate

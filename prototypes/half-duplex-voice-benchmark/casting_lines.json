@@ -1,0 +1,7 @@
+[
+  {"id": "casting-neutral", "state": "neutral", "text": "Please connect me to subscriber one zero four seven."},
+  {"id": "casting-urgent", "state": "urgent", "text": "Please connect me to subscriber one zero four seven."},
+  {"id": "casting-quiet", "state": "quiet", "text": "Please connect me to subscriber one zero four seven."},
+  {"id": "casting-angry", "state": "angry", "text": "Please connect me to subscriber one zero four seven."},
+  {"id": "casting-interrupted", "state": "interrupted", "text": "Please connect me to subscriber one zero four seven."}
+]
