@@ -104,7 +104,7 @@ class RatingHandler(SimpleHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", mimetypes.guess_type(audio_path)[0] or "audio/wav")
         self.send_header("Content-Length", str(len(audio)))
-        self.send_header("Cache-Control", "private, max-age=3600")
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(audio)
 

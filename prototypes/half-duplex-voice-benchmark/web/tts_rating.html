@@ -134,7 +134,7 @@
           `).join("");
           card.innerHTML = `
             <h2>Sample ${sample.label}</h2>
-            <audio controls preload="metadata" src="${sample.url}"></audio>
+             <audio controls preload="metadata" src="${sample.url}?session=${session.session_id}"></audio>
             <fieldset><legend>Overall quality</legend><div class="score">${scoreChoices}</div></fieldset>
             <p><label><input id="issue-${sample.label}" type="checkbox"
               ${prior?.samples?.[sample.label]?.pronunciation_issue ? "checked" : ""}>
