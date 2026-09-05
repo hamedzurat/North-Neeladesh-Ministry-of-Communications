@@ -53,22 +53,34 @@ impl Backend {
 
         let input = &message.input;
         let reset = input.reset;
-        let previous_state = self.state.clone();
-        let reset_state = if reset {
+        let mut next_state = if reset {
             initial_state()
         } else {
-            previous_state
+            self.state.clone()
         };
-        let printer_output = if reset {
-            let mut output = self.state.printer_output.clone();
-            output.push(PrinterEntry {
-                entry_id: output.len() as u64 + 1,
-                text: "RUN RESET".to_string(),
-            });
-            output
-        } else {
-            self.state.printer_output.clone()
-        };
+        let mut routing_receipt = None;
+
+        if !reset {
+            let transition = match advance_call(&self.state, input) {
+                Ok(transition) => transition,
+                Err(error) => return rejected_response(message.message_id, error, &self.state),
+            };
+            next_state.call = transition.call;
+            next_state.line_lamps = transition.line_lamps;
+            next_state.game_phase = transition.game_phase;
+            next_state.shift = transition.shift;
+            routing_receipt = transition.routing_receipt;
+        }
+
+        if let Some(text) = routing_receipt {
+            let entry_id = next_state
+                .printer_output
+                .last()
+                .map_or(1, |entry| entry.entry_id + 1);
+            next_state
+                .printer_output
+                .push(PrinterEntry { entry_id, text });
+        }
 
         let revision = self.state.state_revision + 1;
         self.state = StateSnapshot {
@@ -83,16 +95,16 @@ impl Backend {
             crank: input.crank.clone(),
             tuning: input.tuning.clone(),
             reset_applied: reset,
-            line_lamps: reset_state.line_lamps,
-            game_phase: reset_state.game_phase,
-            clock: reset_state.clock,
+            line_lamps: next_state.line_lamps,
+            game_phase: next_state.game_phase,
+            clock: next_state.clock,
             directory_pages: directory_pages(input.directory_digits),
-            printer_output,
-            call: reset_state.call,
-            shift: reset_state.shift,
+            printer_output: next_state.printer_output,
+            call: next_state.call,
+            shift: next_state.shift,
             diagnostics: DiagnosticState {
                 frontend: input.diagnostics.clone(),
-                messages: reset_state.diagnostics.messages,
+                messages: next_state.diagnostics.messages,
             },
         };
         self.controller = Some(Controller {
@@ -113,6 +125,282 @@ impl Backend {
         self.last_message_id = Some(response.message_id);
         response
     }
+}
+
+struct CallTransition {
+    call: Option<exchange_protocol::CallStatus>,
+    line_lamps: [bool; 16],
+    game_phase: GamePhase,
+    shift: ShiftStatus,
+    routing_receipt: Option<String>,
+}
+
+fn advance_call(
+    state: &StateSnapshot,
+    input: &exchange_protocol::InputSnapshot,
+) -> Result<CallTransition, ProtocolError> {
+    if state.call.is_none() {
+        let Some((caller_line, callee)) = authored_call(input.directory_digits) else {
+            if input.cord_topology.is_empty() {
+                return Ok(CallTransition {
+                    line_lamps: [false; 16],
+                    call: None,
+                    game_phase: state.game_phase.clone(),
+                    shift: state.shift.clone(),
+                    routing_receipt: None,
+                });
+            }
+            return Err(protocol_error(
+                "routing_before_ringing",
+                "a new Call must be connected to the Operator Jack before routing",
+            ));
+        };
+        let caller = PortId::Subscriber(caller_line);
+        let operator_cord = has_exact_cords(&input.cord_topology, &[(&caller, &PortId::Operator)]);
+        if !input.cord_topology.is_empty() && !operator_cord {
+            return Err(protocol_error(
+                "routing_before_ringing",
+                "a new Call must be connected to the Operator Jack before routing",
+            ));
+        }
+        let phase = if operator_cord {
+            exchange_protocol::CallPhase::OperatorSession
+        } else {
+            exchange_protocol::CallPhase::Waiting
+        };
+        let call = exchange_protocol::CallStatus {
+            caller_line,
+            requested_callee_line: callee,
+            phase,
+        };
+        let active_call_count = 1;
+        return Ok(CallTransition {
+            line_lamps: lamps_for_call(Some(&call)),
+            call: Some(call),
+            game_phase: if operator_cord {
+                GamePhase::Shift
+            } else {
+                state.game_phase.clone()
+            },
+            shift: ShiftStatus {
+                active_call_count,
+                phase: if operator_cord {
+                    ShiftPhase::Active
+                } else {
+                    state.shift.phase.clone()
+                },
+                ..state.shift.clone()
+            },
+            routing_receipt: None,
+        });
+    }
+
+    let call = state.call.as_ref().expect("call checked above");
+    let caller = PortId::Subscriber(call.caller_line);
+    let callee = PortId::Subscriber(call.requested_callee_line);
+    let caller_operator = has_exact_cords(&input.cord_topology, &[(&caller, &PortId::Operator)]);
+    let ring_generator = has_ring_generator(&input.cord_topology, &caller, &callee);
+    let direct_circuit = has_exact_cords(&input.cord_topology, &[(&caller, &callee)]);
+
+    let mut next_call = call.clone();
+    let mut next_game_phase = state.game_phase.clone();
+    let mut next_shift = state.shift.clone();
+    let mut routing_receipt = None;
+
+    match call.phase {
+        exchange_protocol::CallPhase::Waiting => {
+            if caller_operator {
+                next_call.phase = exchange_protocol::CallPhase::OperatorSession;
+                next_game_phase = GamePhase::Shift;
+                next_shift.phase = ShiftPhase::Active;
+            } else if direct_circuit {
+                return Err(protocol_error(
+                    "routing_before_ringing",
+                    "the caller and callee cannot be connected before ringing",
+                ));
+            } else if !input.cord_topology.is_empty() {
+                return Err(protocol_error(
+                    "invalid_cord_arrangement",
+                    "the waiting caller must be connected to the Operator Jack",
+                ));
+            }
+        }
+        exchange_protocol::CallPhase::OperatorSession => {
+            if ring_generator {
+                if input.crank.rotation_count == 0 || input.crank.speed == 0 {
+                    return Err(protocol_error(
+                        "ringing_requires_crank",
+                        "ringing requires a Ring Generator connection and crank input",
+                    ));
+                }
+                next_call.phase = exchange_protocol::CallPhase::Ringing;
+            } else if direct_circuit {
+                return Err(protocol_error(
+                    "routing_before_ringing",
+                    "the caller and callee cannot be connected before ringing",
+                ));
+            } else if input.cord_topology.is_empty() {
+                next_call.phase = exchange_protocol::CallPhase::AwaitingRouting;
+            } else if !caller_operator {
+                return Err(protocol_error(
+                    "invalid_cord_arrangement",
+                    "the Operator Session requires the caller to be connected to the Operator Jack",
+                ));
+            }
+        }
+        exchange_protocol::CallPhase::AwaitingRouting => {
+            if ring_generator {
+                if input.crank.rotation_count == 0 || input.crank.speed == 0 {
+                    return Err(protocol_error(
+                        "ringing_requires_crank",
+                        "ringing requires a Ring Generator connection and crank input",
+                    ));
+                }
+                next_call.phase = exchange_protocol::CallPhase::Ringing;
+            } else if caller_operator {
+                next_call.phase = exchange_protocol::CallPhase::OperatorSession;
+            } else if direct_circuit {
+                return Err(protocol_error(
+                    "routing_before_ringing",
+                    "the caller and callee cannot be connected before ringing",
+                ));
+            } else if !input.cord_topology.is_empty() {
+                return Err(protocol_error(
+                    "invalid_cord_arrangement",
+                    "Awaiting Routing requires the Callee to be connected to the Ring Generator",
+                ));
+            }
+        }
+        exchange_protocol::CallPhase::Held => {
+            if caller_operator {
+                next_call.phase = exchange_protocol::CallPhase::OperatorSession;
+                next_game_phase = GamePhase::Shift;
+                next_shift.phase = ShiftPhase::Active;
+            } else if !input.cord_topology.is_empty() {
+                return Err(protocol_error(
+                    "invalid_cord_arrangement",
+                    "a Held Caller can only be reconnected to the Operator Jack",
+                ));
+            }
+        }
+        exchange_protocol::CallPhase::Ringing => {
+            if direct_circuit {
+                next_call.phase = exchange_protocol::CallPhase::Connected;
+                next_shift.completed_routings += 1;
+                next_game_phase = GamePhase::Shift;
+                routing_receipt = Some(format!(
+                    "ROUTING {} -> {}",
+                    call.caller_line, call.requested_callee_line
+                ));
+            } else if ring_generator {
+                if input.crank.rotation_count > 0 && input.crank.speed > 0 {
+                    next_call.phase = exchange_protocol::CallPhase::Ringing;
+                } else {
+                    next_call.phase = exchange_protocol::CallPhase::AwaitingRouting;
+                }
+            } else if caller_operator {
+                next_call.phase = exchange_protocol::CallPhase::OperatorSession;
+            } else if input.cord_topology.is_empty() {
+                next_call.phase = exchange_protocol::CallPhase::AwaitingRouting;
+            } else {
+                return Err(protocol_error(
+                    "invalid_routing",
+                    "the direct Circuit must connect the requested Callee",
+                ));
+            }
+        }
+        exchange_protocol::CallPhase::Connected => {
+            if direct_circuit {
+                next_call.phase = exchange_protocol::CallPhase::Completed;
+            } else if input.cord_topology.is_empty() {
+                next_shift.active_call_count = 0;
+                return Ok(CallTransition {
+                    call: None,
+                    line_lamps: [false; 16],
+                    game_phase: next_game_phase,
+                    shift: next_shift,
+                    routing_receipt: None,
+                });
+            } else {
+                return Err(protocol_error(
+                    "invalid_cord_arrangement",
+                    "the connected Circuit must remain between the Caller and requested Callee",
+                ));
+            }
+        }
+        exchange_protocol::CallPhase::Completed => {
+            if input.cord_topology.is_empty() {
+                return Ok(CallTransition {
+                    call: None,
+                    line_lamps: [false; 16],
+                    game_phase: next_game_phase,
+                    shift: next_shift,
+                    routing_receipt: None,
+                });
+            }
+            if !direct_circuit {
+                return Err(protocol_error(
+                    "invalid_cord_arrangement",
+                    "the completed Circuit must be cleared before changing cords",
+                ));
+            }
+        }
+        _ => {}
+    }
+
+    next_shift.active_call_count =
+        u8::from(next_call.phase != exchange_protocol::CallPhase::Completed);
+    Ok(CallTransition {
+        line_lamps: lamps_for_call(Some(&next_call)),
+        call: Some(next_call),
+        game_phase: next_game_phase,
+        shift: next_shift,
+        routing_receipt,
+    })
+}
+
+fn authored_call(digits: [u8; 4]) -> Option<(u8, u8)> {
+    let id = digits
+        .iter()
+        .fold(0_u16, |value, digit| value * 10 + *digit as u16);
+    (1..=5).contains(&id).then_some((0, id as u8))
+}
+
+fn lamps_for_call(call: Option<&exchange_protocol::CallStatus>) -> [bool; 16] {
+    let mut lamps = [false; 16];
+    let Some(call) = call else {
+        return lamps;
+    };
+    lamps[call.caller_line as usize] = true;
+    if matches!(
+        call.phase,
+        exchange_protocol::CallPhase::Ringing
+            | exchange_protocol::CallPhase::Connected
+            | exchange_protocol::CallPhase::Completed
+    ) {
+        lamps[call.requested_callee_line as usize] = true;
+    }
+    lamps
+}
+
+fn has_ring_generator(cords: &[CordConnection], caller: &PortId, callee: &PortId) -> bool {
+    has_exact_cords(
+        cords,
+        &[
+            (caller, &PortId::Operator),
+            (callee, &PortId::RingGenerator),
+        ],
+    )
+}
+
+fn has_exact_cords(cords: &[CordConnection], expected: &[(&PortId, &PortId)]) -> bool {
+    cords.len() == expected.len()
+        && expected.iter().all(|(first, second)| {
+            cords.iter().any(|cord| {
+                (&cord.first == *first && &cord.second == *second)
+                    || (&cord.first == *second && &cord.second == *first)
+            })
+        })
 }
 
 pub fn serve(listener: TcpListener) -> io::Result<()> {

@@ -133,6 +133,7 @@ pub struct CallStatus {
 pub enum CallPhase {
     Waiting,
     OperatorSession,
+    AwaitingRouting,
     Held,
     Ringing,
     Connected,

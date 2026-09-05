@@ -50,7 +50,7 @@ In another terminal, run the offline TCP/CBOR harness:
 just protocol-harness
 ```
 
-The harness starts an isolated loopback backend and verifies an empty snapshot, a Directory change, reset, and invalid-input rejection. It does not contact an external service or require hardware. `just backend-test` runs the reducer contract tests; `just check` runs workspace typechecking.
+The harness starts an isolated loopback backend and verifies the authored Caller Line Lamp, Operator Circuit, Ring Generator and crank prerequisites, direct Routing, Circuit clearing, reset, and invalid-input rejection. It repeats a valid Routing after reset. It does not contact an external service or require hardware. `just backend-test` runs the reducer contract tests; `just check` runs workspace typechecking.
 
 To send the same checkpoints to a separately running backend, use:
 
