@@ -51,6 +51,11 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
     );
     assert_eq!(first.state.frontend.instance_id, "harness-odin");
     assert_eq!(first.state.state_revision, 1);
+    assert!(first.state.diagnostics.frontend.transport_connected);
+    assert_eq!(
+        first.state.diagnostics.frontend.firmware_version.as_deref(),
+        Some("harness")
+    );
 
     let second = exchange(stream, message(2, 2, 1, [0, 0, 0, 2], false))?;
     assert!(

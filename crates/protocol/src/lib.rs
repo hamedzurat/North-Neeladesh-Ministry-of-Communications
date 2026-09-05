@@ -40,7 +40,6 @@ pub struct HeldControls {
     pub police: bool,
     pub ems: bool,
     pub fire: bool,
-    pub directory_lookup: bool,
     pub tap_listen: [bool; 4],
 }
 
@@ -126,7 +125,21 @@ pub struct DirectoryPage {
 pub struct CallStatus {
     pub caller_line: u8,
     pub requested_callee_line: u8,
-    pub status: String,
+    pub phase: CallPhase,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallPhase {
+    Waiting,
+    OperatorSession,
+    Held,
+    Ringing,
+    Connected,
+    Completed,
+    Missed,
+    Misrouted,
+    Failed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

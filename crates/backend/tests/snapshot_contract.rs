@@ -52,7 +52,7 @@ fn input_with_revision(
 fn complete_snapshot_round_trips_frontend_input_and_directory_state() {
     let mut backend = Backend::new();
 
-    let response = backend.handle(input(1, 1, [0, 0, 0, 1], false));
+    let response = backend.apply_input_snapshot(input(1, 1, [0, 0, 0, 1], false));
 
     assert!(response.accepted);
     assert_eq!(response.state.frontend.kind, FrontendKind::Odin);
@@ -75,9 +75,9 @@ fn complete_snapshot_round_trips_frontend_input_and_directory_state() {
 #[test]
 fn invalid_input_returns_the_unchanged_complete_state() {
     let mut backend = Backend::new();
-    let accepted = backend.handle(input(1, 1, [0, 0, 0, 1], false));
+    let accepted = backend.apply_input_snapshot(input(1, 1, [0, 0, 0, 1], false));
 
-    let rejected = backend.handle(input_with_revision(2, 2, 1, [0, 0, 1, 10], false));
+    let rejected = backend.apply_input_snapshot(input_with_revision(2, 2, 1, [0, 0, 1, 10], false));
 
     assert!(!rejected.accepted);
     assert_eq!(
@@ -90,9 +90,9 @@ fn invalid_input_returns_the_unchanged_complete_state() {
 #[test]
 fn reset_clears_game_state_without_erasing_printer_history() {
     let mut backend = Backend::new();
-    backend.handle(input(1, 1, [0, 0, 0, 2], false));
+    backend.apply_input_snapshot(input(1, 1, [0, 0, 0, 2], false));
 
-    let reset = backend.handle(input_with_revision(2, 2, 1, [0, 0, 0, 2], true));
+    let reset = backend.apply_input_snapshot(input_with_revision(2, 2, 1, [0, 0, 0, 2], true));
 
     assert!(reset.accepted);
     assert!(reset.state.reset_applied);
@@ -116,7 +116,7 @@ fn complete_physical_input_is_preserved_in_the_state_snapshot() {
         ..HeldControls::default()
     };
 
-    let response = backend.handle(request);
+    let response = backend.apply_input_snapshot(request);
 
     assert_eq!(response.state.cord_topology.len(), 1);
     assert_eq!(response.state.cord_topology[0].first, PortId::Subscriber(0));
@@ -127,12 +127,31 @@ fn complete_physical_input_is_preserved_in_the_state_snapshot() {
 #[test]
 fn retrying_the_same_reset_message_is_idempotent() {
     let mut backend = Backend::new();
-    backend.handle(input(1, 1, [0, 0, 0, 1], false));
+    backend.apply_input_snapshot(input(1, 1, [0, 0, 0, 1], false));
     let request = input_with_revision(2, 2, 1, [0, 0, 0, 1], true);
 
-    let first = backend.handle(request.clone());
-    let retry = backend.handle(request);
+    let first = backend.apply_input_snapshot(request.clone());
+    let retry = backend.apply_input_snapshot(request);
 
     assert_eq!(retry, first);
     assert_eq!(retry.state.printer_output.len(), 2);
+}
+
+#[test]
+fn reusing_an_older_message_id_is_rejected_without_state_change() {
+    let mut backend = Backend::new();
+    let first = backend.apply_input_snapshot(input(1, 1, [0, 0, 0, 1], false));
+    backend.apply_input_snapshot(input(2, 2, [0, 0, 0, 2], false));
+    let mut reused = input_with_revision(3, 1, 2, [0, 0, 0, 3], false);
+    reused.input.input_sequence = 3;
+
+    let rejected = backend.apply_input_snapshot(reused);
+
+    assert!(!rejected.accepted);
+    assert_eq!(
+        rejected.error.as_ref().map(|error| error.code.as_str()),
+        Some("duplicate_message_id")
+    );
+    assert_ne!(rejected.state, first.state);
+    assert_eq!(rejected.state.directory_digits, [0, 0, 0, 2]);
 }
