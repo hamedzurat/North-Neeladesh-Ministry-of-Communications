@@ -6,9 +6,8 @@ use std::thread;
 
 use exchange_backend::{Backend, handle_connection};
 use exchange_protocol::{
-    CordConnection, CrankState, FrontendDiagnostics, FrontendIdentity, FrontendKind, HeldControls,
-    InputMessage, InputSnapshot, MessageKind, PROTOCOL_VERSION, PortId, StateMessage, TuningState,
-    read_frame, write_frame,
+    CordConnection, HeldControls, InputDebug, InputMessage, InputState, PROTOCOL_VERSION, PortId,
+    StateMessage, TuningState, read_frame, write_frame,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -31,101 +30,100 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut stream = TcpStream::connect(address)?;
     run_sequence(&mut stream)?;
-
     drop(stream);
     server
         .join()
         .map_err(|_| "protocol server thread panicked")??;
     println!(
-        "protocol harness passed: complete snapshots, reset, and rejection verified over TCP/CBOR"
+        "protocol harness passed: simplified input/output contract, routing, and rejection verified over TCP/CBOR"
     );
     Ok(())
 }
 
 fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
-    let first = exchange(stream, message(1, 1, 0, [0, 0, 0, 1], false))?;
+    let first = exchange(stream, message(1, 0, [0, 0, 0, 1]))?;
     assert!(
         first.accepted,
-        "initial snapshot was rejected: {:?}",
+        "initial input was rejected: {:?}",
         first.error
     );
-    assert_eq!(first.state.frontend.instance_id, "harness-odin");
-    assert_eq!(first.state.state_revision, 1);
-    assert!(first.state.diagnostics.frontend.transport_connected);
-    assert_eq!(
-        first.state.diagnostics.frontend.firmware_version.as_deref(),
-        Some("harness")
-    );
-    assert_eq!(first.state.call.as_ref().unwrap().caller_line, 0);
-    assert!(first.state.line_lamps[0]);
+    assert_eq!(first.input_sequence, 1);
+    assert_eq!(first.state_revision, 1);
+    assert_eq!(first.output.call.as_ref().unwrap().caller_line, 0);
+    assert!(first.output.line_lamps[0]);
 
-    let second = exchange(stream, message(2, 2, 1, [0, 0, 0, 2], false))?;
+    let second = exchange(stream, message(2, 1, [0, 0, 0, 2]))?;
     assert!(
         second.accepted,
         "directory update was rejected: {:?}",
         second.error
     );
-    assert_eq!(second.state.directory_digits, [0, 0, 0, 2]);
-    assert_eq!(second.state.directory_pages[0].heading, "VIRA DHAL");
-    assert_eq!(second.state.printer_output.len(), 1);
+    assert_eq!(second.output.directory_pages[0].heading, "VIRA DHAL");
+    assert_eq!(second.output.printer_output.len(), 1);
 
-    let connected = exchange(
+    let arbitrary = exchange(
         stream,
         physical_message(
             3,
-            3,
             2,
-            vec![cord(PortId::Subscriber(0), PortId::Operator)],
-            CrankState::default(),
+            vec![cord(PortId::Subscriber(6), PortId::Subscriber(14))],
+            [0; 4],
         ),
     )?;
-    assert!(connected.accepted);
+    assert!(arbitrary.accepted);
+    assert!(arbitrary.output.call.is_some());
+
+    let operator = exchange(
+        stream,
+        physical_message(
+            4,
+            3,
+            vec![cord(PortId::Subscriber(0), PortId::Operator)],
+            [0; 4],
+        ),
+    )?;
+    assert!(operator.accepted);
     assert_eq!(
-        connected.state.game_phase,
+        operator.output.game_phase,
         exchange_protocol::GamePhase::Shift
     );
 
     let ringing = exchange(
         stream,
         physical_message(
+            5,
             4,
-            4,
-            3,
             vec![
                 cord(PortId::Subscriber(0), PortId::Operator),
                 cord(PortId::Subscriber(1), PortId::RingGenerator),
             ],
-            CrankState {
-                rotation_count: 1,
-                speed: 1,
-            },
+            [0, 1000, 1100, 1200],
         ),
     )?;
     assert!(ringing.accepted);
     assert_eq!(
-        ringing.state.call.as_ref().unwrap().phase,
+        ringing.output.call.as_ref().unwrap().phase,
         exchange_protocol::CallPhase::Ringing
     );
 
     let routed = exchange(
         stream,
         physical_message(
+            6,
             5,
-            5,
-            4,
             vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
-            CrankState::default(),
+            [0; 4],
         ),
     )?;
     assert!(routed.accepted);
     assert_eq!(
-        routed.state.call.as_ref().unwrap().phase,
+        routed.output.call.as_ref().unwrap().phase,
         exchange_protocol::CallPhase::Connected
     );
-    assert_eq!(routed.state.shift.completed_routings, 1);
+    assert_eq!(routed.output.shift.completed_routings, 1);
     assert!(
         routed
-            .state
+            .output
             .printer_output
             .last()
             .unwrap()
@@ -136,85 +134,35 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
     let completed = exchange(
         stream,
         physical_message(
+            7,
             6,
-            6,
-            5,
             vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
-            CrankState::default(),
+            [0; 4],
         ),
     )?;
     assert!(completed.accepted);
     assert_eq!(
-        completed.state.call.as_ref().unwrap().phase,
+        completed.output.call.as_ref().unwrap().phase,
         exchange_protocol::CallPhase::Completed
     );
 
-    let cleared = exchange(
-        stream,
-        physical_message(7, 7, 6, Vec::new(), CrankState::default()),
-    )?;
-    assert!(cleared.accepted);
-    assert!(cleared.state.call.is_none());
+    let cleared = exchange(stream, physical_message(8, 7, vec![], [0; 4]))?;
+    assert!(
+        cleared.accepted,
+        "clearing the circuit was rejected: {:?}",
+        cleared.error
+    );
+    assert!(cleared.output.call.is_none());
+    assert_eq!(cleared.output.printer_output.len(), 2);
 
-    let reset = exchange(stream, message(8, 8, 7, [0, 0, 0, 2], true))?;
-    assert!(reset.accepted, "reset was rejected: {:?}", reset.error);
-    assert!(reset.state.reset_applied);
-    assert_eq!(reset.state.clock.elapsed_seconds, 0);
-    assert!(reset.state.call.is_none());
-    assert_eq!(reset.state.printer_output.len(), 1);
-
-    let invalid = exchange(stream, message(9, 9, 8, [0, 0, 0, 12], false))?;
+    let invalid = exchange(stream, message(9, 8, [0, 0, 0, 12]))?;
     assert!(!invalid.accepted);
     assert_eq!(invalid.error.unwrap().code, "invalid_directory_digits");
-    assert_eq!(invalid.state.state_revision, reset.state.state_revision);
-    assert_eq!(invalid.state.directory_digits, reset.state.directory_digits);
+    assert_eq!(invalid.state_revision, cleared.state_revision);
 
-    let restarted = exchange(stream, message(10, 10, 8, [0, 0, 0, 2], false))?;
+    let restarted = exchange(stream, message(10, cleared.state_revision, [0, 0, 0, 2]))?;
     assert!(restarted.accepted);
-    assert!(restarted.state.line_lamps[0]);
-
-    let reconnected = exchange(
-        stream,
-        physical_message(
-            11,
-            11,
-            9,
-            vec![cord(PortId::Subscriber(0), PortId::Operator)],
-            CrankState::default(),
-        ),
-    )?;
-    assert!(reconnected.accepted);
-
-    let reringing = exchange(
-        stream,
-        physical_message(
-            12,
-            12,
-            10,
-            vec![
-                cord(PortId::Subscriber(0), PortId::Operator),
-                cord(PortId::Subscriber(2), PortId::RingGenerator),
-            ],
-            CrankState {
-                rotation_count: 1,
-                speed: 1,
-            },
-        ),
-    )?;
-    assert!(reringing.accepted);
-
-    let rerouted = exchange(
-        stream,
-        physical_message(
-            13,
-            13,
-            11,
-            vec![cord(PortId::Subscriber(0), PortId::Subscriber(2))],
-            CrankState::default(),
-        ),
-    )?;
-    assert!(rerouted.accepted);
-    assert_eq!(rerouted.state.shift.completed_routings, 1);
+    assert!(restarted.output.line_lamps[0]);
 
     Ok(())
 }
@@ -240,49 +188,28 @@ fn cord(first: PortId, second: PortId) -> CordConnection {
 
 fn physical_message(
     sequence: u64,
-    message_id: u64,
-    expected_state_revision: u64,
+    revision: u64,
     cord_topology: Vec<CordConnection>,
-    crank: CrankState,
+    crank_rotation_timestamps: [u64; 4],
 ) -> InputMessage {
-    let mut message = message(
-        sequence,
-        message_id,
-        expected_state_revision,
-        [0, 0, 0, 2],
-        false,
-    );
+    let mut message = message(sequence, revision, [0, 0, 0, 2]);
     message.input.cord_topology = cord_topology;
-    message.input.crank = crank;
+    message.input.crank_rotation_timestamps = crank_rotation_timestamps;
     message
 }
 
-fn message(
-    sequence: u64,
-    message_id: u64,
-    expected_state_revision: u64,
-    digits: [u8; 4],
-    reset: bool,
-) -> InputMessage {
+fn message(sequence: u64, revision: u64, digits: [u8; 4]) -> InputMessage {
     InputMessage {
         protocol_version: PROTOCOL_VERSION,
-        message_kind: MessageKind::InputSnapshot,
-        session_id: "harness-session".to_string(),
-        message_id,
-        expected_state_revision,
-        input: InputSnapshot {
-            frontend: FrontendIdentity {
-                kind: FrontendKind::Odin,
-                instance_id: "harness-odin".to_string(),
-            },
-            input_sequence: sequence,
+        input_sequence: sequence,
+        expected_state_revision: revision,
+        input: InputState {
             cord_topology: Vec::new(),
             held_controls: HeldControls::default(),
             directory_digits: digits,
-            crank: CrankState::default(),
+            crank_rotation_timestamps: [0; 4],
             tuning: TuningState::default(),
-            reset,
-            diagnostics: FrontendDiagnostics {
+            debug: InputDebug {
                 firmware_version: Some("harness".to_string()),
                 transport_connected: true,
                 device_faults: Vec::new(),

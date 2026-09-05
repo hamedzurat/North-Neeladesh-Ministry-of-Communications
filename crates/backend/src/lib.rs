@@ -1,76 +1,77 @@
+use std::env;
 use std::io::{self, ErrorKind};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Instant;
 
 use exchange_protocol::{
-    BackendDiagnostic, ClockState, CordConnection, CrankState, DiagnosticState, DirectoryPage,
-    FrontendDiagnostics, FrontendIdentity, GamePhase, HeldControls, InputMessage, MessageKind,
-    PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, ShiftPhase, ShiftStatus, StateMessage,
-    StateSnapshot, TuningState, read_frame, write_frame,
+    BackendDiagnostic, ClockState, CordConnection, DirectoryPage, GamePhase, InputMessage,
+    InputState, OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, ShiftPhase,
+    ShiftStatus, StateMessage, StateOutput, TuningState, read_frame, write_frame,
 };
 
-const MAX_SESSION_ID_LENGTH: usize = 64;
-const MAX_INSTANCE_ID_LENGTH: usize = 64;
 const MAX_FAULTS: usize = 16;
-const MAX_CORDS: usize = 13;
+const MAX_CORDS: usize = 8;
+const STRESS_PRINTER_ENTRY_COUNT: usize = 48;
 
 pub struct Backend {
-    state: StateSnapshot,
-    controller: Option<Controller>,
+    state: StateOutput,
+    state_revision: u64,
     last_request: Option<InputMessage>,
     last_response: Option<StateMessage>,
-    last_message_id: Option<u64>,
-}
-
-#[derive(Clone, PartialEq, Eq)]
-struct Controller {
-    session_id: String,
-    frontend: FrontendIdentity,
+    clock_started: Instant,
+    last_crank_rotation_timestamps: [u64; 4],
 }
 
 impl Backend {
     pub fn new() -> Self {
+        Self::new_with_printer_stress(false)
+    }
+
+    pub fn new_with_printer_stress(printer_stress: bool) -> Self {
         Self {
-            state: initial_state(),
-            controller: None,
+            state: initial_state(printer_stress),
+            state_revision: 0,
             last_request: None,
             last_response: None,
-            last_message_id: None,
+            clock_started: Instant::now(),
+            last_crank_rotation_timestamps: [0; 4],
         }
     }
 
-    pub fn apply_input_snapshot(&mut self, message: InputMessage) -> StateMessage {
-        if self.last_request.as_ref() == Some(&message) {
-            if let Some(response) = &self.last_response {
-                return response.clone();
-            }
+    pub fn apply_input_message(&mut self, message: InputMessage) -> StateMessage {
+        trace_input(&message);
+        let response = self.apply_input_message_inner(message);
+        trace_state(&response);
+        response
+    }
+
+    fn apply_input_message_inner(&mut self, message: InputMessage) -> StateMessage {
+        if self.last_request.as_ref() == Some(&message)
+            && let Some(response) = &self.last_response
+        {
+            return response.clone();
         }
 
         if let Err(error) = validate_message(self, &message) {
-            return rejected_response(message.message_id, error, &self.state);
+            return rejected_response(
+                message.input_sequence,
+                error,
+                self.state_revision,
+                &self.state,
+            );
         }
 
         let input = &message.input;
-        let reset = input.reset;
-        let mut next_state = if reset {
-            initial_state()
-        } else {
-            self.state.clone()
-        };
-        let mut routing_receipt = None;
-
-        if !reset {
-            let transition = match advance_call(&self.state, input) {
-                Ok(transition) => transition,
-                Err(error) => return rejected_response(message.message_id, error, &self.state),
-            };
-            next_state.call = transition.call;
-            next_state.line_lamps = transition.line_lamps;
-            next_state.game_phase = transition.game_phase;
-            next_state.shift = transition.shift;
-            routing_receipt = transition.routing_receipt;
-        }
+        let crank_rotation_timestamps = input.crank_rotation_timestamps;
+        let mut next_state = self.state.clone();
+        let transition = advance_call(&self.state, input, self.last_crank_rotation_timestamps);
+        next_state.call = transition.call;
+        next_state.line_lamps = transition.line_lamps;
+        next_state.game_phase = transition.game_phase;
+        next_state.shift = transition.shift;
+        let routing_receipt = transition.routing_receipt;
 
         if let Some(text) = routing_receipt {
             let entry_id = next_state
@@ -82,48 +83,42 @@ impl Backend {
                 .push(PrinterEntry { entry_id, text });
         }
 
-        let revision = self.state.state_revision + 1;
-        self.state = StateSnapshot {
-            protocol_version: PROTOCOL_VERSION,
-            frontend: input.frontend.clone(),
-            session_id: message.session_id.clone(),
-            input_sequence: input.input_sequence,
-            state_revision: revision,
-            cord_topology: input.cord_topology.clone(),
-            held_controls: input.held_controls.clone(),
-            directory_digits: input.directory_digits,
-            crank: input.crank.clone(),
-            tuning: input.tuning.clone(),
-            reset_applied: reset,
+        self.last_crank_rotation_timestamps = crank_rotation_timestamps;
+        next_state.clock.elapsed_seconds =
+            self.clock_started.elapsed().as_secs().min(u32::MAX as u64) as u32;
+        self.state_revision += 1;
+        self.state = StateOutput {
             line_lamps: next_state.line_lamps,
             game_phase: next_state.game_phase,
             clock: next_state.clock,
+            speaker_active: speaker_is_active(input),
+            tuning: input.tuning.clone(),
             directory_pages: directory_pages(input.directory_digits),
             printer_output: next_state.printer_output,
             call: next_state.call,
             shift: next_state.shift,
-            diagnostics: DiagnosticState {
-                frontend: input.diagnostics.clone(),
-                messages: next_state.diagnostics.messages,
+            debug: OutputDebug {
+                messages: next_state.debug.messages,
             },
         };
-        self.controller = Some(Controller {
-            session_id: message.session_id.clone(),
-            frontend: input.frontend.clone(),
-        });
 
         let response = StateMessage {
             protocol_version: PROTOCOL_VERSION,
-            message_kind: MessageKind::StateSnapshot,
-            message_id: message.message_id,
+            input_sequence: message.input_sequence,
             accepted: true,
             error: None,
-            state: self.state.clone(),
+            state_revision: self.state_revision,
+            output: self.state.clone(),
         };
         self.last_request = Some(message);
         self.last_response = Some(response.clone());
-        self.last_message_id = Some(response.message_id);
         response
+    }
+}
+
+impl Default for Backend {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -136,32 +131,27 @@ struct CallTransition {
 }
 
 fn advance_call(
-    state: &StateSnapshot,
-    input: &exchange_protocol::InputSnapshot,
-) -> Result<CallTransition, ProtocolError> {
+    state: &StateOutput,
+    input: &InputState,
+    previous_crank_rotation_timestamps: [u64; 4],
+) -> CallTransition {
     if state.call.is_none() {
         let Some((caller_line, callee)) = authored_call(input.directory_digits) else {
             if input.cord_topology.is_empty() {
-                return Ok(CallTransition {
+                return CallTransition {
                     line_lamps: [false; 16],
                     call: None,
                     game_phase: state.game_phase.clone(),
                     shift: state.shift.clone(),
                     routing_receipt: None,
-                });
+                };
             }
-            return Err(protocol_error(
-                "routing_before_ringing",
-                "a new Call must be connected to the Operator Jack before routing",
-            ));
+            return unchanged_transition(state);
         };
         let caller = PortId::Subscriber(caller_line);
         let operator_cord = has_exact_cords(&input.cord_topology, &[(&caller, &PortId::Operator)]);
         if !input.cord_topology.is_empty() && !operator_cord {
-            return Err(protocol_error(
-                "routing_before_ringing",
-                "a new Call must be connected to the Operator Jack before routing",
-            ));
+            return unchanged_transition(state);
         }
         let phase = if operator_cord {
             exchange_protocol::CallPhase::OperatorSession
@@ -174,7 +164,7 @@ fn advance_call(
             phase,
         };
         let active_call_count = 1;
-        return Ok(CallTransition {
+        return CallTransition {
             line_lamps: lamps_for_call(Some(&call)),
             call: Some(call),
             game_phase: if operator_cord {
@@ -192,7 +182,7 @@ fn advance_call(
                 ..state.shift.clone()
             },
             routing_receipt: None,
-        });
+        };
     }
 
     let call = state.call.as_ref().expect("call checked above");
@@ -213,62 +203,38 @@ fn advance_call(
                 next_call.phase = exchange_protocol::CallPhase::OperatorSession;
                 next_game_phase = GamePhase::Shift;
                 next_shift.phase = ShiftPhase::Active;
-            } else if direct_circuit {
-                return Err(protocol_error(
-                    "routing_before_ringing",
-                    "the caller and callee cannot be connected before ringing",
-                ));
             } else if !input.cord_topology.is_empty() {
-                return Err(protocol_error(
-                    "invalid_cord_arrangement",
-                    "the waiting caller must be connected to the Operator Jack",
-                ));
+                return unchanged_transition(state);
             }
         }
         exchange_protocol::CallPhase::OperatorSession => {
             if ring_generator {
-                if input.crank.rotation_count == 0 || input.crank.speed == 0 {
-                    return Err(protocol_error(
-                        "ringing_requires_crank",
-                        "ringing requires a Ring Generator connection and crank input",
-                    ));
+                if !crank_satisfies_ringing(
+                    input.crank_rotation_timestamps,
+                    previous_crank_rotation_timestamps,
+                ) {
+                    return unchanged_transition(state);
                 }
                 next_call.phase = exchange_protocol::CallPhase::Ringing;
-            } else if direct_circuit {
-                return Err(protocol_error(
-                    "routing_before_ringing",
-                    "the caller and callee cannot be connected before ringing",
-                ));
             } else if input.cord_topology.is_empty() {
                 next_call.phase = exchange_protocol::CallPhase::AwaitingRouting;
             } else if !caller_operator {
-                return Err(protocol_error(
-                    "invalid_cord_arrangement",
-                    "the Operator Session requires the caller to be connected to the Operator Jack",
-                ));
+                return unchanged_transition(state);
             }
         }
         exchange_protocol::CallPhase::AwaitingRouting => {
             if ring_generator {
-                if input.crank.rotation_count == 0 || input.crank.speed == 0 {
-                    return Err(protocol_error(
-                        "ringing_requires_crank",
-                        "ringing requires a Ring Generator connection and crank input",
-                    ));
+                if !crank_satisfies_ringing(
+                    input.crank_rotation_timestamps,
+                    previous_crank_rotation_timestamps,
+                ) {
+                    return unchanged_transition(state);
                 }
                 next_call.phase = exchange_protocol::CallPhase::Ringing;
             } else if caller_operator {
                 next_call.phase = exchange_protocol::CallPhase::OperatorSession;
-            } else if direct_circuit {
-                return Err(protocol_error(
-                    "routing_before_ringing",
-                    "the caller and callee cannot be connected before ringing",
-                ));
             } else if !input.cord_topology.is_empty() {
-                return Err(protocol_error(
-                    "invalid_cord_arrangement",
-                    "Awaiting Routing requires the Callee to be connected to the Ring Generator",
-                ));
+                return unchanged_transition(state);
             }
         }
         exchange_protocol::CallPhase::Held => {
@@ -277,10 +243,7 @@ fn advance_call(
                 next_game_phase = GamePhase::Shift;
                 next_shift.phase = ShiftPhase::Active;
             } else if !input.cord_topology.is_empty() {
-                return Err(protocol_error(
-                    "invalid_cord_arrangement",
-                    "a Held Caller can only be reconnected to the Operator Jack",
-                ));
+                return unchanged_transition(state);
             }
         }
         exchange_protocol::CallPhase::Ringing => {
@@ -293,7 +256,10 @@ fn advance_call(
                     call.caller_line, call.requested_callee_line
                 ));
             } else if ring_generator {
-                if input.crank.rotation_count > 0 && input.crank.speed > 0 {
+                if crank_satisfies_ringing(
+                    input.crank_rotation_timestamps,
+                    previous_crank_rotation_timestamps,
+                ) {
                     next_call.phase = exchange_protocol::CallPhase::Ringing;
                 } else {
                     next_call.phase = exchange_protocol::CallPhase::AwaitingRouting;
@@ -303,10 +269,7 @@ fn advance_call(
             } else if input.cord_topology.is_empty() {
                 next_call.phase = exchange_protocol::CallPhase::AwaitingRouting;
             } else {
-                return Err(protocol_error(
-                    "invalid_routing",
-                    "the direct Circuit must connect the requested Callee",
-                ));
+                return unchanged_transition(state);
             }
         }
         exchange_protocol::CallPhase::Connected => {
@@ -314,35 +277,29 @@ fn advance_call(
                 next_call.phase = exchange_protocol::CallPhase::Completed;
             } else if input.cord_topology.is_empty() {
                 next_shift.active_call_count = 0;
-                return Ok(CallTransition {
+                return CallTransition {
                     call: None,
                     line_lamps: [false; 16],
                     game_phase: next_game_phase,
                     shift: next_shift,
                     routing_receipt: None,
-                });
+                };
             } else {
-                return Err(protocol_error(
-                    "invalid_cord_arrangement",
-                    "the connected Circuit must remain between the Caller and requested Callee",
-                ));
+                return unchanged_transition(state);
             }
         }
         exchange_protocol::CallPhase::Completed => {
             if input.cord_topology.is_empty() {
-                return Ok(CallTransition {
+                return CallTransition {
                     call: None,
                     line_lamps: [false; 16],
                     game_phase: next_game_phase,
                     shift: next_shift,
                     routing_receipt: None,
-                });
+                };
             }
             if !direct_circuit {
-                return Err(protocol_error(
-                    "invalid_cord_arrangement",
-                    "the completed Circuit must be cleared before changing cords",
-                ));
+                return unchanged_transition(state);
             }
         }
         _ => {}
@@ -350,13 +307,64 @@ fn advance_call(
 
     next_shift.active_call_count =
         u8::from(next_call.phase != exchange_protocol::CallPhase::Completed);
-    Ok(CallTransition {
+    CallTransition {
         line_lamps: lamps_for_call(Some(&next_call)),
         call: Some(next_call),
         game_phase: next_game_phase,
         shift: next_shift,
         routing_receipt,
-    })
+    }
+}
+
+fn unchanged_transition(state: &StateOutput) -> CallTransition {
+    CallTransition {
+        call: state.call.clone(),
+        line_lamps: state.line_lamps,
+        game_phase: state.game_phase.clone(),
+        shift: state.shift.clone(),
+        routing_receipt: None,
+    }
+}
+
+fn crank_satisfies_ringing(current: [u64; 4], previous: [u64; 4]) -> bool {
+    current[3] > previous[3]
+}
+
+fn valid_crank_history(timestamps: [u64; 4]) -> bool {
+    let mut previous = 0;
+    let mut nonzero_seen = false;
+    for timestamp in timestamps {
+        if timestamp == 0 {
+            if nonzero_seen {
+                return false;
+            }
+        } else {
+            if timestamp <= previous {
+                return false;
+            }
+            previous = timestamp;
+            nonzero_seen = true;
+        }
+    }
+    true
+}
+
+fn speaker_is_active(input: &InputState) -> bool {
+    let held = &input.held_controls;
+    let operator_active = held.ptt
+        && input
+            .cord_topology
+            .iter()
+            .any(|cord| cord.first == PortId::Operator || cord.second == PortId::Operator);
+    let tap_active = (held.tap_1 && has_port(&input.cord_topology, &PortId::Tap(1)))
+        || (held.tap_2 && has_port(&input.cord_topology, &PortId::Tap(2)));
+    operator_active || held.police || held.ems || held.fire || tap_active
+}
+
+fn has_port(cords: &[CordConnection], port: &PortId) -> bool {
+    cords
+        .iter()
+        .any(|cord| &cord.first == port || &cord.second == port)
 }
 
 fn authored_call(digits: [u8; 4]) -> Option<(u8, u8)> {
@@ -404,7 +412,9 @@ fn has_exact_cords(cords: &[CordConnection], expected: &[(&PortId, &PortId)]) ->
 }
 
 pub fn serve(listener: TcpListener) -> io::Result<()> {
-    let backend = Arc::new(Mutex::new(Backend::new()));
+    let backend = Arc::new(Mutex::new(Backend::new_with_printer_stress(
+        printer_stress_enabled(),
+    )));
     for connection in listener.incoming() {
         let stream = connection?;
         let backend = Arc::clone(&backend);
@@ -434,7 +444,7 @@ pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) ->
         let response = backend
             .lock()
             .map_err(|_| io::Error::other("backend state lock poisoned"))?
-            .apply_input_snapshot(message);
+            .apply_input_message(message);
         write_frame(&mut stream, &response)
             .map_err(|error| io::Error::new(ErrorKind::BrokenPipe, error))?;
     }
@@ -447,65 +457,34 @@ fn validate_message(backend: &Backend, message: &InputMessage) -> Result<(), Pro
             format!("expected protocol version {PROTOCOL_VERSION}"),
         ));
     }
-    if message.message_kind != MessageKind::InputSnapshot {
+    if message.input_sequence == 0 {
         return Err(protocol_error(
-            "unexpected_message_kind",
-            "expected an input_snapshot message",
+            "invalid_input_sequence",
+            "input_sequence must be positive",
         ));
     }
-    if message.session_id.is_empty() || message.session_id.len() > MAX_SESSION_ID_LENGTH {
+    if message.input_sequence
+        <= backend
+            .last_request
+            .as_ref()
+            .map_or(0, |request| request.input_sequence)
+    {
         return Err(protocol_error(
-            "invalid_session_id",
-            "session_id must contain 1 to 64 bytes",
+            "duplicate_input_sequence",
+            "input_sequence must increase, or repeat the exact previous request",
         ));
     }
-    if message.message_id == 0 {
-        return Err(protocol_error(
-            "invalid_message_id",
-            "message_id must be positive",
-        ));
-    }
-    if let Some(last_message_id) = backend.last_message_id {
-        if message.message_id <= last_message_id {
-            return Err(protocol_error(
-                "duplicate_message_id",
-                "message_id must increase and must not be reused",
-            ));
-        }
-    }
-    if message.expected_state_revision != backend.state.state_revision {
+    if message.expected_state_revision != backend.state_revision {
         return Err(protocol_error(
             "stale_state_revision",
             format!(
                 "expected state revision {}, received {}",
-                backend.state.state_revision, message.expected_state_revision
+                backend.state_revision, message.expected_state_revision
             ),
         ));
     }
 
     let input = &message.input;
-    if input.frontend.instance_id.is_empty()
-        || input.frontend.instance_id.len() > MAX_INSTANCE_ID_LENGTH
-    {
-        return Err(protocol_error(
-            "invalid_frontend_identity",
-            "frontend instance_id must contain 1 to 64 bytes",
-        ));
-    }
-    if input.input_sequence == 0 || input.input_sequence <= backend.state.input_sequence {
-        return Err(protocol_error(
-            "stale_input_sequence",
-            "input_sequence must increase for every accepted snapshot",
-        ));
-    }
-    if let Some(controller) = &backend.controller {
-        if controller.session_id != message.session_id || controller.frontend != input.frontend {
-            return Err(protocol_error(
-                "controller_mismatch",
-                "another session or frontend currently owns the controller",
-            ));
-        }
-    }
     validate_cords(&input.cord_topology)?;
     if input.directory_digits.iter().any(|digit| *digit > 9) {
         return Err(protocol_error(
@@ -513,10 +492,10 @@ fn validate_message(backend: &Backend, message: &InputMessage) -> Result<(), Pro
             "directory digits must be decimal digits",
         ));
     }
-    if input.crank.speed > 10_000 {
+    if !valid_crank_history(input.crank_rotation_timestamps) {
         return Err(protocol_error(
-            "invalid_crank_speed",
-            "crank speed is outside the supported range",
+            "invalid_crank_timestamps",
+            "crank rotation timestamps must be strictly increasing after leading zeroes",
         ));
     }
     if input.tuning.coarse > 1_023 || input.tuning.fine > 1_023 {
@@ -525,9 +504,9 @@ fn validate_message(backend: &Backend, message: &InputMessage) -> Result<(), Pro
             "tuning values must be between 0 and 1023",
         ));
     }
-    if input.diagnostics.device_faults.len() > MAX_FAULTS
+    if input.debug.device_faults.len() > MAX_FAULTS
         || input
-            .diagnostics
+            .debug
             .device_faults
             .iter()
             .any(|fault| fault.len() > 128)
@@ -544,7 +523,7 @@ fn validate_cords(cords: &[CordConnection]) -> Result<(), ProtocolError> {
     if cords.len() > MAX_CORDS {
         return Err(protocol_error(
             "too_many_cords",
-            "a snapshot cannot contain more than 13 cords",
+            "an input cannot contain more than 8 cords",
         ));
     }
     let mut ports = Vec::with_capacity(cords.len() * 2);
@@ -572,7 +551,7 @@ fn validate_cords(cords: &[CordConnection]) -> Result<(), ProtocolError> {
 fn validate_port(port: &PortId) -> Result<(), ProtocolError> {
     match port {
         PortId::Subscriber(line) if *line < 16 => Ok(()),
-        PortId::Tap(index) if *index < 8 => Ok(()),
+        PortId::Tap(index) if (1..=4).contains(index) => Ok(()),
         PortId::Operator | PortId::RingGenerator => Ok(()),
         PortId::Subscriber(_) => Err(protocol_error(
             "invalid_port",
@@ -580,19 +559,24 @@ fn validate_port(port: &PortId) -> Result<(), ProtocolError> {
         )),
         PortId::Tap(_) => Err(protocol_error(
             "invalid_port",
-            "tap ports must be numbered 0 through 7",
+            "Tap Bridge jacks must be tap_1 through tap_4",
         )),
     }
 }
 
-fn rejected_response(message_id: u64, error: ProtocolError, state: &StateSnapshot) -> StateMessage {
+fn rejected_response(
+    input_sequence: u64,
+    error: ProtocolError,
+    state_revision: u64,
+    output: &StateOutput,
+) -> StateMessage {
     StateMessage {
         protocol_version: PROTOCOL_VERSION,
-        message_kind: MessageKind::StateSnapshot,
-        message_id,
+        input_sequence,
         accepted: false,
         error: Some(error),
-        state: state.clone(),
+        state_revision,
+        output: output.clone(),
     }
 }
 
@@ -603,33 +587,38 @@ fn protocol_error(code: &str, message: impl Into<String>) -> ProtocolError {
     }
 }
 
-fn initial_state() -> StateSnapshot {
-    StateSnapshot {
-        protocol_version: PROTOCOL_VERSION,
-        frontend: FrontendIdentity {
-            kind: exchange_protocol::FrontendKind::Odin,
-            instance_id: "unassigned".to_string(),
-        },
-        session_id: String::new(),
-        input_sequence: 0,
-        state_revision: 0,
-        cord_topology: Vec::new(),
-        held_controls: HeldControls::default(),
-        directory_digits: [0; 4],
-        crank: CrankState::default(),
-        tuning: TuningState::default(),
-        reset_applied: false,
+fn printer_stress_enabled() -> bool {
+    matches!(env::var("NN_BACKEND_PRINTER_STRESS").as_deref(), Ok("1"))
+}
+
+fn backend_trace_enabled() -> bool {
+    matches!(env::var("NN_BACKEND_TRACE").as_deref(), Ok("1"))
+}
+
+fn trace_input(message: &InputMessage) {
+    if backend_trace_enabled() {
+        eprintln!("[backend <- frontend] {message:?}");
+    }
+}
+
+fn trace_state(message: &StateMessage) {
+    if backend_trace_enabled() {
+        eprintln!("[backend -> frontend] {message:?}");
+    }
+}
+
+fn initial_state(printer_stress: bool) -> StateOutput {
+    StateOutput {
         line_lamps: [false; 16],
         game_phase: GamePhase::Ready,
         clock: ClockState {
             shift: 1,
             elapsed_seconds: 0,
         },
-        directory_pages: directory_pages([0; 4]),
-        printer_output: vec![PrinterEntry {
-            entry_id: 1,
-            text: "PROVINCIAL EXCHANGE READY".to_string(),
-        }],
+        speaker_active: false,
+        tuning: TuningState::default(),
+        directory_pages: directory_pages([0, 0, 0, 1]),
+        printer_output: initial_printer_output(printer_stress),
         call: None,
         shift: ShiftStatus {
             number: 1,
@@ -637,14 +626,29 @@ fn initial_state() -> StateSnapshot {
             active_call_count: 0,
             completed_routings: 0,
         },
-        diagnostics: DiagnosticState {
-            frontend: FrontendDiagnostics::default(),
+        debug: OutputDebug {
             messages: vec![BackendDiagnostic {
                 code: "backend_ready".to_string(),
-                message: "accepting complete frontend snapshots".to_string(),
+                message: "accepting Cabinet Frontend input".to_string(),
             }],
         },
     }
+}
+
+fn initial_printer_output(printer_stress: bool) -> Vec<PrinterEntry> {
+    if !printer_stress {
+        return vec![PrinterEntry {
+            entry_id: 1,
+            text: "PROVINCIAL EXCHANGE READY".to_string(),
+        }];
+    }
+
+    (1..=STRESS_PRINTER_ENTRY_COUNT)
+        .map(|entry_id| PrinterEntry {
+            entry_id: entry_id as u64,
+            text: format!("PRINTER STRESS LINE {entry_id:02} // PAPER CHECK"),
+        })
+        .collect()
 }
 
 fn directory_pages(digits: [u8; 4]) -> Vec<DirectoryPage> {
