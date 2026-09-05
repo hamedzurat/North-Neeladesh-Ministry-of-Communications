@@ -6,9 +6,7 @@ fn main() -> io::Result<()> {
     let bind = argument_value("--bind").unwrap_or_else(|| "127.0.0.1:7878".to_string());
     let listener = TcpListener::bind(&bind)?;
     println!("exchange backend listening on {bind}");
-    println!(
-        "manual check: connect Caller, ring with the Ring Generator, route directly, then reset"
-    );
+    println!("manual check: connect Caller, ring with the Ring Generator, then route directly");
     exchange_backend::serve(listener)
 }
 

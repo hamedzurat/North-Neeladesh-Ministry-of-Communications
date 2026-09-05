@@ -1,59 +1,118 @@
-# Frontend Snapshot Protocol
+# Frontend Protocol
 
-The laptop backend is the sole authority. Odin and the Cabinet Frontend use the same logical contract: submit one complete `InputMessage`, receive one complete `StateMessage`.
+The laptop backend is the sole game authority. There is one Cabinet Frontend. It sends one complete `InputMessage` and receives one complete `StateMessage` over a persistent TCP connection.
 
-Control messages use a persistent TCP connection. Each message is encoded as:
+Each message is framed as:
 
 ```text
 u32 big-endian payload length | CBOR payload
 ```
 
-The maximum payload is 1 MiB. CBOR maps use the field names in the Rust protocol types; enums use their snake-case names. The protocol version is `1`.
+The maximum payload is 1 MiB. The protocol version is `1`.
 
-## Request
+## InputMessage
 
-`InputMessage` contains `session_id`, a unique `message_id`, the caller's `expected_state_revision`, and a complete `InputSnapshot`:
+The wire shape is exactly:
 
-- frontend identity and input sequence;
-- complete Cord Topology;
-- all held controls, including four Tap Bridge controls;
-- four Directory digits;
-- crank rotation/speed and coarse/fine tuning;
-- reset request; and
-- frontend firmware, transport, and device diagnostics.
+```text
+{
+  "protocol_version": 1,
+  "input_sequence": u64,
+  "expected_state_revision": u64,
+  "input": {
+    "cord_topology": [{"first": PortId, "second": PortId}],
+    "held_controls": {
+      "ptt": bool, "police": bool, "ems": bool, "fire": bool,
+      "tap_1": bool, "tap_2": bool
+    },
+    "directory_digits": [u8; 4],
+    "crank_rotation_timestamps": [u64; 4],
+    "tuning": {"coarse": u16, "fine": u16},
+    "debug": {
+      "firmware_version": string|null,
+      "transport_connected": bool,
+      "device_faults": [string]
+    }
+  }
+}
+```
 
-## Response
+`input_sequence` is the request identity. It must be positive and increase for accepted requests. An exact retry of the previous request returns the previous response idempotently. The backend also requires `expected_state_revision` to equal its current revision; rejected requests do not advance that revision.
 
-Every accepted or rejected semantic request returns a `StateMessage` with a complete `StateSnapshot`. Rejection does not advance the authoritative state revision or input sequence. The full response still includes the latest state so a frontend can resynchronize without a second request.
+`PortId` is always one CBOR text string: `subscriber_0` through `subscriber_15`, `operator`, `ring_generator`, or `tap_1` through `tap_4` (the four jacks belonging to two Tap Bridges). A topology has at most eight cords, and every endpoint may occur in at most one cord. Valid physical topologies are accepted even when they do not advance the current call.
 
-The state includes:
+The crank array contains the timestamps, in milliseconds, of the last four completed full local rotations. Odin records a timestamp when a rotation completes. It does not send a rotation count or computed speed; the backend validates the chronological history and decides whether a new timestamp satisfies ringing.
 
-- frontend identity, session, sequence, revision, Cord Topology, held controls, Directory digits, crank, and tuning;
-- reset result, sixteen Line Lamps, game phase, clock, current Call, and Shift status;
-- all current Directory pages;
-- append-only printer output; and
-- frontend diagnostics plus backend diagnostic messages.
+## StateMessage
 
-The backend accepts a message only when its protocol version, session, controller identity, state revision, sequence, physical ports, digits, and analog ranges are valid. A duplicate request with the same complete message is returned idempotently.
+The response wire shape is exactly:
 
-## Manual checkpoints
+```text
+{
+  "protocol_version": 1,
+  "input_sequence": u64,
+  "accepted": bool,
+  "error": {"code": string, "message": string}|null,
+  "state_revision": u64,
+  "output": {
+    "line_lamps": [bool; 16],
+    "game_phase": string,
+    "clock": {"shift": u8, "elapsed_seconds": u32},
+    "speaker_active": bool,
+    "tuning": {"coarse": u16, "fine": u16},
+    "directory_pages": [...],
+    "printer_output": [...],
+    "call": {...}|null,
+    "shift": {...},
+    "debug": {"messages": [{"code": string, "message": string}]}
+  }
+}
+```
 
-Start the backend:
+The response never echoes topology, held controls, directory digits, crank timestamps, Cabinet Frontend diagnostics, or Cabinet Frontend/session data. `speaker_active` and `tuning` are backend-owned output state. `speaker_active` reflects an active Operator, service, or Tap Bridge audio control. Backend diagnostics are only in `output.debug`; Cabinet Frontend diagnostics are only in `input.debug`.
+
+## Commands
+
+Run the frontend checks and build:
+
+```sh
+just frontend-check
+just frontend-build
+just build
+```
+
+`frontend-build` extracts the regular face from the installed Iosevka TrueType Collection into `target/Iosevka-Regular.ttf` because raylib's loader requires a single-face TTF/OTF file.
+
+Start the backend and frontend separately:
 
 ```sh
 just backend
+just frontend
 ```
 
-In another terminal, run the offline TCP/CBOR harness:
+Backend variants are `backend-trace`, `backend-stress`, and `backend-debug`. The trace variant sets `NN_BACKEND_TRACE=1`; the debug variant also enables printer stress. The frontend trace command is:
+
+```sh
+just frontend-trace
+```
+
+It sets `NN_FRONTEND_TRACE=1`. Both traces print the new CBOR shapes. The default backend address is `127.0.0.1:7878`; use `address=127.0.0.1:7979` for backend commands and `backend_address=127.0.0.1:7979` for frontend commands.
+
+Run the offline TCP/CBOR harness and backend contract tests:
 
 ```sh
 just protocol-harness
+just backend-test
 ```
 
-The harness starts an isolated loopback backend and verifies the authored Caller Line Lamp, Operator Circuit, Ring Generator and crank prerequisites, direct Routing, Circuit clearing, reset, and invalid-input rejection. It repeats a valid Routing after reset. It does not contact an external service or require hardware. `just backend-test` runs the reducer contract tests; `just check` runs workspace typechecking.
+The harness verifies string ports, timestamped ringing, routing, arbitrary physical topology acceptance, and invalid input rejection without hardware or an external service.
 
-To send the same checkpoints to a separately running backend, use:
+The Odin frontend probes the backend before creating a window. If the backend later disconnects, the window stays open with an offline status and retries the connection.
 
-```sh
-just protocol-manual
-```
+Manual verification:
+
+1. Run `just backend` in one terminal.
+2. Run `just frontend` in another terminal.
+3. Leave the initial directory selection at `0001`, connect Subscriber 0 to the Operator Jack, and verify the call enters the Operator Session.
+4. Connect Subscriber 1 to the Ring Generator, crank until the backend reports Ringing, then connect Subscriber 0 directly to Subscriber 1 and verify the printer records the Routing.
+5. Change the Directory Terminal digits and verify the e-paper pages update from the backend.
