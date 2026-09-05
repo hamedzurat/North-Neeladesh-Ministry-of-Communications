@@ -92,6 +92,7 @@ send_input_message :: proc(app: ^Input_State) -> bool {
 	payload, marshal_err := cbor.marshal(value, cbor.ENCODE_FULLY_DETERMINISTIC)
 	trace_cbor("[frontend -> backend]", value)
 	defer cbor.destroy(value)
+	defer delete(payload)
 	if marshal_err != nil || len(payload) > MAX_FRAME_SIZE { return false }
 
 	frame := make([dynamic]u8, 4 + len(payload))
@@ -102,8 +103,10 @@ send_input_message :: proc(app: ^Input_State) -> bool {
 	frame[3] = u8(length)
 	copy(frame[4:], payload)
 	delete(app.tx)
+	app.tx = nil
 	app.tx = frame
 	delete(app.retry_frame)
+	app.retry_frame = nil
 	app.retry_frame = make([dynamic]u8, len(frame))
 	copy(app.retry_frame[:], frame[:])
 	app.tx_offset = 0
@@ -119,6 +122,7 @@ flush_tx :: proc(app: ^Input_State) -> bool {
 		app.tx_offset += sent
 	}
 	delete(app.tx)
+	app.tx = nil
 	app.tx_offset = 0
 	return true
 }
@@ -178,6 +182,7 @@ close_socket :: proc(app: ^Input_State) {
 	delete(app.rx)
 	app.rx = nil
 	delete(app.tx)
+	app.tx = nil
 	app.tx_offset = 0
 	if app.waiting_for_response && len(app.retry_frame) > 0 do app.retry_pending = true
 	if !app.retry_pending do app.waiting_for_response = false
@@ -216,6 +221,7 @@ apply_state_message :: proc(app: ^Input_State, value: cbor.Value) -> bool {
 	if response_sequence == app.input_sequence {
 		app.waiting_for_response = false
 		delete(app.retry_frame)
+		app.retry_frame = nil
 	}
 	if accepted {
 		if response_sequence == app.input_sequence {
@@ -256,6 +262,7 @@ destroy_snapshot_storage :: proc(snapshot: ^State_Output) {
 destroy_input_state :: proc(app: ^Input_State) {
 	close_socket(app)
 	delete(app.retry_frame)
+	app.retry_frame = nil
 	destroy_input_intent(&app.intent)
 	if app.snapshot_owned do destroy_snapshot_storage(&app.backend_output)
 	if app.status_owned do delete(app.status)
