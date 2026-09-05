@@ -20,6 +20,7 @@ pub struct Backend {
     controller: Option<Controller>,
     last_request: Option<InputMessage>,
     last_response: Option<StateMessage>,
+    last_message_id: Option<u64>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -35,10 +36,11 @@ impl Backend {
             controller: None,
             last_request: None,
             last_response: None,
+            last_message_id: None,
         }
     }
 
-    pub fn handle(&mut self, message: InputMessage) -> StateMessage {
+    pub fn apply_input_snapshot(&mut self, message: InputMessage) -> StateMessage {
         if self.last_request.as_ref() == Some(&message) {
             if let Some(response) = &self.last_response {
                 return response.clone();
@@ -51,6 +53,12 @@ impl Backend {
 
         let input = &message.input;
         let reset = input.reset;
+        let previous_state = self.state.clone();
+        let reset_state = if reset {
+            initial_state()
+        } else {
+            previous_state
+        };
         let printer_output = if reset {
             let mut output = self.state.printer_output.clone();
             output.push(PrinterEntry {
@@ -75,24 +83,16 @@ impl Backend {
             crank: input.crank.clone(),
             tuning: input.tuning.clone(),
             reset_applied: reset,
-            line_lamps: [false; 16],
-            game_phase: GamePhase::Ready,
-            clock: ClockState {
-                shift: 1,
-                elapsed_seconds: 0,
-            },
+            line_lamps: reset_state.line_lamps,
+            game_phase: reset_state.game_phase,
+            clock: reset_state.clock,
             directory_pages: directory_pages(input.directory_digits),
             printer_output,
-            call: None,
-            shift: ShiftStatus {
-                number: 1,
-                phase: ShiftPhase::Ready,
-                active_call_count: 0,
-                completed_routings: 0,
-            },
+            call: reset_state.call,
+            shift: reset_state.shift,
             diagnostics: DiagnosticState {
                 frontend: input.diagnostics.clone(),
-                messages: self.state.diagnostics.messages.clone(),
+                messages: reset_state.diagnostics.messages,
             },
         };
         self.controller = Some(Controller {
@@ -110,11 +110,8 @@ impl Backend {
         };
         self.last_request = Some(message);
         self.last_response = Some(response.clone());
+        self.last_message_id = Some(response.message_id);
         response
-    }
-
-    pub fn state(&self) -> &StateSnapshot {
-        &self.state
     }
 }
 
@@ -149,7 +146,7 @@ pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) ->
         let response = backend
             .lock()
             .map_err(|_| io::Error::other("backend state lock poisoned"))?
-            .handle(message);
+            .apply_input_snapshot(message);
         write_frame(&mut stream, &response)
             .map_err(|error| io::Error::new(ErrorKind::BrokenPipe, error))?;
     }
@@ -179,6 +176,14 @@ fn validate_message(backend: &Backend, message: &InputMessage) -> Result<(), Pro
             "invalid_message_id",
             "message_id must be positive",
         ));
+    }
+    if let Some(last_message_id) = backend.last_message_id {
+        if message.message_id <= last_message_id {
+            return Err(protocol_error(
+                "duplicate_message_id",
+                "message_id must increase and must not be reused",
+            ));
+        }
     }
     if message.expected_state_revision != backend.state.state_revision {
         return Err(protocol_error(
