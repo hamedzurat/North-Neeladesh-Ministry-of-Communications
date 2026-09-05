@@ -7,7 +7,7 @@ fn main() -> io::Result<()> {
     let listener = TcpListener::bind(&bind)?;
     println!("exchange backend listening on {bind}");
     println!(
-        "manual check: send a complete snapshot, change directory digits, then set reset=true"
+        "manual check: connect Caller, ring with the Ring Generator, route directly, then reset"
     );
     exchange_backend::serve(listener)
 }
