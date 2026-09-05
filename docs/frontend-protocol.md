@@ -1,6 +1,6 @@
 # Frontend Snapshot Protocol
 
-The laptop backend is the sole authority. Odin and the Raspberry Pi Cabinet use the same logical contract: submit one complete `InputMessage`, receive one complete `StateMessage`.
+The laptop backend is the sole authority. Odin and the Cabinet Frontend use the same logical contract: submit one complete `InputMessage`, receive one complete `StateMessage`.
 
 Control messages use a persistent TCP connection. Each message is encoded as:
 
