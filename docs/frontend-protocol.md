@@ -123,4 +123,4 @@ Manual verification:
 4. Connect Subscriber 1 to the Ring Generator, crank until the backend reports Ringing, then connect Subscriber 0 directly to Subscriber 1 and verify the printer records the Routing.
 5. Change the Directory Terminal digits and verify the e-paper pages update from the backend.
 
-For one local voice session, run `just voice-daemon` after starting `just backend`, with the four worker environment variables described in `docs/voice-daemon.md`. The daemon accepts `ptt` and `release` on stdin as a manual fallback for testing the same session boundary used by backend PTT controls.
+For one real local voice session, run `uv sync --project python` once during provisioning, configure the offline model assets, run `just voice-preflight`, then run `just voice-daemon` after starting `just backend`. The daemon accepts `ptt` and `release` on stdin as a manual fallback for testing the same session boundary used by backend PTT controls. Use `just voice-smoke` only for a hardware-free protocol test; see `docs/voice-daemon.md` for the model and device configuration.

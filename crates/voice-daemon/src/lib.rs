@@ -1,7 +1,12 @@
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::UdpSocket;
-use std::process::{Child, Command, Stdio};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use exchange_protocol::{
@@ -13,6 +18,41 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_RESPONSE_CONTEXT_TOKENS: usize = 3_072;
 const MAX_DIALOGUE_CHARS: usize = 2_000;
+const DEFAULT_MAX_CAPTURE_SAMPLES: usize = VOICE_AUDIO_SAMPLE_RATE as usize * 15;
+const MAX_WORKER_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
+static WORKER_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+pub fn request_worker_cancellation() {
+    WORKER_CANCELLED.store(true, Ordering::Release);
+}
+
+fn clear_worker_cancellation() {
+    WORKER_CANCELLED.store(false, Ordering::Release);
+}
+
+fn worker_cancellation_requested() -> bool {
+    WORKER_CANCELLED.load(Ordering::Acquire)
+}
+
+fn prepare_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+fn terminate_process_group(child: &mut Child) {
+    #[cfg(unix)]
+    unsafe {
+        let _ = libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+    }
+    let _ = child.kill();
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SubscriberProfile {
@@ -157,6 +197,9 @@ pub trait TextToSpeech {
 pub trait VoiceOutput {
     fn status(&mut self, message: VoiceStatusMessage) -> Result<(), VoiceError>;
     fn audio(&mut self, packet: RtpL16Packet) -> Result<(), VoiceError>;
+    fn finish(&mut self) -> Result<(), VoiceError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,6 +271,7 @@ impl OperatorSession {
                 "PTT can only start a ready Operator Session",
             ));
         }
+        clear_worker_cancellation();
         if let Err(error) = self.capture.start() {
             self.phase = SessionPhase::Failed;
             self.emit_failure(&error);
@@ -329,6 +373,9 @@ impl OperatorSession {
         if let Err(error) = self.send_audio(&samples) {
             return self.fail(error);
         }
+        if let Err(error) = self.output.finish() {
+            return self.fail(error);
+        }
         self.emit(
             VoiceStatus::Completed,
             Some(&transcript),
@@ -341,6 +388,12 @@ impl OperatorSession {
 
     fn send_audio(&mut self, samples: &[i16]) -> Result<(), VoiceError> {
         for (index, chunk) in samples.chunks(VOICE_AUDIO_PACKET_SAMPLES).enumerate() {
+            if worker_cancellation_requested() {
+                return Err(VoiceError::new(
+                    "worker_cancelled",
+                    "voice playback was cancelled",
+                ));
+            }
             self.output.audio(RtpL16Packet {
                 marker: index == 0,
                 sequence: index as u16,
@@ -384,8 +437,13 @@ impl OperatorSession {
     }
 
     fn fail<T>(&mut self, error: VoiceError) -> Result<T, VoiceError> {
-        self.phase = SessionPhase::Failed;
-        self.emit_failure(&error);
+        if worker_cancellation_requested() || error.code == "worker_cancelled" {
+            self.phase = SessionPhase::Cancelled;
+            let _ = self.emit(VoiceStatus::Cancelled, None, None, None);
+        } else {
+            self.phase = SessionPhase::Failed;
+            self.emit_failure(&error);
+        }
         Err(error)
     }
 }
@@ -442,12 +500,25 @@ impl CommandSpec {
 
 pub struct CommandMicrophone {
     spec: CommandSpec,
-    child: Option<Child>,
+    max_samples: usize,
+    child: Option<Arc<Mutex<Child>>>,
+    reader: Option<JoinHandle<Result<Vec<u8>, VoiceError>>>,
+    diagnostics: Option<JoinHandle<Result<Vec<u8>, VoiceError>>>,
 }
 
 impl CommandMicrophone {
     pub fn new(spec: CommandSpec) -> Self {
-        Self { spec, child: None }
+        Self::with_max_samples(spec, DEFAULT_MAX_CAPTURE_SAMPLES)
+    }
+
+    pub fn with_max_samples(spec: CommandSpec, max_samples: usize) -> Self {
+        Self {
+            spec,
+            max_samples,
+            child: None,
+            reader: None,
+            diagnostics: None,
+        }
     }
 }
 
@@ -459,32 +530,114 @@ impl MicrophoneCapture for CommandMicrophone {
                 "microphone is already capturing",
             ));
         }
-        let child = Command::new(&self.spec.program)
+        let mut command = Command::new(&self.spec.program);
+        command
             .args(&self.spec.args)
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped());
+        prepare_process_group(&mut command);
+        let mut child = command
             .spawn()
             .map_err(|error| VoiceError::new("capture_start_failed", error.to_string()))?;
+        let mut stdout = child.stdout.take().ok_or_else(|| {
+            VoiceError::new("capture_stdout_failed", "capture stdout was unavailable")
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            VoiceError::new("capture_stderr_failed", "capture stderr was unavailable")
+        })?;
+        let child = Arc::new(Mutex::new(child));
+        let child_for_reader = Arc::clone(&child);
+        let max_bytes = self.max_samples.saturating_add(1).saturating_mul(2);
+        let reader = thread::spawn(move || {
+            let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
+            let mut buffer = [0_u8; 8 * 1024];
+            loop {
+                let length = stdout
+                    .read(&mut buffer)
+                    .map_err(|error| VoiceError::new("capture_read_failed", error.to_string()))?;
+                if length == 0 {
+                    break;
+                }
+                let remaining = max_bytes.saturating_sub(bytes.len());
+                bytes.extend_from_slice(&buffer[..length.min(remaining)]);
+                if bytes.len() >= max_bytes {
+                    if let Ok(mut child) = child_for_reader.lock() {
+                        terminate_process_group(&mut child);
+                    }
+                }
+            }
+            Ok(bytes)
+        });
+        let diagnostics =
+            thread::spawn(move || read_bounded(stderr, 16 * 1024, "capture_stderr_failed"));
         self.child = Some(child);
+        self.reader = Some(reader);
+        self.diagnostics = Some(diagnostics);
         Ok(())
     }
 
     fn finish(&mut self) -> Result<Vec<i16>, VoiceError> {
-        let Some(mut child) = self.child.take() else {
+        let Some(child) = self.child.take() else {
             return Err(VoiceError::new(
                 "capture_not_started",
                 "microphone was not started",
             ));
         };
-        let _ = child.kill();
-        let mut bytes = Vec::new();
-        if let Some(mut stdout) = child.stdout.take() {
-            stdout
-                .read_to_end(&mut bytes)
-                .map_err(|error| VoiceError::new("capture_read_failed", error.to_string()))?;
+        let mut child = child.lock().map_err(|_| {
+            VoiceError::new("capture_wait_failed", "capture process lock was poisoned")
+        })?;
+        let (status, stopped_for_release) = match child
+            .try_wait()
+            .map_err(|error| VoiceError::new("capture_wait_failed", error.to_string()))?
+        {
+            Some(status) => (status, false),
+            None => {
+                terminate_process_group(&mut child);
+                let status = child
+                    .wait()
+                    .map_err(|error| VoiceError::new("capture_wait_failed", error.to_string()))?;
+                (status, true)
+            }
+        };
+        drop(child);
+        let bytes = self
+            .reader
+            .take()
+            .ok_or_else(|| {
+                VoiceError::new("capture_reader_failed", "capture reader was unavailable")
+            })?
+            .join()
+            .map_err(|_| VoiceError::new("capture_reader_failed", "capture reader panicked"))??;
+        let diagnostics = self
+            .diagnostics
+            .take()
+            .ok_or_else(|| {
+                VoiceError::new(
+                    "capture_stderr_failed",
+                    "capture stderr reader was unavailable",
+                )
+            })?
+            .join()
+            .map_err(|_| {
+                VoiceError::new("capture_stderr_failed", "capture stderr reader panicked")
+            })??;
+        let samples = decode_pcm16(&bytes)?;
+        if samples.len() > self.max_samples {
+            return Err(VoiceError::new(
+                "capture_too_long",
+                format!("capture exceeded {} samples", self.max_samples),
+            ));
         }
-        let _ = child.wait();
-        decode_pcm16(&bytes)
+        if !status.success() && (!stopped_for_release || samples.is_empty()) {
+            return Err(VoiceError::new(
+                "capture_failed",
+                format!(
+                    "capture exited with {status}: {}",
+                    diagnostic_text(&diagnostics)
+                ),
+            ));
+        }
+        Ok(samples)
     }
 }
 
@@ -579,7 +732,14 @@ impl TextToSpeech for Qwen3TtsCommand {
         })
         .map_err(|error| VoiceError::new("tts_request_failed", error.to_string()))?;
         let output = run_command(&self.spec, &input)?;
-        decode_pcm16(&output)
+        let samples = decode_pcm16(&output)?;
+        if samples.is_empty() {
+            return Err(VoiceError::new(
+                "tts_empty_output",
+                "Qwen3-TTS returned no audio samples",
+            ));
+        }
+        Ok(samples)
     }
 }
 
@@ -661,6 +821,137 @@ impl VoiceOutput for UdpVoiceOutput {
     }
 }
 
+pub struct CommandAudioPlayback {
+    child: Child,
+    input: Option<ChildStdin>,
+    timeout: Duration,
+}
+
+impl CommandAudioPlayback {
+    pub fn new(spec: CommandSpec) -> Result<Self, VoiceError> {
+        let mut command = Command::new(&spec.program);
+        command
+            .args(&spec.args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        prepare_process_group(&mut command);
+        let mut child = command
+            .spawn()
+            .map_err(|error| VoiceError::new("audio_playback_start_failed", error.to_string()))?;
+        let input = child.stdin.take().ok_or_else(|| {
+            VoiceError::new(
+                "audio_playback_stdin_failed",
+                "audio playback stdin was unavailable",
+            )
+        })?;
+        Ok(Self {
+            child,
+            input: Some(input),
+            timeout: spec.timeout,
+        })
+    }
+
+    fn write(&mut self, samples: &[i16]) -> Result<(), VoiceError> {
+        if worker_cancellation_requested() {
+            return Err(VoiceError::new(
+                "worker_cancelled",
+                "voice playback was cancelled",
+            ));
+        }
+        let input = self.input.as_mut().ok_or_else(|| {
+            VoiceError::new(
+                "audio_playback_finished",
+                "audio playback is already finished",
+            )
+        })?;
+        let bytes: Vec<u8> = samples
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
+        input
+            .write_all(&bytes)
+            .map_err(|error| VoiceError::new("audio_playback_write_failed", error.to_string()))
+    }
+
+    fn finish(&mut self) -> Result<(), VoiceError> {
+        if worker_cancellation_requested() {
+            terminate_process_group(&mut self.child);
+            let _ = self.child.wait();
+            self.input.take();
+            return Err(VoiceError::new(
+                "worker_cancelled",
+                "voice playback was cancelled",
+            ));
+        }
+        self.input.take();
+        let deadline = Instant::now() + self.timeout;
+        let status = loop {
+            if worker_cancellation_requested() {
+                terminate_process_group(&mut self.child);
+                let _ = self.child.wait();
+                return Err(VoiceError::new(
+                    "worker_cancelled",
+                    "voice playback was cancelled",
+                ));
+            }
+            match self.child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
+                Ok(None) => {
+                    terminate_process_group(&mut self.child);
+                    let _ = self.child.wait();
+                    return Err(VoiceError::new(
+                        "audio_playback_timeout",
+                        "audio playback exceeded its deadline",
+                    ));
+                }
+                Err(error) => {
+                    terminate_process_group(&mut self.child);
+                    let _ = self.child.wait();
+                    return Err(VoiceError::new(
+                        "audio_playback_wait_failed",
+                        error.to_string(),
+                    ));
+                }
+            }
+        };
+        if !status.success() {
+            return Err(VoiceError::new(
+                "audio_playback_failed",
+                format!("audio playback exited with {status}"),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub struct TeeVoiceOutput {
+    network: UdpVoiceOutput,
+    playback: CommandAudioPlayback,
+}
+
+impl TeeVoiceOutput {
+    pub fn new(network: UdpVoiceOutput, playback: CommandAudioPlayback) -> Self {
+        Self { network, playback }
+    }
+}
+
+impl VoiceOutput for TeeVoiceOutput {
+    fn status(&mut self, message: VoiceStatusMessage) -> Result<(), VoiceError> {
+        self.network.status(message)
+    }
+
+    fn audio(&mut self, packet: RtpL16Packet) -> Result<(), VoiceError> {
+        self.network.audio(packet.clone())?;
+        self.playback.write(&packet.samples)
+    }
+
+    fn finish(&mut self) -> Result<(), VoiceError> {
+        self.playback.finish()
+    }
+}
+
 fn encode_pcm16(samples: &[i16]) -> Vec<u8> {
     samples
         .iter()
@@ -682,30 +973,35 @@ fn decode_pcm16(bytes: &[u8]) -> Result<Vec<i16>, VoiceError> {
 }
 
 fn run_command(spec: &CommandSpec, input: &[u8]) -> Result<Vec<u8>, VoiceError> {
-    let mut child = Command::new(&spec.program)
+    if worker_cancellation_requested() {
+        return Err(VoiceError::new(
+            "worker_cancelled",
+            "voice worker was cancelled before it started",
+        ));
+    }
+    let mut command = Command::new(&spec.program);
+    command
         .args(&spec.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    prepare_process_group(&mut command);
+    let mut child = command
         .spawn()
         .map_err(|error| VoiceError::new("worker_start_failed", error.to_string()))?;
-    let mut stdout = child
+    let stdout = child
         .stdout
         .take()
         .ok_or_else(|| VoiceError::new("worker_stdout_failed", "worker stdout was unavailable"))?;
-    let mut stderr = child
+    let stderr = child
         .stderr
         .take()
         .ok_or_else(|| VoiceError::new("worker_stderr_failed", "worker stderr was unavailable"))?;
-    let stdout_thread = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stdout.read_to_end(&mut bytes);
-        bytes
+    let stdout_thread = thread::spawn(move || -> Result<Vec<u8>, VoiceError> {
+        read_bounded(stdout, MAX_WORKER_OUTPUT_BYTES + 1, "worker_stdout_failed")
     });
-    let stderr_thread = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stderr.read_to_end(&mut bytes);
-        bytes
+    let stderr_thread = thread::spawn(move || -> Result<Vec<u8>, VoiceError> {
+        read_bounded(stderr, 16 * 1024, "worker_stderr_failed")
     });
     let mut stdin_thread = child.stdin.take().map(|mut stdin| {
         let input = input.to_vec();
@@ -713,6 +1009,19 @@ fn run_command(spec: &CommandSpec, input: &[u8]) -> Result<Vec<u8>, VoiceError> 
     });
     let deadline = Instant::now() + spec.timeout;
     loop {
+        if worker_cancellation_requested() {
+            terminate_process_group(&mut child);
+            let _ = child.wait();
+            if let Some(stdin_thread) = stdin_thread.take() {
+                let _ = stdin_thread.join();
+            }
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
+            return Err(VoiceError::new(
+                "worker_cancelled",
+                "voice worker was cancelled",
+            ));
+        }
         match child.try_wait() {
             Ok(Some(status)) => {
                 if let Some(stdin_thread) = stdin_thread.take() {
@@ -727,19 +1036,30 @@ fn run_command(spec: &CommandSpec, input: &[u8]) -> Result<Vec<u8>, VoiceError> 
                 }
                 let output = stdout_thread.join().map_err(|_| {
                     VoiceError::new("worker_stdout_failed", "stdout reader panicked")
-                })?;
-                let _ = stderr_thread.join();
+                })??;
+                let diagnostics = stderr_thread.join().map_err(|_| {
+                    VoiceError::new("worker_stderr_failed", "stderr reader panicked")
+                })??;
                 if !status.success() {
                     return Err(VoiceError::new(
                         "worker_failed",
-                        format!("worker exited with {status}"),
+                        format!(
+                            "worker exited with {status}: {}",
+                            diagnostic_text(&diagnostics)
+                        ),
+                    ));
+                }
+                if output.len() > MAX_WORKER_OUTPUT_BYTES {
+                    return Err(VoiceError::new(
+                        "worker_output_too_large",
+                        "voice worker output exceeded the bounded output limit",
                     ));
                 }
                 return Ok(output);
             }
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
             Ok(None) => {
-                let _ = child.kill();
+                terminate_process_group(&mut child);
                 let _ = child.wait();
                 if let Some(stdin_thread) = stdin_thread.take() {
                     let _ = stdin_thread.join();
@@ -752,7 +1072,7 @@ fn run_command(spec: &CommandSpec, input: &[u8]) -> Result<Vec<u8>, VoiceError> 
                 ));
             }
             Err(error) => {
-                let _ = child.kill();
+                terminate_process_group(&mut child);
                 let _ = child.wait();
                 if let Some(stdin_thread) = stdin_thread.take() {
                     let _ = stdin_thread.join();
@@ -763,6 +1083,29 @@ fn run_command(spec: &CommandSpec, input: &[u8]) -> Result<Vec<u8>, VoiceError> 
             }
         }
     }
+}
+
+fn read_bounded<R: Read>(
+    mut reader: R,
+    limit: usize,
+    error_code: &str,
+) -> Result<Vec<u8>, VoiceError> {
+    let mut captured = Vec::with_capacity(limit);
+    let mut buffer = [0_u8; 8 * 1024];
+    loop {
+        let length = reader
+            .read(&mut buffer)
+            .map_err(|error| VoiceError::new(error_code, error.to_string()))?;
+        if length == 0 {
+            return Ok(captured);
+        }
+        let remaining = limit.saturating_sub(captured.len());
+        captured.extend_from_slice(&buffer[..length.min(remaining)]);
+    }
+}
+
+fn diagnostic_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).trim().to_string()
 }
 
 #[cfg(test)]
@@ -971,5 +1314,179 @@ mod tests {
         let error = run_command(&spec, b"").unwrap_err();
 
         assert_eq!(error.code, "worker_timeout");
+    }
+
+    #[test]
+    fn microphone_capture_is_bounded_and_decodes_signed_pcm() {
+        let spec = CommandSpec::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "printf '\\001\\000\\002\\000'; sleep 1".to_string(),
+            ],
+        );
+        let mut capture = CommandMicrophone::with_max_samples(spec, 2);
+
+        capture.start().unwrap();
+        thread::sleep(Duration::from_millis(25));
+        assert_eq!(capture.finish().unwrap(), vec![1, 2]);
+    }
+
+    #[test]
+    fn microphone_capture_rejects_audio_beyond_the_bound() {
+        let spec = CommandSpec::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "printf '\\001\\000\\002\\000\\003\\000'".to_string(),
+            ],
+        );
+        let mut capture = CommandMicrophone::with_max_samples(spec, 2);
+
+        capture.start().unwrap();
+        thread::sleep(Duration::from_millis(25));
+        let error = capture.finish().unwrap_err();
+
+        assert_eq!(error.code, "capture_too_long");
+    }
+
+    #[test]
+    fn microphone_capture_rejects_an_independent_nonzero_exit() {
+        let spec = CommandSpec::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "printf '\\001\\000' ; printf 'capture failed' >&2; exit 3".to_string(),
+            ],
+        );
+        let mut capture = CommandMicrophone::with_max_samples(spec, 2);
+
+        capture.start().unwrap();
+        thread::sleep(Duration::from_millis(25));
+        let error = capture.finish().unwrap_err();
+
+        assert_eq!(error.code, "capture_failed");
+        assert!(error.message.contains("capture failed"));
+    }
+
+    #[test]
+    fn failed_worker_preserves_stderr_diagnostics() {
+        let spec = CommandSpec::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "printf 'model missing' >&2; exit 3".to_string(),
+            ],
+        );
+
+        let error = run_command(&spec, b"").unwrap_err();
+
+        assert_eq!(error.code, "worker_failed");
+        assert!(error.message.contains("model missing"));
+    }
+
+    #[test]
+    fn tts_rejects_empty_audio_output() {
+        let spec = CommandSpec::new("sh", vec!["-c".to_string(), "cat >/dev/null".to_string()]);
+        let mut tts = Qwen3TtsCommand::new(spec);
+
+        let error = tts.synthesize("taren", "hello").unwrap_err();
+
+        assert_eq!(error.code, "tts_empty_output");
+    }
+
+    #[test]
+    fn command_workers_accept_contract_fixtures_without_model_files() {
+        let mut stt = CommandSpeechToText::new(CommandSpec::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "cat >/dev/null; printf 'fixture transcript'".to_string(),
+            ],
+        ));
+        assert_eq!(
+            stt.transcribe(&[1, -2]),
+            Ok("fixture transcript".to_string())
+        );
+
+        let mut dialogue = CommandDialogueGenerator::new(CommandSpec::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "cat >/dev/null; printf '{\"dialogue\":\"fixture response\"}'".to_string(),
+            ],
+        ));
+        assert_eq!(
+            dialogue.generate(&context(), "fixture transcript"),
+            Ok(SubscriberResponse {
+                dialogue: "fixture response".to_string(),
+            })
+        );
+
+        let mut tts = Qwen3TtsCommand::new(CommandSpec::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "cat >/dev/null; printf '\\001\\000\\002\\000'".to_string(),
+            ],
+        ));
+        assert_eq!(tts.synthesize("taren", "fixture response"), Ok(vec![1, 2]));
+    }
+
+    #[test]
+    fn operator_session_cancel_is_visible_before_provider_work() {
+        struct Output(Vec<VoiceStatusMessage>);
+        impl VoiceOutput for Output {
+            fn status(&mut self, message: VoiceStatusMessage) -> Result<(), VoiceError> {
+                self.0.push(message);
+                Ok(())
+            }
+            fn audio(&mut self, _: RtpL16Packet) -> Result<(), VoiceError> {
+                Ok(())
+            }
+        }
+
+        let mut session = OperatorSession::new(
+            1,
+            1,
+            context(),
+            Box::new(FakeCapture),
+            Box::new(FakeStt),
+            Box::new(FakeDialogue),
+            Box::new(FakeTts),
+            Box::new(Output(Vec::new())),
+        )
+        .unwrap();
+
+        session.cancel().unwrap();
+
+        assert_eq!(session.phase(), SessionPhase::Cancelled);
+    }
+
+    #[test]
+    fn worker_output_is_bounded_without_deadlocking_the_child() {
+        let spec = CommandSpec::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                format!(
+                    "dd if=/dev/zero bs=1 count={} 2>/dev/null",
+                    MAX_WORKER_OUTPUT_BYTES + 1
+                ),
+            ],
+        );
+
+        let error = run_command(&spec, b"").unwrap_err();
+
+        assert_eq!(error.code, "worker_output_too_large");
+    }
+
+    #[test]
+    fn local_audio_playback_consumes_little_endian_pcm_and_finishes() {
+        let spec = CommandSpec::new("sh", vec!["-c".to_string(), "cat >/dev/null".to_string()]);
+        let mut playback = CommandAudioPlayback::new(spec).unwrap();
+
+        playback.write(&[1, -2]).unwrap();
+        playback.finish().unwrap();
     }
 }

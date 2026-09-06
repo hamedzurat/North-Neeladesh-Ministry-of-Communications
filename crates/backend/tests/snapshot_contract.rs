@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use exchange_backend::Backend;
 use exchange_protocol::{
     CordConnection, HeldControls, InputDebug, InputMessage, InputState, PROTOCOL_VERSION, PortId,
-    RtpL16Packet, TuningState, VOICE_PROTOCOL_VERSION, VoiceControl, VoiceStatus,
+    ProtocolError, RtpL16Packet, TuningState, VOICE_PROTOCOL_VERSION, VoiceControl, VoiceStatus,
     VoiceStatusMessage, encode_voice_status,
 };
 
@@ -348,9 +348,26 @@ fn voice_udp_status_and_audio_do_not_create_a_story_transition() {
     assert!(playing.output.speaker_active);
     assert!(playing.output.call.is_some());
 
+    let current = VoiceStatusMessage {
+        state_revision: 1,
+        ..status
+    };
+    assert!(backend.apply_voice_datagram(&encode_voice_status(&current).unwrap()));
+
+    let stale = VoiceStatusMessage {
+        status: VoiceStatus::Failed,
+        state_revision: 0,
+        error: Some(ProtocolError {
+            code: "late_worker".to_string(),
+            message: "late result".to_string(),
+        }),
+        ..current.clone()
+    };
+    assert!(!backend.apply_voice_datagram(&encode_voice_status(&stale).unwrap()));
+
     let completed = VoiceStatusMessage {
         status: VoiceStatus::Completed,
-        ..status
+        ..current
     };
     assert!(backend.apply_voice_datagram(&encode_voice_status(&completed).unwrap()));
     let idle = backend.apply_input_message(input(2, playing.state_revision, [0, 0, 0, 1]));
