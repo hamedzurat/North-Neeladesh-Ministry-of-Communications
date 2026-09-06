@@ -10,7 +10,8 @@ initial_backend_output :: proc() -> State_Output {
 	return State_Output{
 		game_phase = "ready",
 		clock_shift = 1,
-		speaker_active = false,
+ speaker_active = false,
+  tap_bridge_monitoring = -1,
 		tuning = Tuning{},
 		shift = Shift{number = 1, phase = "ready"},
 	}
@@ -214,6 +215,11 @@ apply_state_message :: proc(app: ^Input_State, value: cbor.Value) -> bool {
 	state.printer_output = decode_printer(map_get_or(output_value, "printer_output"))
 	call_value := map_get_or(output_value, "call")
 	if is_nil(call_value) { state.call = nil } else { state.call = decode_call(call_value) }
+	state.calls = decode_calls(map_get_or(output_value, "calls"))
+	service_value := map_get_or(output_value, "service_call")
+	if is_nil(service_value) { state.service_call = nil } else { state.service_call = decode_service_call(service_value) }
+	tap_monitoring := map_get_or(output_value, "tap_bridge_monitoring")
+	if is_nil(tap_monitoring) { state.tap_bridge_monitoring = -1 } else { state.tap_bridge_monitoring = int(u8_value(tap_monitoring)) }
 	state.shift = decode_shift(map_get_or(output_value, "shift"))
 	state.backend_messages = decode_backend_messages(map_get_or(map_get_or(output_value, "debug"), "messages"))
 	app.backend_output_ready = true
@@ -253,10 +259,16 @@ destroy_snapshot_storage :: proc(snapshot: ^State_Output) {
 	delete(snapshot.printer_output)
 	if call, ok := snapshot.call.?; ok { delete(call.phase) }
 	snapshot.call = nil
+	for &call in snapshot.calls { delete(call.phase) }
+	delete(snapshot.calls)
+	if service, ok := snapshot.service_call.?; ok { delete(service.service); delete(service.phase) }
+	snapshot.service_call = nil
 	for message in snapshot.backend_messages { delete(message) }
 	delete(snapshot.backend_messages)
 	delete(snapshot.game_phase)
 	delete(snapshot.shift.phase)
+	for &error in snapshot.shift.service_error_counts { delete(error.kind) }
+	delete(snapshot.shift.service_error_counts)
 }
 
 destroy_input_state :: proc(app: ^Input_State) {

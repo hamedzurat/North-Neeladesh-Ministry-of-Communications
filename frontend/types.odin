@@ -46,7 +46,9 @@ Input_Intent :: struct {
 Page :: struct { page_number: u8, heading: string, lines: [dynamic]string }
 Printer_Entry :: struct { entry_id: u64, text: string }
 Call :: struct { caller_line, requested_callee_line: u8, phase: string }
-Shift :: struct { number: u8, phase: string, active_call_count: u8, completed_routings: u32 }
+Service_Call :: struct { service, phase: string }
+Service_Error_Count :: struct { kind: string, count: u32 }
+Shift :: struct { number: u8, phase: string, active_call_count: u8, completed_routings, required_service_calls, completed_service_calls, service_errors: u32, service_error_counts: [dynamic]Service_Error_Count }
 
 State_Output :: struct {
 	state_revision: u64,
@@ -56,9 +58,12 @@ State_Output :: struct {
 	elapsed_seconds: u32,
 	tuning: Tuning,
 	directory_pages: [dynamic]Page,
-	printer_output: [dynamic]Printer_Entry,
-	call: Maybe(Call),
-	shift: Shift,
+ printer_output: [dynamic]Printer_Entry,
+ call: Maybe(Call),
+ calls: [dynamic]Call,
+ service_call: Maybe(Service_Call),
+ tap_bridge_monitoring: int,
+ shift: Shift,
 	speaker_active: bool,
 	backend_messages: [dynamic]string,
 }

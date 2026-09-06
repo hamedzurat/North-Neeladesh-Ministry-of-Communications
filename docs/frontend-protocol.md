@@ -63,13 +63,16 @@ The response wire shape is exactly:
     "directory_pages": [...],
     "printer_output": [...],
     "call": {...}|null,
+    "calls": [{"caller_line": u8, "requested_callee_line": u8, "phase": string}],
+    "service_call": {"service": string, "phase": string}|null,
+    "tap_bridge_monitoring": u8|null,
     "shift": {...},
     "debug": {"messages": [{"code": string, "message": string}]}
   }
 }
 ```
 
-The response never echoes topology, held controls, directory digits, crank timestamps, Cabinet Frontend diagnostics, or Cabinet Frontend/session data. `speaker_active` and `tuning` are backend-owned output state. `speaker_active` reflects an active Operator, service, or Tap Bridge audio control. Backend diagnostics are only in `output.debug`; Cabinet Frontend diagnostics are only in `input.debug`.
+The response never echoes topology, held controls, directory digits, crank timestamps, Cabinet Frontend diagnostics, or Cabinet Frontend/session data. `speaker_active`, `tuning`, `calls`, `service_call`, and `tap_bridge_monitoring` are backend-owned output state. `call` is the Call currently connected to the Operator, while `calls` contains the current Call records, including competing and Held Callers. Terminal Call phases remain visible until their physical topology is cleared. `speaker_active` reflects an active Operator, service, or held Tap Bridge monitoring control. Backend diagnostics are only in `output.debug`; Cabinet Frontend diagnostics are only in `input.debug`.
 
 ## Commands
 
@@ -121,6 +124,9 @@ Manual verification:
 2. Run `just frontend` in another terminal.
 3. Leave the initial directory selection at `0001`, connect Subscriber 0 to the Operator Jack, and verify the call enters the Operator Session.
 4. Connect Subscriber 1 to the Ring Generator, crank until the backend reports Ringing, then connect Subscriber 0 directly to Subscriber 1 and verify the printer records the Routing.
-5. Change the Directory Terminal digits and verify the e-paper pages update from the backend.
+5. Connect Subscriber 2 to the Operator while Subscriber 0 is active, verify Subscriber 0 becomes Held, then reconnect Subscriber 0 and verify focus returns.
+6. Route a Subscriber Circuit through a Tap Bridge, hold and release its listen control, and verify `tap_bridge_monitoring` and speaker activity follow the control.
+7. Hold EMS once and release it; verify the authoritative service receipt and completed-service counter. Complete a shift without EMS and verify the typed Service Error and conditional Story Graph path.
+8. Change the Directory Terminal digits and verify the e-paper pages update from the backend.
 
 For one real local voice session, run `uv sync --project python` once during provisioning, configure the offline model assets, run `just voice-preflight`, then run `just voice-daemon` after starting `just backend`. The daemon accepts `ptt` and `release` on stdin as a manual fallback for testing the same session boundary used by backend PTT controls. Use `just voice-smoke` only for a hardware-free protocol test; see `docs/voice-daemon.md` for the model and device configuration.

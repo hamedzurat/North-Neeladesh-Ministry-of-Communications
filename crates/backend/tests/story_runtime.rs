@@ -54,6 +54,21 @@ fn valid_routing_advances_the_authored_success_path_to_its_ending() {
         CallPhase::OperatorSession
     );
 
+    let mut ems = input(
+        sequence,
+        sequence - 1,
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
+    );
+    ems.input.held_controls.ems = true;
+    backend.apply_input_message(ems);
+    sequence += 1;
+    backend.apply_input_message(input(
+        sequence,
+        sequence - 1,
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
+    ));
+    sequence += 1;
+
     let ringing = {
         let mut response = input(
             sequence,

@@ -7,15 +7,18 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use exchange_protocol::{
     BackendDiagnostic, ClockState, CordConnection, DirectoryPage, GamePhase, InputMessage,
-    InputState, OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, ShiftPhase,
-    ShiftStatus, StateMessage, StateOutput, TuningState, VoiceControl, VoiceControlMessage,
-    VoiceStatus, decode_voice_status, encode_voice_control, read_frame, write_frame,
+    InputState, OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError,
+    ServiceCallPhase, ServiceCallStatus, ServiceErrorCount, ServiceErrorKind, ServiceKind,
+    ShiftPhase, ShiftStatus, StateMessage, StateOutput, TuningState, VoiceControl,
+    VoiceControlMessage, VoiceStatus, decode_voice_status, encode_voice_control, read_frame,
+    write_frame,
 };
 
 pub mod story;
 
 use story::{
-    AuthoredContent, CompiledStoryGraph, GraphCompileError, StoryNodeKind, StoryPathSelection,
+    AuthoredContent, CompiledStoryGraph, GraphCompileError, StoryEligibilityState, StoryNodeKind,
+    StoryPathSelection,
 };
 
 const MAX_FAULTS: usize = 16;
@@ -42,6 +45,8 @@ pub struct Backend {
     voice_state_revision: Option<u64>,
     voice_request_voice_id: Option<String>,
     pending_voice_control: Option<VoiceControlMessage>,
+    last_ems: bool,
+    service_error_recorded: bool,
 }
 
 impl Backend {
@@ -86,6 +91,8 @@ impl Backend {
             voice_state_revision: None,
             voice_request_voice_id: None,
             pending_voice_control: None,
+            last_ems: false,
+            service_error_recorded: false,
         }
     }
 
@@ -105,7 +112,13 @@ impl Backend {
                 rejected_proposal: proposal.is_some(),
             };
         }
-        let selection = self.story.select_next(&self.story_node_id, proposal);
+        let selection = self.story.select_next_with_state(
+            &self.story_node_id,
+            proposal,
+            &StoryEligibilityState {
+                service_errors: self.state.shift.service_errors,
+            },
+        );
         if self
             .story
             .node(&self.story_node_id)
@@ -133,6 +146,8 @@ impl Backend {
         self.voice_state_revision = None;
         self.voice_request_voice_id = None;
         self.pending_voice_control = None;
+        self.last_ems = false;
+        self.service_error_recorded = false;
     }
 
     pub fn apply_input_message(&mut self, message: InputMessage) -> StateMessage {
@@ -160,69 +175,69 @@ impl Backend {
 
         let input = &message.input;
         let ptt = input.held_controls.ptt;
+        let ems = input.held_controls.ems;
         let crank_rotation_timestamps = input.crank_rotation_timestamps;
         let mut next_state = self.state.clone();
         let authored_call = if self.state.call.is_none() {
             self.prepare_story_call(input.directory_digits, &input.cord_topology)
         } else {
-            None
+            self.story_call_for_node(&self.story_node_id, input.directory_digits)
         };
-        let mut transition = advance_call(
+        let authored_competing_call = operator_caller_line(&input.cord_topology)
+            .and_then(|line| self.story.authored_call_for_caller_line(line));
+        let transition = advance_calls(
             &self.state,
             input,
             self.last_crank_rotation_timestamps,
             authored_call,
+            authored_competing_call,
         );
-        if transition.story_outcome.is_none()
-            && self
-                .state
-                .call
-                .as_ref()
-                .is_some_and(|call| call.phase == exchange_protocol::CallPhase::AwaitingRouting)
-            && input.cord_topology.is_empty()
-        {
-            transition.call = self.state.call.clone().map(|mut call| {
-                call.phase = exchange_protocol::CallPhase::Missed;
-                call
-            });
-            transition.line_lamps = lamps_for_call(transition.call.as_ref());
-            transition.story_outcome = Some(StoryOutcome::Missed);
-        }
         if let Some(outcome) = transition.story_outcome {
             self.advance_story_outcome(outcome);
         }
-        if transition.story_event_complete {
-            self.settle_story_event();
-        }
         next_state.call = transition.call;
+        next_state.calls = transition.calls;
         next_state.line_lamps = transition.line_lamps;
         next_state.game_phase = transition.game_phase;
         next_state.shift = transition.shift;
+        if transition.story_event_complete {
+            next_state.shift.phase = ShiftPhase::Settled;
+            next_state.game_phase = GamePhase::Ended;
+        }
+        apply_service_transition(
+            self,
+            &mut next_state,
+            input,
+            transition.story_event_complete,
+        );
+        next_state.tap_bridge_monitoring = tap_bridge_monitoring(input, &next_state);
         let routing_receipt = transition.routing_receipt;
 
         if let Some(text) = routing_receipt {
-            let entry_id = next_state
-                .printer_output
-                .last()
-                .map_or(1, |entry| entry.entry_id + 1);
-            next_state
-                .printer_output
-                .push(PrinterEntry { entry_id, text });
+            append_printer(&mut next_state, &text);
+        }
+
+        if transition.story_event_complete {
+            self.settle_story_event(&next_state);
         }
 
         self.last_crank_rotation_timestamps = crank_rotation_timestamps;
         next_state.clock.elapsed_seconds =
             self.clock_started.elapsed().as_secs().min(u32::MAX as u64) as u32;
         self.state_revision += 1;
+        let speaker_active = speaker_is_active(input, &next_state) || self.voice_speaker_active;
         self.state = StateOutput {
             line_lamps: next_state.line_lamps,
             game_phase: next_state.game_phase,
             clock: next_state.clock,
-            speaker_active: speaker_is_active(input) || self.voice_speaker_active,
+            speaker_active,
             tuning: input.tuning.clone(),
             directory_pages: directory_pages(input.directory_digits),
             printer_output: next_state.printer_output,
             call: next_state.call,
+            calls: next_state.calls,
+            service_call: next_state.service_call,
+            tap_bridge_monitoring: next_state.tap_bridge_monitoring,
             shift: next_state.shift,
             debug: OutputDebug {
                 messages: next_state.debug.messages,
@@ -239,6 +254,7 @@ impl Backend {
         };
         self.last_request = Some(message);
         self.last_response = Some(response.clone());
+        self.last_ems = ems;
         if ptt != self.last_ptt {
             self.last_ptt = ptt;
             let voice_id = if ptt {
@@ -348,12 +364,22 @@ impl Backend {
         };
     }
 
-    fn settle_story_event(&mut self) {
-        if matches!(
-            self.story.node(&self.story_node_id).map(|node| &node.kind),
-            Some(StoryNodeKind::StoryEvent { .. })
-        ) {
-            let selection = self.story.select_next(&self.story_node_id, None);
+    fn settle_story_event(&mut self, state: &StateOutput) {
+        loop {
+            let kind = self.story.node(&self.story_node_id).map(|node| &node.kind);
+            if !matches!(
+                kind,
+                Some(StoryNodeKind::StoryEvent { .. } | StoryNodeKind::Conditional { .. })
+            ) {
+                break;
+            }
+            let selection = self.story.select_next_with_state(
+                &self.story_node_id,
+                None,
+                &StoryEligibilityState {
+                    service_errors: state.shift.service_errors,
+                },
+            );
             self.story_node_id = selection.node_id;
         }
     }
@@ -447,6 +473,17 @@ impl Default for Backend {
 }
 
 struct CallTransition {
+    calls: Vec<exchange_protocol::CallStatus>,
+    call: Option<exchange_protocol::CallStatus>,
+    line_lamps: [bool; 16],
+    game_phase: GamePhase,
+    shift: ShiftStatus,
+    routing_receipt: Option<String>,
+    story_outcome: Option<StoryOutcome>,
+    story_event_complete: bool,
+}
+
+struct SingleCallTransition {
     call: Option<exchange_protocol::CallStatus>,
     line_lamps: [bool; 16],
     game_phase: GamePhase,
@@ -463,16 +500,189 @@ enum StoryOutcome {
     Invalid,
 }
 
-fn advance_call(
+fn operator_caller_line(cords: &[CordConnection]) -> Option<u8> {
+    cords.iter().find_map(|cord| {
+        if cord.first == PortId::Operator {
+            match cord.second {
+                PortId::Subscriber(line) => Some(line),
+                _ => None,
+            }
+        } else if cord.second == PortId::Operator {
+            match cord.first {
+                PortId::Subscriber(line) => Some(line),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    })
+}
+
+fn advance_calls(
     state: &StateOutput,
     input: &InputState,
     previous_crank_rotation_timestamps: [u64; 4],
     authored_call: Option<(u8, u8)>,
+    authored_competing_call: Option<(u8, u8)>,
 ) -> CallTransition {
+    let operator_line = operator_caller_line(&input.cord_topology);
+    let mut calls = state.calls.clone();
+    if calls.is_empty()
+        && let Some(call) = state.call.clone()
+    {
+        calls.push(call);
+    }
+
+    if state.service_call.as_ref().is_some_and(|service| {
+        service.service == ServiceKind::Ems && service.phase == ServiceCallPhase::Active
+    }) && input.held_controls.ems
+    {
+        return CallTransition {
+            line_lamps: lamps_for_calls(&calls),
+            call: None,
+            calls,
+            game_phase: state.game_phase.clone(),
+            shift: state.shift.clone(),
+            routing_receipt: None,
+            story_outcome: None,
+            story_event_complete: false,
+        };
+    }
+
+    if let Some((caller_line, callee_line)) = authored_competing_call
+        && !calls.iter().any(|call| call.caller_line == caller_line)
+        && !calls.is_empty()
+    {
+        calls.push(exchange_protocol::CallStatus {
+            caller_line,
+            requested_callee_line: callee_line,
+            phase: exchange_protocol::CallPhase::OperatorSession,
+        });
+    }
+
+    let previous_focused_line = state.call.as_ref().map(|call| call.caller_line);
+    let authored_caller = authored_call.map(|(caller, _)| caller).or_else(|| {
+        state.call.as_ref().and_then(|call| {
+            matches!(
+                call.phase,
+                exchange_protocol::CallPhase::Completed
+                    | exchange_protocol::CallPhase::Missed
+                    | exchange_protocol::CallPhase::Misrouted
+            )
+            .then_some(call.caller_line)
+        })
+    });
+    let mut next_calls = Vec::with_capacity(calls.len());
+    let mut focused_call = None;
+    let mut game_phase = state.game_phase.clone();
+    let mut shift = state.shift.clone();
+    let mut routing_receipt = None;
+    let mut story_outcome = None;
+    let mut story_event_complete = false;
+
+    if calls.is_empty() {
+        let single = advance_single_call(
+            state,
+            input,
+            previous_crank_rotation_timestamps,
+            authored_call,
+        );
+        if let Some(call) = single.call.clone() {
+            focused_call = Some(call.clone());
+            next_calls.push(call);
+        }
+        let line_lamps = lamps_for_calls(&next_calls);
+        return CallTransition {
+            calls: next_calls,
+            call: focused_call,
+            line_lamps,
+            game_phase: single.game_phase,
+            shift: single.shift,
+            routing_receipt: single.routing_receipt,
+            story_outcome: single.story_outcome,
+            story_event_complete: single.story_event_complete,
+        };
+    }
+
+    for call in calls {
+        let mut single_state = state.clone();
+        single_state.call = Some(call.clone());
+        single_state.calls = vec![call.clone()];
+        let mut single = advance_single_call(
+            &single_state,
+            input,
+            previous_crank_rotation_timestamps,
+            None,
+        );
+        if previous_focused_line == Some(call.caller_line)
+            && operator_line.is_some()
+            && operator_line != Some(call.caller_line)
+            && call.phase == exchange_protocol::CallPhase::OperatorSession
+        {
+            single.call = Some(exchange_protocol::CallStatus {
+                phase: exchange_protocol::CallPhase::Held,
+                ..call.clone()
+            });
+            single.line_lamps = lamps_for_call(single.call.as_ref());
+        }
+        if let Some(next_call) = single.call {
+            if operator_line == Some(next_call.caller_line)
+                || (operator_line.is_none() && previous_focused_line == Some(next_call.caller_line))
+            {
+                focused_call = Some(next_call.clone());
+            }
+            next_calls.push(next_call);
+        }
+        game_phase = single.game_phase;
+        shift = single.shift;
+        if authored_caller == Some(call.caller_line) {
+            story_outcome = single.story_outcome;
+            story_event_complete = single.story_event_complete;
+            routing_receipt = single.routing_receipt;
+        }
+    }
+
+    if focused_call.is_none() && previous_focused_line.is_some() {
+        focused_call = next_calls
+            .iter()
+            .find(|call| Some(call.caller_line) == previous_focused_line)
+            .cloned();
+    }
+    shift.active_call_count = next_calls
+        .iter()
+        .filter(|call| {
+            !matches!(
+                call.phase,
+                exchange_protocol::CallPhase::Completed
+                    | exchange_protocol::CallPhase::Missed
+                    | exchange_protocol::CallPhase::Misrouted
+                    | exchange_protocol::CallPhase::Failed
+            )
+        })
+        .count()
+        .min(u8::MAX as usize) as u8;
+    CallTransition {
+        calls: next_calls.clone(),
+        call: focused_call,
+        line_lamps: lamps_for_calls(&next_calls),
+        game_phase,
+        shift,
+        routing_receipt,
+        story_outcome,
+        story_event_complete,
+    }
+}
+
+fn advance_single_call(
+    state: &StateOutput,
+    input: &InputState,
+    previous_crank_rotation_timestamps: [u64; 4],
+    authored_call: Option<(u8, u8)>,
+) -> SingleCallTransition {
     if state.call.is_none() {
         let Some((caller_line, callee)) = authored_call else {
             if input.cord_topology.is_empty() {
-                return CallTransition {
+                return SingleCallTransition {
                     line_lamps: [false; 16],
                     call: None,
                     game_phase: state.game_phase.clone(),
@@ -500,7 +710,7 @@ fn advance_call(
             phase,
         };
         let active_call_count = 1;
-        return CallTransition {
+        return SingleCallTransition {
             line_lamps: lamps_for_call(Some(&call)),
             call: Some(call),
             game_phase: if operator_cord {
@@ -528,7 +738,8 @@ fn advance_call(
     let callee = PortId::Subscriber(call.requested_callee_line);
     let caller_operator = has_exact_cords(&input.cord_topology, &[(&caller, &PortId::Operator)]);
     let ring_generator = has_ring_generator(&input.cord_topology, &caller, &callee);
-    let direct_circuit = has_exact_cords(&input.cord_topology, &[(&caller, &callee)]);
+    let direct_circuit = has_exact_cords(&input.cord_topology, &[(&caller, &callee)])
+        || has_tap_bridge_circuit(&input.cord_topology, &caller, &callee);
 
     let mut next_call = call.clone();
     let mut next_game_phase = state.game_phase.clone();
@@ -537,6 +748,21 @@ fn advance_call(
     let mut story_outcome = None;
     let story_event_complete = false;
     let invalid_circuit = has_wrong_direct_circuit(&input.cord_topology, &caller, &callee);
+
+    if call.phase == exchange_protocol::CallPhase::AwaitingRouting && input.cord_topology.is_empty()
+    {
+        next_call.phase = exchange_protocol::CallPhase::Missed;
+        story_outcome = Some(StoryOutcome::Missed);
+        return SingleCallTransition {
+            line_lamps: lamps_for_call(Some(&next_call)),
+            call: Some(next_call),
+            game_phase: next_game_phase,
+            shift: next_shift,
+            routing_receipt,
+            story_outcome,
+            story_event_complete,
+        };
+    }
 
     match call.phase {
         exchange_protocol::CallPhase::Waiting => {
@@ -549,7 +775,16 @@ fn advance_call(
             }
         }
         exchange_protocol::CallPhase::OperatorSession => {
-            if ring_generator {
+            if direct_circuit {
+                next_call.phase = exchange_protocol::CallPhase::Connected;
+                next_shift.completed_routings += 1;
+                next_game_phase = GamePhase::Shift;
+                story_outcome = Some(StoryOutcome::Success);
+                routing_receipt = Some(format!(
+                    "ROUTING {} -> {}",
+                    call.caller_line, call.requested_callee_line
+                ));
+            } else if ring_generator {
                 if !crank_satisfies_ringing(
                     input.crank_rotation_timestamps,
                     previous_crank_rotation_timestamps,
@@ -564,7 +799,16 @@ fn advance_call(
             }
         }
         exchange_protocol::CallPhase::AwaitingRouting => {
-            if invalid_circuit {
+            if direct_circuit {
+                next_call.phase = exchange_protocol::CallPhase::Connected;
+                next_shift.completed_routings += 1;
+                next_game_phase = GamePhase::Shift;
+                story_outcome = Some(StoryOutcome::Success);
+                routing_receipt = Some(format!(
+                    "ROUTING {} -> {}",
+                    call.caller_line, call.requested_callee_line
+                ));
+            } else if invalid_circuit {
                 next_call.phase = exchange_protocol::CallPhase::Misrouted;
                 story_outcome = Some(StoryOutcome::Invalid);
             } else if ring_generator {
@@ -625,7 +869,7 @@ fn advance_call(
                 next_call.phase = exchange_protocol::CallPhase::Completed;
             } else if input.cord_topology.is_empty() {
                 next_shift.active_call_count = 0;
-                return CallTransition {
+                return SingleCallTransition {
                     call: None,
                     line_lamps: [false; 16],
                     game_phase: next_game_phase,
@@ -640,7 +884,7 @@ fn advance_call(
         }
         exchange_protocol::CallPhase::Completed => {
             if input.cord_topology.is_empty() {
-                return CallTransition {
+                return SingleCallTransition {
                     call: None,
                     line_lamps: [false; 16],
                     game_phase: next_game_phase,
@@ -659,7 +903,7 @@ fn advance_call(
         | exchange_protocol::CallPhase::Failed => {
             if input.cord_topology.is_empty() {
                 next_shift.active_call_count = 0;
-                return CallTransition {
+                return SingleCallTransition {
                     call: None,
                     line_lamps: [false; 16],
                     game_phase: next_game_phase,
@@ -674,7 +918,7 @@ fn advance_call(
 
     next_shift.active_call_count =
         u8::from(next_call.phase != exchange_protocol::CallPhase::Completed);
-    CallTransition {
+    SingleCallTransition {
         line_lamps: lamps_for_call(Some(&next_call)),
         call: Some(next_call),
         game_phase: next_game_phase,
@@ -685,8 +929,8 @@ fn advance_call(
     }
 }
 
-fn unchanged_transition(state: &StateOutput) -> CallTransition {
-    CallTransition {
+fn unchanged_transition(state: &StateOutput) -> SingleCallTransition {
+    SingleCallTransition {
         call: state.call.clone(),
         line_lamps: state.line_lamps,
         game_phase: state.game_phase.clone(),
@@ -720,22 +964,83 @@ fn valid_crank_history(timestamps: [u64; 4]) -> bool {
     true
 }
 
-fn speaker_is_active(input: &InputState) -> bool {
+fn speaker_is_active(input: &InputState, state: &StateOutput) -> bool {
     let held = &input.held_controls;
     let operator_active = held.ptt
         && input
             .cord_topology
             .iter()
             .any(|cord| cord.first == PortId::Operator || cord.second == PortId::Operator);
-    let tap_active = (held.tap_1 && has_port(&input.cord_topology, &PortId::Tap(1)))
-        || (held.tap_2 && has_port(&input.cord_topology, &PortId::Tap(2)));
+    let tap_active = tap_bridge_monitoring(input, state).is_some();
     operator_active || held.police || held.ems || held.fire || tap_active
 }
 
-fn has_port(cords: &[CordConnection], port: &PortId) -> bool {
-    cords
-        .iter()
-        .any(|cord| &cord.first == port || &cord.second == port)
+fn apply_service_transition(
+    backend: &mut Backend,
+    state: &mut StateOutput,
+    input: &InputState,
+    settling: bool,
+) {
+    if input.held_controls.ems && !backend.last_ems && state.shift.phase == ShiftPhase::Active {
+        if state.shift.completed_service_calls == 0 {
+            state.service_call = Some(ServiceCallStatus {
+                service: ServiceKind::Ems,
+                phase: ServiceCallPhase::Active,
+            });
+            for call in &mut state.calls {
+                if call.phase == exchange_protocol::CallPhase::OperatorSession {
+                    call.phase = exchange_protocol::CallPhase::Held;
+                }
+            }
+            state.call = None;
+            state.line_lamps = lamps_for_calls(&state.calls);
+        }
+    } else if !input.held_controls.ems
+        && backend.last_ems
+        && state.service_call.as_ref().is_some_and(|call| {
+            call.service == ServiceKind::Ems && call.phase == ServiceCallPhase::Active
+        })
+    {
+        state.service_call = Some(ServiceCallStatus {
+            service: ServiceKind::Ems,
+            phase: ServiceCallPhase::Completed,
+        });
+        state.shift.completed_service_calls += 1;
+        append_printer(state, "SERVICE EMS COMPLETED");
+    }
+
+    if settling
+        && !backend.service_error_recorded
+        && state.shift.completed_service_calls < state.shift.required_service_calls
+    {
+        state.shift.service_errors += 1;
+        if let Some(error) = state
+            .shift
+            .service_error_counts
+            .iter_mut()
+            .find(|error| error.kind == ServiceErrorKind::MissedRequiredServiceCall)
+        {
+            error.count += 1;
+        } else {
+            state.shift.service_error_counts.push(ServiceErrorCount {
+                kind: ServiceErrorKind::MissedRequiredServiceCall,
+                count: 1,
+            });
+        }
+        backend.service_error_recorded = true;
+        append_printer(state, "SERVICE ERROR EMS REQUIRED");
+    }
+}
+
+fn append_printer(state: &mut StateOutput, text: &str) {
+    let entry_id = state
+        .printer_output
+        .last()
+        .map_or(1, |entry| entry.entry_id + 1);
+    state.printer_output.push(PrinterEntry {
+        entry_id,
+        text: text.to_string(),
+    });
 }
 
 fn directory_id(digits: [u8; 4]) -> u16 {
@@ -773,6 +1078,51 @@ fn lamps_for_call(call: Option<&exchange_protocol::CallStatus>) -> [bool; 16] {
         lamps[call.requested_callee_line as usize] = true;
     }
     lamps
+}
+
+fn lamps_for_calls(calls: &[exchange_protocol::CallStatus]) -> [bool; 16] {
+    let mut lamps = [false; 16];
+    for call in calls {
+        lamps[call.caller_line as usize] = true;
+        if matches!(
+            call.phase,
+            exchange_protocol::CallPhase::Ringing
+                | exchange_protocol::CallPhase::Connected
+                | exchange_protocol::CallPhase::Completed
+        ) {
+            lamps[call.requested_callee_line as usize] = true;
+        }
+    }
+    lamps
+}
+
+fn has_tap_bridge_circuit(cords: &[CordConnection], caller: &PortId, callee: &PortId) -> bool {
+    (1..=2).any(|bridge| {
+        let first = PortId::Tap(bridge * 2 - 1);
+        let second = PortId::Tap(bridge * 2);
+        has_exact_cords(cords, &[(caller, &first), (callee, &second)])
+            || has_exact_cords(cords, &[(caller, &second), (callee, &first)])
+    })
+}
+
+fn tap_bridge_monitoring(input: &InputState, state: &StateOutput) -> Option<u8> {
+    (1..=2).find(|bridge| {
+        let held = if *bridge == 1 {
+            input.held_controls.tap_1
+        } else {
+            input.held_controls.tap_2
+        };
+        held && state.calls.iter().any(|call| {
+            matches!(
+                call.phase,
+                exchange_protocol::CallPhase::Connected | exchange_protocol::CallPhase::Completed
+            ) && has_tap_bridge_circuit(
+                &input.cord_topology,
+                &PortId::Subscriber(call.caller_line),
+                &PortId::Subscriber(call.requested_callee_line),
+            )
+        })
+    })
 }
 
 fn has_ring_generator(cords: &[CordConnection], caller: &PortId, callee: &PortId) -> bool {
@@ -1045,11 +1395,18 @@ fn initial_state(printer_stress: bool) -> StateOutput {
         directory_pages: directory_pages([0, 0, 0, 1]),
         printer_output: initial_printer_output(printer_stress),
         call: None,
+        calls: Vec::new(),
+        service_call: None,
+        tap_bridge_monitoring: None,
         shift: ShiftStatus {
             number: 1,
             phase: ShiftPhase::Ready,
             active_call_count: 0,
             completed_routings: 0,
+            required_service_calls: 1,
+            completed_service_calls: 0,
+            service_errors: 0,
+            service_error_counts: Vec::new(),
         },
         debug: OutputDebug {
             messages: vec![BackendDiagnostic {
@@ -1062,10 +1419,16 @@ fn initial_state(printer_stress: bool) -> StateOutput {
 
 fn initial_printer_output(printer_stress: bool) -> Vec<PrinterEntry> {
     if !printer_stress {
-        return vec![PrinterEntry {
-            entry_id: 1,
-            text: "PROVINCIAL EXCHANGE READY".to_string(),
-        }];
+        return vec![
+            PrinterEntry {
+                entry_id: 1,
+                text: "PROVINCIAL EXCHANGE READY".to_string(),
+            },
+            PrinterEntry {
+                entry_id: 2,
+                text: "SERVICE RULE // EMS REQUIRED THIS SHIFT".to_string(),
+            },
+        ];
     }
 
     (1..=STRESS_PRINTER_ENTRY_COUNT)

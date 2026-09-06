@@ -59,7 +59,7 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
         second.error
     );
     assert_eq!(second.output.directory_pages[0].heading, "VIRA DHAL");
-    assert_eq!(second.output.printer_output.len(), 1);
+    assert_eq!(second.output.printer_output.len(), 2);
 
     let arbitrary = exchange(
         stream,
@@ -153,7 +153,16 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
         cleared.error
     );
     assert!(cleared.output.call.is_none());
-    assert_eq!(cleared.output.printer_output.len(), 2);
+    assert_eq!(cleared.output.printer_output.len(), 4);
+    assert!(
+        cleared
+            .output
+            .printer_output
+            .last()
+            .unwrap()
+            .text
+            .contains("SERVICE ERROR")
+    );
 
     let invalid = exchange(stream, message(9, 8, [0, 0, 0, 12]))?;
     assert!(!invalid.accepted);
@@ -162,7 +171,8 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
 
     let restarted = exchange(stream, message(10, cleared.state_revision, [0, 0, 0, 2]))?;
     assert!(restarted.accepted);
-    assert!(restarted.output.line_lamps[0]);
+    assert!(restarted.output.call.is_none());
+    assert!(restarted.output.calls.is_empty());
 
     Ok(())
 }
