@@ -98,7 +98,7 @@ state_message_is_complete :: proc(value: cbor.Value) -> bool {
 	if !map_has_keys(value, {"protocol_version", "input_sequence", "accepted", "error", "state_revision", "output"}) do return false
 	if u16_value(map_get_or(value, "protocol_version")) != PROTOCOL_VERSION do return false
 	output, output_ok := map_get(value, "output")
-	if !output_ok || !map_has_keys(output, {"line_lamps", "game_phase", "clock", "speaker_active", "tuning", "directory_pages", "printer_output", "call", "shift", "debug"}) do return false
+	if !output_ok || !map_has_keys(output, {"line_lamps", "game_phase", "clock", "speaker_active", "tuning", "directory_pages", "printer_output", "call", "calls", "service_call", "tap_bridge_monitoring", "shift", "debug"}) do return false
 	clock, clock_ok := map_get(output, "clock")
 	if !clock_ok || !map_has_keys(clock, {"shift", "elapsed_seconds"}) do return false
 	tuning, tuning_ok := map_get(output, "tuning")
@@ -107,6 +107,10 @@ state_message_is_complete :: proc(value: cbor.Value) -> bool {
 	if !debug_ok || !map_has_keys(debug, {"messages"}) do return false
 	call, call_ok := map_get(output, "call")
 	if !call_ok || (!is_nil(call) && !map_has_keys(call, {"caller_line", "requested_callee_line", "phase"})) do return false
+	service, service_ok := map_get(output, "service_call")
+	if !service_ok || (!is_nil(service) && !map_has_keys(service, {"service", "phase"})) do return false
+	shift, shift_ok := map_get(output, "shift")
+	if !shift_ok || !map_has_keys(shift, {"number", "phase", "active_call_count", "completed_routings", "required_service_calls", "completed_service_calls", "service_errors", "service_error_counts"}) do return false
 	return true
 }
 
@@ -139,8 +143,22 @@ decode_printer :: proc(value: cbor.Value) -> [dynamic]Printer_Entry {
 	for item in array_value(value) { append(&result, Printer_Entry{entry_id = u64_value(map_get_or(item, "entry_id")), text = owned_string(map_get_or(item, "text"))}) }
 	return result
 }
-decode_call :: proc(value: cbor.Value) -> Maybe(Call) { return Call{u8_value(map_get_or(value, "caller_line")), u8_value(map_get_or(value, "requested_callee_line")), owned_string(map_get_or(value, "phase"))} }
-decode_shift :: proc(value: cbor.Value) -> Shift { return Shift{number = u8_value(map_get_or(value, "number")), phase = owned_string(map_get_or(value, "phase")), active_call_count = u8_value(map_get_or(value, "active_call_count")), completed_routings = u32_value(map_get_or(value, "completed_routings"))} }
+decode_call_value :: proc(value: cbor.Value) -> Call { return Call{u8_value(map_get_or(value, "caller_line")), u8_value(map_get_or(value, "requested_callee_line")), owned_string(map_get_or(value, "phase"))} }
+decode_call :: proc(value: cbor.Value) -> Maybe(Call) { return decode_call_value(value) }
+decode_calls :: proc(value: cbor.Value) -> [dynamic]Call {
+	result := make([dynamic]Call, 0)
+	for item in array_value(value) { append(&result, decode_call_value(item)) }
+	return result
+}
+decode_service_call :: proc(value: cbor.Value) -> Maybe(Service_Call) { return Service_Call{service = owned_string(map_get_or(value, "service")), phase = owned_string(map_get_or(value, "phase"))} }
+decode_service_error_counts :: proc(value: cbor.Value) -> [dynamic]Service_Error_Count {
+	result := make([dynamic]Service_Error_Count, 0)
+	for item in array_value(value) {
+		append(&result, Service_Error_Count{kind = owned_string(map_get_or(item, "kind")), count = u32_value(map_get_or(item, "count"))})
+	}
+	return result
+}
+decode_shift :: proc(value: cbor.Value) -> Shift { return Shift{number = u8_value(map_get_or(value, "number")), phase = owned_string(map_get_or(value, "phase")), active_call_count = u8_value(map_get_or(value, "active_call_count")), completed_routings = u32_value(map_get_or(value, "completed_routings")), required_service_calls = u32_value(map_get_or(value, "required_service_calls")), completed_service_calls = u32_value(map_get_or(value, "completed_service_calls")), service_errors = u32_value(map_get_or(value, "service_errors")), service_error_counts = decode_service_error_counts(map_get_or(value, "service_error_counts"))} }
 decode_strings :: proc(value: cbor.Value) -> [dynamic]string { result := make([dynamic]string, 0); for item in array_value(value) { append(&result, owned_string(item)) }; return result }
 decode_backend_messages :: proc(value: cbor.Value) -> [dynamic]string {
 	result := make([dynamic]string, 0)

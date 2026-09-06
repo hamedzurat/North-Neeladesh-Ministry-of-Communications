@@ -1,6 +1,6 @@
 use exchange_backend::story::{
-    AuthoredContent, Ending, GraphCompileError, LineListing, StoryBeat, StoryEvent,
-    StoryEventOutcome, StoryNode, StoryNodeKind, Subscriber,
+    AuthoredContent, Ending, GraphCompileError, LineListing, StoryBeat, StoryCondition,
+    StoryEligibilityState, StoryEvent, StoryEventOutcome, StoryNode, StoryNodeKind, Subscriber,
 };
 
 fn demo() -> AuthoredContent {
@@ -117,6 +117,34 @@ fn invalid_proposals_use_the_authored_default_without_becoming_a_graph_edge() {
 }
 
 #[test]
+fn typed_service_error_counter_selects_the_authored_conditional_path() {
+    let graph = demo().compile().unwrap();
+
+    let clean = graph.select_next_with_state(
+        "service_gate",
+        None,
+        &StoryEligibilityState { service_errors: 0 },
+    );
+    assert_eq!(clean.node_id, "ending_success");
+
+    let failed = graph.select_next_with_state(
+        "service_gate",
+        None,
+        &StoryEligibilityState { service_errors: 1 },
+    );
+    assert_eq!(failed.node_id, "ending_service_error");
+
+    assert_eq!(
+        graph.node("service_gate").unwrap().kind,
+        StoryNodeKind::Conditional {
+            condition: StoryCondition::MaxServiceErrors(0),
+            on_met: "ending_success".to_string(),
+            on_unmet: "ending_service_error".to_string(),
+        }
+    );
+}
+
+#[test]
 fn demo_definitions_use_stable_typed_references() {
     let content = demo();
 
@@ -130,6 +158,14 @@ fn demo_definitions_use_stable_typed_references() {
             Subscriber {
                 id: "vira_dhal".to_string(),
                 name: "Vira Dhal".to_string()
+            },
+            Subscriber {
+                id: "leyla_varan".to_string(),
+                name: "Leyla Varan".to_string()
+            },
+            Subscriber {
+                id: "oren_vey".to_string(),
+                name: "Oren Vey".to_string()
             },
         ]
     );
@@ -154,7 +190,7 @@ fn demo_definitions_use_stable_typed_references() {
             id: "routing_success".to_string(),
             outcomes: vec![StoryEventOutcome {
                 id: "success".to_string(),
-                next_node_id: "ending_success".to_string(),
+                next_node_id: "service_gate".to_string(),
             }],
         }
     );

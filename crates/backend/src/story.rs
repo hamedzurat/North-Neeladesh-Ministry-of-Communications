@@ -64,6 +64,11 @@ pub enum StoryNodeKind {
         event_id: String,
         default_outcome_id: String,
     },
+    Conditional {
+        condition: StoryCondition,
+        on_met: String,
+        on_unmet: String,
+    },
     Ending {
         ending_id: String,
     },
@@ -73,6 +78,16 @@ pub enum StoryNodeKind {
 pub struct StoryNode {
     pub id: String,
     pub kind: StoryNodeKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoryCondition {
+    MaxServiceErrors(u32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StoryEligibilityState {
+    pub service_errors: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,6 +229,14 @@ impl AuthoredContent {
                     id: "vira_dhal".to_string(),
                     name: "Vira Dhal".to_string(),
                 },
+                Subscriber {
+                    id: "leyla_varan".to_string(),
+                    name: "Leyla Varan".to_string(),
+                },
+                Subscriber {
+                    id: "oren_vey".to_string(),
+                    name: "Oren Vey".to_string(),
+                },
             ],
             line_listings: vec![
                 LineListing {
@@ -226,6 +249,16 @@ impl AuthoredContent {
                     line: 1,
                     subscriber_ids: vec!["vira_dhal".to_string()],
                 },
+                LineListing {
+                    id: "clinic".to_string(),
+                    line: 2,
+                    subscriber_ids: vec!["leyla_varan".to_string()],
+                },
+                LineListing {
+                    id: "border_post".to_string(),
+                    line: 3,
+                    subscriber_ids: vec!["oren_vey".to_string()],
+                },
             ],
             call_premises: vec![CallPremise {
                 id: "dispatch_request".to_string(),
@@ -234,6 +267,14 @@ impl AuthoredContent {
                 caller_line_id: "railway_dispatch_office".to_string(),
                 callee_line_id: "factory_records_office".to_string(),
                 directory_ids: vec![1, 2],
+            },
+            CallPremise {
+                id: "competing_service_request".to_string(),
+                caller_id: "leyla_varan".to_string(),
+                callee_id: "oren_vey".to_string(),
+                caller_line_id: "clinic".to_string(),
+                callee_line_id: "border_post".to_string(),
+                directory_ids: vec![2],
             }],
             story_beats: vec![StoryBeat {
                 id: "railway_dispatch".to_string(),
@@ -244,7 +285,7 @@ impl AuthoredContent {
                     id: "routing_success".to_string(),
                     outcomes: vec![StoryEventOutcome {
                         id: "success".to_string(),
-                        next_node_id: "ending_success".to_string(),
+                        next_node_id: "service_gate".to_string(),
                     }],
                 },
                 StoryEvent {
@@ -275,6 +316,10 @@ impl AuthoredContent {
                     id: "invalid_dispatch".to_string(),
                     conclusion: "The exchange records an invalid routing.".to_string(),
                 },
+                Ending {
+                    id: "service_error_dispatch".to_string(),
+                    conclusion: "The railway receives the dispatch, but the exchange records a service error.".to_string(),
+                },
             ],
             nodes: vec![
                 StoryNode {
@@ -297,6 +342,14 @@ impl AuthoredContent {
                     kind: StoryNodeKind::StoryEvent {
                         event_id: "routing_success".to_string(),
                         default_outcome_id: "success".to_string(),
+                    },
+                },
+                StoryNode {
+                    id: "service_gate".to_string(),
+                    kind: StoryNodeKind::Conditional {
+                        condition: StoryCondition::MaxServiceErrors(0),
+                        on_met: "ending_success".to_string(),
+                        on_unmet: "ending_service_error".to_string(),
                     },
                 },
                 StoryNode {
@@ -329,6 +382,12 @@ impl AuthoredContent {
                     id: "ending_invalid".to_string(),
                     kind: StoryNodeKind::Ending {
                         ending_id: "invalid_dispatch".to_string(),
+                    },
+                },
+                StoryNode {
+                    id: "ending_service_error".to_string(),
+                    kind: StoryNodeKind::Ending {
+                        ending_id: "service_error_dispatch".to_string(),
                     },
                 },
             ],
@@ -369,6 +428,14 @@ impl CompiledStoryGraph {
             .find(|listing| listing.id == listing_id)
     }
 
+    pub fn authored_call_for_caller_line(&self, caller_line: u8) -> Option<(u8, u8)> {
+        self.call_premises.values().find_map(|premise| {
+            let caller = self.line_listing(&premise.caller_line_id)?.line;
+            let callee = self.line_listing(&premise.callee_line_id)?.line;
+            (caller == caller_line).then_some((caller, callee))
+        })
+    }
+
     pub fn ending(&self, ending_id: &str) -> Option<&Ending> {
         self.content
             .endings
@@ -377,6 +444,33 @@ impl CompiledStoryGraph {
     }
 
     pub fn select_next(&self, node_id: &str, proposal: Option<&str>) -> StoryPathSelection {
+        self.select_next_with_state(node_id, proposal, &StoryEligibilityState::default())
+    }
+
+    pub fn select_next_with_state(
+        &self,
+        node_id: &str,
+        proposal: Option<&str>,
+        state: &StoryEligibilityState,
+    ) -> StoryPathSelection {
+        if let Some(StoryNodeKind::Conditional {
+            condition,
+            on_met,
+            on_unmet,
+        }) = self.node(node_id).map(|node| &node.kind)
+        {
+            let eligible = match condition {
+                StoryCondition::MaxServiceErrors(maximum) if state.service_errors <= *maximum => {
+                    on_met
+                }
+                StoryCondition::MaxServiceErrors(_) => on_unmet,
+            };
+            return StoryPathSelection {
+                node_id: eligible.clone(),
+                used_default: proposal != Some(eligible.as_str()),
+                rejected_proposal: proposal.is_some_and(|proposal| proposal != eligible),
+            };
+        }
         let outgoing = self.outgoing(node_id);
         if matches!(
             self.node(node_id).map(|node| &node.kind),
@@ -643,6 +737,12 @@ fn validate_authored_content(content: &AuthoredContent) -> Result<(), GraphCompi
                         .collect::<BTreeMap<_, _>>(),
                 )?;
             }
+            StoryNodeKind::Conditional {
+                on_met, on_unmet, ..
+            } => {
+                require_id("Conditional", "StoryNode", on_met, &nodes)?;
+                require_id("Conditional", "StoryNode", on_unmet, &nodes)?;
+            }
             StoryNodeKind::Ending { ending_id } => {
                 require_id("EndingNode", "Ending", ending_id, &endings)?;
             }
@@ -733,6 +833,11 @@ fn node_outgoing(node: &StoryNode, events: &[StoryEvent]) -> Vec<String> {
                     .map(|outcome| outcome.next_node_id.clone())
                     .collect()
             }),
+        StoryNodeKind::Conditional {
+            on_met, on_unmet, ..
+        } => {
+            vec![on_met.clone(), on_unmet.clone()]
+        }
         StoryNodeKind::Ending { .. } => Vec::new(),
     }
 }

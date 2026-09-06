@@ -181,6 +181,41 @@ pub struct CallStatus {
     pub phase: CallPhase,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceKind {
+    Police,
+    Ems,
+    Fire,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceCallPhase {
+    Active,
+    Completed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceCallStatus {
+    pub service: ServiceKind,
+    pub phase: ServiceCallPhase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceErrorKind {
+    MissedRequiredServiceCall,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceErrorCount {
+    pub kind: ServiceErrorKind,
+    pub count: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CallPhase {
@@ -203,6 +238,10 @@ pub struct ShiftStatus {
     pub phase: ShiftPhase,
     pub active_call_count: u8,
     pub completed_routings: u32,
+    pub required_service_calls: u32,
+    pub completed_service_calls: u32,
+    pub service_errors: u32,
+    pub service_error_counts: Vec<ServiceErrorCount>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -236,6 +275,9 @@ pub struct StateOutput {
     pub directory_pages: Vec<DirectoryPage>,
     pub printer_output: Vec<PrinterEntry>,
     pub call: Option<CallStatus>,
+    pub calls: Vec<CallStatus>,
+    pub service_call: Option<ServiceCallStatus>,
+    pub tap_bridge_monitoring: Option<u8>,
     pub shift: ShiftStatus,
     pub debug: OutputDebug,
 }
