@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use exchange_backend::Backend;
 use exchange_protocol::{
     CordConnection, HeldControls, InputDebug, InputMessage, InputState, PROTOCOL_VERSION, PortId,
-    TuningState,
+    RtpL16Packet, TuningState, VOICE_PROTOCOL_VERSION, VoiceControl, VoiceStatus,
+    VoiceStatusMessage, encode_voice_status,
 };
 
 fn input(sequence: u64, revision: u64, digits: [u8; 4]) -> InputMessage {
@@ -305,4 +306,86 @@ fn invalid_crank_history_is_rejected() {
     assert!(!response.accepted);
     assert_eq!(response.error.unwrap().code, "invalid_crank_timestamps");
     assert_eq!(response.state_revision, 0);
+}
+
+#[test]
+fn voice_udp_status_and_audio_do_not_create_a_story_transition() {
+    let mut backend = Backend::new();
+    let ready = VoiceStatusMessage {
+        protocol_version: VOICE_PROTOCOL_VERSION,
+        session_id: 4,
+        turn_id: 1,
+        state_revision: 0,
+        status: VoiceStatus::Ready,
+        transcript: None,
+        response_text: None,
+        error: None,
+    };
+    assert!(backend.apply_voice_datagram(&encode_voice_status(&ready).unwrap()));
+
+    let status = VoiceStatusMessage {
+        status: VoiceStatus::Playing,
+        response_text: Some("A response".to_string()),
+        ..ready
+    };
+    assert!(backend.apply_voice_datagram(&encode_voice_status(&status).unwrap()));
+    assert!(
+        backend.apply_voice_datagram(
+            &RtpL16Packet {
+                marker: true,
+                sequence: 0,
+                timestamp: 0,
+                ssrc: 4,
+                samples: vec![1, -1],
+            }
+            .encode()
+        )
+    );
+    assert!(!backend.apply_voice_datagram(&[0xff, 0x00]));
+
+    let playing = backend.apply_input_message(input(1, 0, [0, 0, 0, 1]));
+    assert!(playing.accepted);
+    assert!(playing.output.speaker_active);
+    assert!(playing.output.call.is_some());
+
+    let completed = VoiceStatusMessage {
+        status: VoiceStatus::Completed,
+        ..status
+    };
+    assert!(backend.apply_voice_datagram(&encode_voice_status(&completed).unwrap()));
+    let idle = backend.apply_input_message(input(2, playing.state_revision, [0, 0, 0, 1]));
+    assert!(!idle.output.speaker_active);
+    assert_eq!(idle.output.shift.completed_routings, 0);
+}
+
+#[test]
+fn accepted_ptt_edges_are_forwarded_to_the_registered_voice_daemon() {
+    let mut backend = Backend::new();
+    let ready = VoiceStatusMessage {
+        protocol_version: VOICE_PROTOCOL_VERSION,
+        session_id: 1,
+        turn_id: 1,
+        state_revision: 0,
+        status: VoiceStatus::Ready,
+        transcript: None,
+        response_text: None,
+        error: None,
+    };
+    let peer = "127.0.0.1:45678".parse().unwrap();
+    assert!(backend.apply_voice_datagram_from(&encode_voice_status(&ready).unwrap(), Some(peer)));
+
+    let mut start = input(1, 0, [0, 0, 0, 1]);
+    start.input.held_controls.ptt = true;
+    assert!(backend.apply_input_message(start).accepted);
+    let (start_control, start_peer) = backend.take_voice_control().unwrap();
+    assert_eq!(start_peer, peer);
+    assert_eq!(start_control.control, VoiceControl::StartPtt);
+
+    let mut release = input(2, 1, [0, 0, 0, 1]);
+    release.input.held_controls.ptt = false;
+    assert!(backend.apply_input_message(release).accepted);
+    assert_eq!(
+        backend.take_voice_control().unwrap().0.control,
+        VoiceControl::ReleasePtt
+    );
 }
