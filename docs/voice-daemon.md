@@ -38,8 +38,7 @@ export NN_QWEN3_MODEL=/opt/north-neeladesh/models/Qwen3-4B-Instruct-2507-Q4_K_M.
 export NN_QWEN3_TTS_MODEL=/opt/north-neeladesh/models/Qwen3-TTS-12Hz-1.7B-CustomVoice
 export NN_QWEN3_VOICE_MAP='{"taren":"Ryan"}'
 export NN_QWEN3_TTS_DEVICE=cuda:0
-just voice-daemon \
-  backend_address="127.0.0.1:7879"
+just voice-daemon
 ```
 
 `python/voice_workers/` contains the real adapters. They are launched as `python -m voice_workers.<worker>` inside the uv environment. The real daemon also tees each synthesized PCM packet to local ALSA `aplay`, so the manual path is audible while preserving the existing RTP/L16 UDP path. Their required stdin/stdout contracts are:
@@ -64,4 +63,4 @@ Each provider command has a bounded 30-second deadline. The Rust adapter bounds 
 
 For an isolated protocol test, type `ptt` and `release` on its stdin while using `just voice-smoke`. The real path should be manually accepted with a live microphone and the local model assets; it must produce a non-fixed transcript, a Subscriber-specific response, and Qwen3-TTS audio.
 
-The backend UDP port can be changed with `--voice-bind`; pass the matching address as `NN_VOICE_BACKEND_ADDRESS` when invoking `just voice-daemon backend_address=...`.
+The backend UDP port can be changed with `--voice-bind`; pass the matching address as the first positional argument to `just voice-daemon`, for example `just voice-daemon 127.0.0.1:8879`.
