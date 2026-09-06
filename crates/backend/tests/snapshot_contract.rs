@@ -397,12 +397,12 @@ fn accepted_ptt_edges_are_forwarded_to_the_registered_voice_daemon() {
     let (start_control, start_peer) = backend.take_voice_control().unwrap();
     assert_eq!(start_peer, peer);
     assert_eq!(start_control.control, VoiceControl::StartPtt);
+    assert!(!start_control.voice_id.is_empty());
 
     let mut release = input(2, 1, [0, 0, 0, 1]);
     release.input.held_controls.ptt = false;
     assert!(backend.apply_input_message(release).accepted);
-    assert_eq!(
-        backend.take_voice_control().unwrap().0.control,
-        VoiceControl::ReleasePtt
-    );
+    let release_control = backend.take_voice_control().unwrap().0;
+    assert_eq!(release_control.control, VoiceControl::ReleasePtt);
+    assert_eq!(release_control.voice_id, start_control.voice_id);
 }

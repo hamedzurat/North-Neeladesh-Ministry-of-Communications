@@ -8,7 +8,7 @@ import sys
 import tempfile
 import wave
 
-from .common import fail
+from .common import WHISPER_BINARY, WHISPER_MODEL, fail
 
 
 SAMPLE_RATE = 16_000
@@ -19,11 +19,9 @@ def main() -> int:
     if not pcm or len(pcm) % 2:
         fail("STT input must be non-empty signed 16-bit PCM")
 
-    binary_name = os.environ.get("NN_WHISPER_CPP", "whisper-cli")
+    binary_name = os.environ.get("NN_WHISPER_CPP", str(WHISPER_BINARY))
     binary = shutil.which(binary_name) or binary_name
-    model = os.environ.get("NN_WHISPER_MODEL")
-    if not model:
-        fail("NN_WHISPER_MODEL must point to a local whisper.cpp base.en model")
+    model = os.environ.get("NN_WHISPER_MODEL", str(WHISPER_MODEL))
     if not os.path.isfile(model):
         fail(f"whisper model does not exist: {model}")
 

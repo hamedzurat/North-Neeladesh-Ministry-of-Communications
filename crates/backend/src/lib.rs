@@ -3,7 +3,7 @@ use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use exchange_protocol::{
     BackendDiagnostic, ClockState, CordConnection, DirectoryPage, GamePhase, InputMessage,
@@ -15,6 +15,9 @@ use exchange_protocol::{
 const MAX_FAULTS: usize = 16;
 const MAX_CORDS: usize = 8;
 const STRESS_PRINTER_ENTRY_COUNT: usize = 48;
+const VOICE_IDS: [&str; 9] = [
+    "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee",
+];
 
 pub struct Backend {
     state: StateOutput,
@@ -29,6 +32,7 @@ pub struct Backend {
     voice_session_id: Option<u64>,
     voice_turn_id: Option<u64>,
     voice_state_revision: Option<u64>,
+    voice_request_voice_id: Option<String>,
     pending_voice_control: Option<VoiceControlMessage>,
 }
 
@@ -51,6 +55,7 @@ impl Backend {
             voice_session_id: None,
             voice_turn_id: None,
             voice_state_revision: None,
+            voice_request_voice_id: None,
             pending_voice_control: None,
         }
     }
@@ -130,11 +135,22 @@ impl Backend {
         self.last_response = Some(response.clone());
         if ptt != self.last_ptt {
             self.last_ptt = ptt;
+            let voice_id = if ptt {
+                let caller_line = self.state.call.as_ref().map_or(0, |call| call.caller_line);
+                let voice_id = select_voice_id(caller_line);
+                self.voice_request_voice_id = Some(voice_id.clone());
+                voice_id
+            } else {
+                self.voice_request_voice_id
+                    .take()
+                    .unwrap_or_else(|| "Ryan".to_string())
+            };
             self.pending_voice_control = Some(VoiceControlMessage {
                 protocol_version: exchange_protocol::VOICE_PROTOCOL_VERSION,
                 session_id: 1,
                 turn_id: 1,
                 state_revision: self.state_revision,
+                voice_id,
                 control: if ptt {
                     VoiceControl::StartPtt
                 } else {
@@ -215,6 +231,16 @@ impl Backend {
         let peer = self.voice_peer?;
         Some((self.pending_voice_control.take()?, peer))
     }
+}
+
+fn select_voice_id(caller_line: u8) -> String {
+    if env::var("NN_VOICE_RANDOM_SPEAKER").is_ok_and(|value| value == "0") {
+        return "Ryan".to_string();
+    }
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.subsec_nanos() as usize);
+    VOICE_IDS[(nanos + caller_line as usize) % VOICE_IDS.len()].to_string()
 }
 
 impl Default for Backend {
