@@ -12,6 +12,12 @@ use exchange_protocol::{
     VoiceStatus, decode_voice_status, encode_voice_control, read_frame, write_frame,
 };
 
+pub mod story;
+
+use story::{
+    AuthoredContent, CompiledStoryGraph, GraphCompileError, StoryNodeKind, StoryPathSelection,
+};
+
 const MAX_FAULTS: usize = 16;
 const MAX_CORDS: usize = 8;
 const STRESS_PRINTER_ENTRY_COUNT: usize = 48;
@@ -21,6 +27,8 @@ const VOICE_IDS: [&str; 9] = [
 
 pub struct Backend {
     state: StateOutput,
+    story: CompiledStoryGraph,
+    story_node_id: String,
     state_revision: u64,
     last_request: Option<InputMessage>,
     last_response: Option<StateMessage>,
@@ -42,8 +50,29 @@ impl Backend {
     }
 
     pub fn new_with_printer_stress(printer_stress: bool) -> Self {
+        let story = AuthoredContent::demo()
+            .compile()
+            .expect("built-in authored Story Graph must compile");
+        Self::with_story(story, printer_stress)
+    }
+
+    pub fn new_with_story(content: AuthoredContent) -> Result<Self, GraphCompileError> {
+        Self::new_with_story_and_printer_stress(content, false)
+    }
+
+    pub fn new_with_story_and_printer_stress(
+        content: AuthoredContent,
+        printer_stress: bool,
+    ) -> Result<Self, GraphCompileError> {
+        Ok(Self::with_story(content.compile()?, printer_stress))
+    }
+
+    fn with_story(story: CompiledStoryGraph, printer_stress: bool) -> Self {
+        let story_node_id = story.start_node_id().to_string();
         Self {
             state: initial_state(printer_stress),
+            story,
+            story_node_id,
             state_revision: 0,
             last_request: None,
             last_response: None,
@@ -58,6 +87,52 @@ impl Backend {
             voice_request_voice_id: None,
             pending_voice_control: None,
         }
+    }
+
+    pub fn story_graph(&self) -> &CompiledStoryGraph {
+        &self.story
+    }
+
+    pub fn story_node_id(&self) -> &str {
+        &self.story_node_id
+    }
+
+    pub fn select_story_path(&mut self, proposal: Option<&str>) -> StoryPathSelection {
+        if self.state.call.is_some() {
+            return StoryPathSelection {
+                node_id: self.story_node_id.clone(),
+                used_default: false,
+                rejected_proposal: proposal.is_some(),
+            };
+        }
+        let selection = self.story.select_next(&self.story_node_id, proposal);
+        if self
+            .story
+            .node(&self.story_node_id)
+            .is_some_and(|node| !self.story.outgoing(&node.id).is_empty())
+        {
+            self.story_node_id = selection.node_id.clone();
+        }
+        selection
+    }
+
+    pub fn reset_run(&mut self) {
+        let printer_stress = self.state.printer_output.len() == STRESS_PRINTER_ENTRY_COUNT;
+        self.state = initial_state(printer_stress);
+        self.story_node_id = self.story.start_node_id().to_string();
+        self.state_revision = 0;
+        self.last_request = None;
+        self.last_response = None;
+        self.clock_started = Instant::now();
+        self.last_crank_rotation_timestamps = [0; 4];
+        self.voice_speaker_active = false;
+        self.last_ptt = false;
+        self.voice_peer = None;
+        self.voice_session_id = None;
+        self.voice_turn_id = None;
+        self.voice_state_revision = None;
+        self.voice_request_voice_id = None;
+        self.pending_voice_control = None;
     }
 
     pub fn apply_input_message(&mut self, message: InputMessage) -> StateMessage {
@@ -87,7 +162,38 @@ impl Backend {
         let ptt = input.held_controls.ptt;
         let crank_rotation_timestamps = input.crank_rotation_timestamps;
         let mut next_state = self.state.clone();
-        let transition = advance_call(&self.state, input, self.last_crank_rotation_timestamps);
+        let authored_call = if self.state.call.is_none() {
+            self.prepare_story_call(input.directory_digits, &input.cord_topology)
+        } else {
+            None
+        };
+        let mut transition = advance_call(
+            &self.state,
+            input,
+            self.last_crank_rotation_timestamps,
+            authored_call,
+        );
+        if transition.story_outcome.is_none()
+            && self
+                .state
+                .call
+                .as_ref()
+                .is_some_and(|call| call.phase == exchange_protocol::CallPhase::AwaitingRouting)
+            && input.cord_topology.is_empty()
+        {
+            transition.call = self.state.call.clone().map(|mut call| {
+                call.phase = exchange_protocol::CallPhase::Missed;
+                call
+            });
+            transition.line_lamps = lamps_for_call(transition.call.as_ref());
+            transition.story_outcome = Some(StoryOutcome::Missed);
+        }
+        if let Some(outcome) = transition.story_outcome {
+            self.advance_story_outcome(outcome);
+        }
+        if transition.story_event_complete {
+            self.settle_story_event();
+        }
         next_state.call = transition.call;
         next_state.line_lamps = transition.line_lamps;
         next_state.game_phase = transition.game_phase;
@@ -159,6 +265,97 @@ impl Backend {
             });
         }
         response
+    }
+
+    fn prepare_story_call(
+        &mut self,
+        digits: [u8; 4],
+        cord_topology: &[CordConnection],
+    ) -> Option<(u8, u8)> {
+        if matches!(
+            self.story.node(&self.story_node_id).map(|node| &node.kind),
+            Some(StoryNodeKind::RunStart { .. })
+        ) {
+            let caller_line = self.story_call_for_node(
+                self.story
+                    .outgoing(&self.story_node_id)
+                    .first()
+                    .map_or("", String::as_str),
+                digits,
+            );
+            if !cord_topology.is_empty()
+                && !caller_line.is_some_and(|(caller, _)| {
+                    has_exact_cords(
+                        cord_topology,
+                        &[(&PortId::Subscriber(caller), &PortId::Operator)],
+                    )
+                })
+            {
+                return None;
+            }
+            let selection = self.story.select_next(&self.story_node_id, None);
+            if !self.story_call_matches(selection.node_id.as_str(), digits) {
+                return None;
+            }
+            self.story_node_id = selection.node_id;
+        }
+        self.story_call_for_node(&self.story_node_id, digits)
+    }
+
+    fn story_call_for_node(&self, node_id: &str, digits: [u8; 4]) -> Option<(u8, u8)> {
+        let node = self.story.node(node_id)?;
+        let StoryNodeKind::ShiftCall { beat_id, .. } = &node.kind else {
+            return None;
+        };
+        let beat = self.story.story_beat(beat_id)?;
+        let premise = self.story.call_premise(&beat.call_premise_id)?;
+        let caller_line = self.line_for_listing(&premise.caller_line_id)?;
+        let callee_line = self.line_for_listing(&premise.callee_line_id)?;
+        let directory_id = directory_id(digits);
+        premise
+            .directory_ids
+            .contains(&directory_id)
+            .then_some((caller_line, callee_line))
+    }
+
+    fn story_call_matches(&self, node_id: &str, digits: [u8; 4]) -> bool {
+        self.story_call_for_node(node_id, digits).is_some()
+    }
+
+    fn line_for_listing(&self, listing_id: &str) -> Option<u8> {
+        self.story
+            .line_listing(listing_id)
+            .map(|listing| listing.line)
+    }
+
+    fn advance_story_outcome(&mut self, outcome: StoryOutcome) {
+        let Some(node) = self.story.node(&self.story_node_id) else {
+            return;
+        };
+        let StoryNodeKind::ShiftCall {
+            on_success,
+            on_missed,
+            on_invalid,
+            ..
+        } = &node.kind
+        else {
+            return;
+        };
+        self.story_node_id = match outcome {
+            StoryOutcome::Success => on_success.clone(),
+            StoryOutcome::Missed => on_missed.clone(),
+            StoryOutcome::Invalid => on_invalid.clone(),
+        };
+    }
+
+    fn settle_story_event(&mut self) {
+        if matches!(
+            self.story.node(&self.story_node_id).map(|node| &node.kind),
+            Some(StoryNodeKind::StoryEvent { .. })
+        ) {
+            let selection = self.story.select_next(&self.story_node_id, None);
+            self.story_node_id = selection.node_id;
+        }
     }
 
     pub fn apply_voice_datagram(&mut self, datagram: &[u8]) -> bool {
@@ -255,15 +452,25 @@ struct CallTransition {
     game_phase: GamePhase,
     shift: ShiftStatus,
     routing_receipt: Option<String>,
+    story_outcome: Option<StoryOutcome>,
+    story_event_complete: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum StoryOutcome {
+    Success,
+    Missed,
+    Invalid,
 }
 
 fn advance_call(
     state: &StateOutput,
     input: &InputState,
     previous_crank_rotation_timestamps: [u64; 4],
+    authored_call: Option<(u8, u8)>,
 ) -> CallTransition {
     if state.call.is_none() {
-        let Some((caller_line, callee)) = authored_call(input.directory_digits) else {
+        let Some((caller_line, callee)) = authored_call else {
             if input.cord_topology.is_empty() {
                 return CallTransition {
                     line_lamps: [false; 16],
@@ -271,6 +478,8 @@ fn advance_call(
                     game_phase: state.game_phase.clone(),
                     shift: state.shift.clone(),
                     routing_receipt: None,
+                    story_outcome: None,
+                    story_event_complete: false,
                 };
             }
             return unchanged_transition(state);
@@ -309,6 +518,8 @@ fn advance_call(
                 ..state.shift.clone()
             },
             routing_receipt: None,
+            story_outcome: None,
+            story_event_complete: false,
         };
     }
 
@@ -323,6 +534,9 @@ fn advance_call(
     let mut next_game_phase = state.game_phase.clone();
     let mut next_shift = state.shift.clone();
     let mut routing_receipt = None;
+    let mut story_outcome = None;
+    let story_event_complete = false;
+    let invalid_circuit = has_wrong_direct_circuit(&input.cord_topology, &caller, &callee);
 
     match call.phase {
         exchange_protocol::CallPhase::Waiting => {
@@ -350,7 +564,10 @@ fn advance_call(
             }
         }
         exchange_protocol::CallPhase::AwaitingRouting => {
-            if ring_generator {
+            if invalid_circuit {
+                next_call.phase = exchange_protocol::CallPhase::Misrouted;
+                story_outcome = Some(StoryOutcome::Invalid);
+            } else if ring_generator {
                 if !crank_satisfies_ringing(
                     input.crank_rotation_timestamps,
                     previous_crank_rotation_timestamps,
@@ -378,10 +595,14 @@ fn advance_call(
                 next_call.phase = exchange_protocol::CallPhase::Connected;
                 next_shift.completed_routings += 1;
                 next_game_phase = GamePhase::Shift;
+                story_outcome = Some(StoryOutcome::Success);
                 routing_receipt = Some(format!(
                     "ROUTING {} -> {}",
                     call.caller_line, call.requested_callee_line
                 ));
+            } else if invalid_circuit {
+                next_call.phase = exchange_protocol::CallPhase::Misrouted;
+                story_outcome = Some(StoryOutcome::Invalid);
             } else if ring_generator {
                 if crank_satisfies_ringing(
                     input.crank_rotation_timestamps,
@@ -410,6 +631,8 @@ fn advance_call(
                     game_phase: next_game_phase,
                     shift: next_shift,
                     routing_receipt: None,
+                    story_outcome: None,
+                    story_event_complete: true,
                 };
             } else {
                 return unchanged_transition(state);
@@ -423,13 +646,30 @@ fn advance_call(
                     game_phase: next_game_phase,
                     shift: next_shift,
                     routing_receipt: None,
+                    story_outcome: None,
+                    story_event_complete: true,
                 };
             }
             if !direct_circuit {
                 return unchanged_transition(state);
             }
         }
-        _ => {}
+        exchange_protocol::CallPhase::Missed
+        | exchange_protocol::CallPhase::Misrouted
+        | exchange_protocol::CallPhase::Failed => {
+            if input.cord_topology.is_empty() {
+                next_shift.active_call_count = 0;
+                return CallTransition {
+                    call: None,
+                    line_lamps: [false; 16],
+                    game_phase: next_game_phase,
+                    shift: next_shift,
+                    routing_receipt: None,
+                    story_outcome: None,
+                    story_event_complete: true,
+                };
+            }
+        }
     }
 
     next_shift.active_call_count =
@@ -440,6 +680,8 @@ fn advance_call(
         game_phase: next_game_phase,
         shift: next_shift,
         routing_receipt,
+        story_outcome,
+        story_event_complete,
     }
 }
 
@@ -450,6 +692,8 @@ fn unchanged_transition(state: &StateOutput) -> CallTransition {
         game_phase: state.game_phase.clone(),
         shift: state.shift.clone(),
         routing_receipt: None,
+        story_outcome: None,
+        story_event_complete: false,
     }
 }
 
@@ -494,11 +738,24 @@ fn has_port(cords: &[CordConnection], port: &PortId) -> bool {
         .any(|cord| &cord.first == port || &cord.second == port)
 }
 
-fn authored_call(digits: [u8; 4]) -> Option<(u8, u8)> {
-    let id = digits
+fn directory_id(digits: [u8; 4]) -> u16 {
+    digits
         .iter()
-        .fold(0_u16, |value, digit| value * 10 + *digit as u16);
-    (1..=5).contains(&id).then_some((0, id as u8))
+        .fold(0_u16, |value, digit| value * 10 + *digit as u16)
+}
+
+fn has_wrong_direct_circuit(cords: &[CordConnection], caller: &PortId, callee: &PortId) -> bool {
+    cords.len() == 1
+        && cords.iter().any(|cord| {
+            let other = if &cord.first == caller {
+                Some(&cord.second)
+            } else if &cord.second == caller {
+                Some(&cord.first)
+            } else {
+                None
+            };
+            matches!(other, Some(PortId::Subscriber(line)) if callee != &PortId::Subscriber(*line))
+        })
 }
 
 fn lamps_for_call(call: Option<&exchange_protocol::CallStatus>) -> [bool; 16] {

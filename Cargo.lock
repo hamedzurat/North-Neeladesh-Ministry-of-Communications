@@ -208,6 +208,7 @@ version = "0.1.0"
 dependencies = [
  "exchange-protocol",
  "serde_cbor",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
