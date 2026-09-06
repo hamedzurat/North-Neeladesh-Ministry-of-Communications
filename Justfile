@@ -33,8 +33,14 @@ protocol-harness:
 protocol-manual address="127.0.0.1:7878":
     cargo run -p exchange-protocol-harness -- --connect {{address}}
 
-voice-daemon backend_address="127.0.0.1:7879" capture_command="sh scripts/voice_smoke_capture.sh" stt_command="sh scripts/voice_smoke_stt.sh" dialogue_command="sh scripts/voice_smoke_dialogue.sh" tts_command="sh scripts/voice_smoke_tts.sh":
+voice-daemon backend_address="127.0.0.1:7879" playback_device="default" capture_command="uv run --project python --no-sync python -m voice_workers.capture" stt_command="uv run --project python --no-sync python -m voice_workers.stt" dialogue_command="uv run --project python --no-sync python -m voice_workers.dialogue" tts_command="uv run --project python --no-sync python -m voice_workers.tts":
+    NN_VOICE_BACKEND_ADDRESS={{backend_address}} NN_VOICE_PLAYBACK_COMMAND="aplay --quiet --device {{playback_device}} --format=S16_LE --rate=24000 --channels=1 --file-type=raw" NN_VOICE_CAPTURE_COMMAND="{{capture_command}}" NN_VOICE_STT_COMMAND="{{stt_command}}" NN_VOICE_DIALOGUE_COMMAND="{{dialogue_command}}" NN_VOICE_TTS_COMMAND="{{tts_command}}" cargo run -p exchange-voice-daemon
+
+voice-smoke backend_address="127.0.0.1:7879" capture_command="sh scripts/voice_smoke_capture.sh" stt_command="sh scripts/voice_smoke_stt.sh" dialogue_command="sh scripts/voice_smoke_dialogue.sh" tts_command="sh scripts/voice_smoke_tts.sh":
     NN_VOICE_BACKEND_ADDRESS={{backend_address}} NN_VOICE_CAPTURE_COMMAND="{{capture_command}}" NN_VOICE_STT_COMMAND="{{stt_command}}" NN_VOICE_DIALOGUE_COMMAND="{{dialogue_command}}" NN_VOICE_TTS_COMMAND="{{tts_command}}" cargo run -p exchange-voice-daemon
+
+voice-preflight:
+    uv run --project python --no-sync python -m voice_workers.preflight
 
 check: frontend-check
     cargo check --workspace

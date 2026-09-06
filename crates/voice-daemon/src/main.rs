@@ -7,9 +7,10 @@ use std::time::Duration;
 
 use exchange_protocol::{VOICE_PROTOCOL_VERSION, VoiceControl};
 use exchange_voice_daemon::{
-    CommandDialogueGenerator, CommandMicrophone, CommandSpec, CommandSpeechToText, KnowledgeRecord,
-    OperatorSession, Qwen3TtsCommand, RelationshipNote, ResponseContext, SessionPhase,
-    SubscriberProfile, UdpVoiceOutput,
+    CommandAudioPlayback, CommandDialogueGenerator, CommandMicrophone, CommandSpec,
+    CommandSpeechToText, KnowledgeRecord, OperatorSession, Qwen3TtsCommand, RelationshipNote,
+    ResponseContext, SessionPhase, SubscriberProfile, TeeVoiceOutput, UdpVoiceOutput, VoiceOutput,
+    request_worker_cancellation,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -18,8 +19,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let stt = command("NN_VOICE_STT_COMMAND")?;
     let dialogue = command("NN_VOICE_DIALOGUE_COMMAND")?;
     let tts = command("NN_VOICE_TTS_COMMAND")?;
-    let output = UdpVoiceOutput::connect(&backend, 1, 0)?;
-    let control_socket = output.try_clone()?;
+    let udp_output = UdpVoiceOutput::connect(&backend, 1, 0)?;
+    let control_socket = udp_output.try_clone()?;
+    let output: Box<dyn VoiceOutput> = match env::var("NN_VOICE_PLAYBACK_COMMAND") {
+        Ok(command) => Box::new(TeeVoiceOutput::new(
+            udp_output,
+            CommandAudioPlayback::new(CommandSpec::from_words(&command)?)?,
+        )),
+        Err(_) => Box::new(udp_output),
+    };
     let mut session = OperatorSession::new(
         1,
         0,
@@ -28,33 +36,59 @@ fn main() -> Result<(), Box<dyn Error>> {
         Box::new(CommandSpeechToText::new(stt)),
         Box::new(CommandDialogueGenerator::new(dialogue)),
         Box::new(Qwen3TtsCommand::new(tts)),
-        Box::new(output),
+        output,
     )?;
 
     session.announce_ready()?;
     println!("voice daemon ready; type ptt, release, or quit");
     let (commands, receiver) = mpsc::channel();
+    let (controls, control_receiver) = mpsc::channel();
+    let control_monitor = control_socket.try_clone()?;
+    thread::spawn(move || {
+        loop {
+            if let Ok(Some(control)) = control_monitor.try_receive_control()
+                && control.protocol_version == VOICE_PROTOCOL_VERSION
+                && control.session_id == 1
+            {
+                if control.control == VoiceControl::Cancel {
+                    request_worker_cancellation();
+                }
+                if controls.send(control).is_err() {
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    });
     thread::spawn(move || {
         for line in io::stdin().lock().lines() {
+            if let Ok(line) = &line
+                && line.trim() == "cancel"
+            {
+                request_worker_cancellation();
+            }
             if commands.send(line).is_err() {
                 break;
             }
         }
     });
     loop {
-        if let Some(control) = control_socket.try_receive_control()? {
-            if control.protocol_version != VOICE_PROTOCOL_VERSION || control.session_id != 1 {
-                continue;
-            }
+        if let Ok(control) = control_receiver.try_recv()
+            && control.protocol_version == VOICE_PROTOCOL_VERSION
+            && control.session_id == 1
+        {
             session.set_state_revision(control.state_revision);
             match control.control {
                 VoiceControl::StartPtt => session.start_ptt()?,
                 VoiceControl::ReleasePtt => {
-                    let response = session.release_ptt()?;
-                    println!(
-                        "transcript complete; subscriber response: {}",
-                        response.dialogue
-                    );
+                    match session.release_ptt() {
+                        Ok(response) => println!(
+                            "transcript complete; subscriber response: {}",
+                            response.dialogue
+                        ),
+                        Err(error) if error.code == "worker_cancelled" => break,
+                        Err(error) => return Err(error.into()),
+                    }
                     break;
                 }
                 VoiceControl::Cancel => {
@@ -67,11 +101,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             Ok(line) => match line?.trim() {
                 "ptt" => session.start_ptt()?,
                 "release" => {
-                    let response = session.release_ptt()?;
-                    println!(
-                        "transcript complete; subscriber response: {}",
-                        response.dialogue
-                    );
+                    match session.release_ptt() {
+                        Ok(response) => println!(
+                            "transcript complete; subscriber response: {}",
+                            response.dialogue
+                        ),
+                        Err(error) if error.code == "worker_cancelled" => break,
+                        Err(error) => return Err(error.into()),
+                    }
+                    break;
+                }
+                "cancel" => {
+                    session.cancel()?;
                     break;
                 }
                 "quit" => break,
