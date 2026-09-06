@@ -12,7 +12,7 @@ The daemon never advances Routing or Story Graph state. The backend remains the 
 
 ## Worker contracts
 
-`just voice-daemon` uses the checked-in real worker adapters by default. They run from the `python/` uv project and invoke programs and model assets already installed on the target laptop; `--no-sync` prevents the daemon from installing packages or downloading a model at runtime. Run `uv sync --project python` once while provisioning the laptop, then run `just voice-preflight` before the first session.
+`just voice-daemon` uses the checked-in real worker adapters by default. Audio capture and playback use the Rust `cpal` audio library; STT and dialogue invoke the pacman-installed whisper.cpp and llama.cpp runtimes. The Python workers run from the `python/` uv project; `--no-sync` prevents the daemon from installing packages or downloading a model at runtime. Install the runtimes with `sudo pacman -S llama-cpp ggml-cuda whisper-cpp`, provision the model assets with `just voice-setup`, then run `just voice-preflight` before the first session.
 
 The smoke workers remain available for protocol-only CI and hardware-free development:
 
@@ -22,31 +22,35 @@ just voice-smoke
 
 The real path requires these local assets and dependencies:
 
-- ALSA `arecord` and `aplay`, with `NN_VOICE_CAPTURE_DEVICE` set to the configured microphone device when `default` is not correct and `playback_device=...` passed to `just voice-daemon` when the playback device is not `default`;
-- `whisper.cpp` `whisper-cli` and an English `base.en` model in `NN_WHISPER_MODEL`;
-- `llama.cpp` `llama-cli` and the accepted `Qwen3-4B-Instruct-2507` `Q4_K_M` GGUF model in `NN_QWEN3_MODEL`;
-- the `python/pyproject.toml` uv environment, containing `torch` and the official `qwen-tts` package, with a local `Qwen3-TTS` 1.7B CustomVoice model directory in `NN_QWEN3_TTS_MODEL`;
-- a JSON `NN_QWEN3_VOICE_MAP` mapping Subscriber voice IDs to the installed Qwen3-TTS CustomVoice speakers. The demo's default `taren` ID maps to `Ryan`.
+- a default audio input and output device exposed by the laptop audio stack;
+- the pacman-installed whisper.cpp `whisper-cli` and llama.cpp `llama-cli` runtimes;
+- the `python/pyproject.toml` uv environment, containing `torch`, `huggingface-hub`, and the official `qwen-tts` package;
+- the model assets downloaded by `just voice-setup` into `~/.local/share/north-neeladesh/models`.
 
-The target laptop profile is Linux with the local microphone exposed through ALSA, roughly 16 GiB of system memory, and an NVIDIA GPU with about 8 GiB of VRAM. Keep Qwen3-4B resident on the GPU when possible; select the TTS device explicitly with `NN_QWEN3_TTS_DEVICE` (default `cuda:0`), or use `cpu` only when the target laptop has been measured to support the latency and memory cost. A Raspberry Pi deployment uses the same worker stdin/stdout and backend UDP contracts with ARM-native local binaries and `NN_QWEN3_TTS_DEVICE=cpu`; its model fit and latency must be measured separately. `NN_LLAMA_EXTRA_ARGS`, `NN_WHISPER_EXTRA_ARGS`, and `NN_VOICE_WORKER_TIMEOUT` allow a pinned local runtime to provide device/thread settings without changing the daemon contract.
+The target laptop profile is Linux with a local system audio device, roughly 16 GiB of system memory, and an NVIDIA GPU with about 8 GiB of VRAM. The dialogue worker defaults to a 4,096-token llama.cpp context, GPU offload, and no warmup; override these with `NN_LLAMA_EXTRA_ARGS` only when needed. Keep Qwen3-4B and Qwen3-TTS resident on the GPU when possible; the TTS worker is persistent for real daemon runs and uses PyTorch SDPA, which dispatches to the native CUDA flash-attention kernel when supported. The third-party `flash-attn` package is an optional extra because its released wheels do not currently match this Torch 2.14/CUDA 13 environment. Select the TTS device explicitly with `NN_QWEN3_TTS_DEVICE` (default `cuda:0`). The current laptop run is a local debug profile. The target Raspberry Pi deployment will run only the cpal audio edge: microphone capture and speaker playback stay on the Pi, while the backend on this laptop coordinates STT, dialogue, and Qwen3-TTS over the network. It will not require the Qwen model or Python ML environment on the Pi. `NN_WHISPER_EXTRA_ARGS` and `NN_VOICE_WORKER_TIMEOUT` allow a pinned local runtime to provide device/thread settings without changing the daemon contract.
 
-Example offline launch configuration:
+Model setup and offline launch:
 
 ```sh
-export NN_WHISPER_MODEL=/opt/north-neeladesh/models/ggml-base.en.bin
-export NN_QWEN3_MODEL=/opt/north-neeladesh/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
-export NN_QWEN3_TTS_MODEL=/opt/north-neeladesh/models/Qwen3-TTS-12Hz-1.7B-CustomVoice
-export NN_QWEN3_VOICE_MAP='{"taren":"Ryan"}'
-export NN_QWEN3_TTS_DEVICE=cuda:0
+just voice-setup
+just voice-preflight
 just voice-daemon
 ```
 
-`python/voice_workers/` contains the real adapters. They are launched as `python -m voice_workers.<worker>` inside the uv environment. The real daemon also tees each synthesized PCM packet to local ALSA `aplay`, so the manual path is audible while preserving the existing RTP/L16 UDP path. Their required stdin/stdout contracts are:
+The paths above are automatic defaults. `NN_VOICE_MODEL_ROOT`, `NN_WHISPER_MODEL`,
+`NN_QWEN3_MODEL`, and `NN_QWEN3_TTS_MODEL` remain optional overrides for a different
+installation. Each `SubscriberProfile.voice_id` is the Qwen3-TTS CustomVoice speaker
+name directly, such as `Ryan` or `Vivian`; no voice mapping environment variable is
+used. Until authored Subscriber profiles are wired into the backend, development runs
+select a supported speaker randomly for each request so the voice catalogue can be
+tested. `just backend` sets `NN_VOICE_RANDOM_SPEAKER=1`; set it to `0` to pin `Ryan`.
 
-- `voice_workers.capture`: starts `arecord` for the configured device and writes bounded signed 16-bit little-endian mono PCM at 16 kHz. PTT release or cancellation terminates it; the 15-second default maximum can be lowered with `NN_VOICE_MAX_UTTERANCE_SECONDS`.
+`python/voice_workers/` contains the real model adapters. They are launched as `python -m voice_workers.<worker>` inside the uv environment. The backend includes the selected Qwen3-TTS CustomVoice `voice_id` in each PTT control message; the daemon applies it to the active Subscriber before capture. The real daemon sends each synthesized PCM packet both to the backend RTP/L16 boundary and to the local `cpal` output stream. Their required stdin/stdout contracts are:
+
+- the default Rust capture path records from the system audio input, converts it to bounded signed 16-bit mono PCM at 16 kHz, and resamples when the device uses another native rate;
 - `voice_workers.stt`: writes the supplied PCM to a temporary WAV, invokes local whisper.cpp `base.en`, and writes one final UTF-8 transcript.
 - `voice_workers.dialogue`: sends only the bounded Response Context and transcript to local Qwen3-4B-Instruct-2507 Q4_K_M through `llama-cli`, requests a dialogue-only JSON object, and rejects malformed or overlong output. It cannot emit a Story Event, Routing, or state mutation.
-- `voice_workers.tts`: accepts only the Qwen3-TTS 1.7B request contract, maps the Subscriber voice ID to an explicitly configured CustomVoice speaker, and writes signed 16-bit little-endian mono PCM at 24 kHz. It has no fallback engine.
+- `voice_workers.tts`: accepts only the Qwen3-TTS 1.7B request contract, uses the Subscriber profile's Qwen3-TTS CustomVoice speaker, and writes framed signed 16-bit little-endian mono PCM at 24 kHz to the persistent daemon worker. It synthesizes sentence-sized chunks and flushes each completed chunk immediately. Qwen's current API simulates incremental text input but does not expose true decoder-frame streaming.
 
 The TTS adapter is intentionally named and validated as Qwen3-TTS 1.7B. Pocket TTS, Piper, and automatic fallback engines are not part of this daemon.
 
@@ -61,6 +65,8 @@ Each provider command has a bounded 30-second deadline. The Rust adapter bounds 
 5. Release PTT. The daemon reports `transcribing`, `generating_response`, `synthesizing`, `playing`, and `completed`, while sending RTP/L16 audio to the backend UDP boundary.
 6. Confirm the transcript and response in the daemon output, `speaker_active` in the next backend snapshot, and no Routing receipt was created by voice processing.
 
-For an isolated protocol test, type `ptt` and `release` on its stdin while using `just voice-smoke`. The real path should be manually accepted with a live microphone and the local model assets; it must produce a non-fixed transcript, a Subscriber-specific response, and Qwen3-TTS audio.
+With no microphone connected, use `just voice-demo` instead of `just voice-daemon`. It uses the synthetic capture and transcript only, but runs the real local Qwen3 dialogue and TTS workers and plays the result through the local audio library. This verifies frontend PTT, backend control forwarding, dialogue generation, streamed sentence playback, and audio output without pretending that a microphone exists.
+
+For an isolated protocol test, type `ptt` and `release` on its stdin while using `just voice-smoke`. Once a microphone is connected, switch back to `just voice-daemon`; the capture path will use the system default input device.
 
 The backend UDP port can be changed with `--voice-bind`; pass the matching address as the first positional argument to `just voice-daemon`, for example `just voice-daemon 127.0.0.1:8879`.

@@ -6,7 +6,8 @@ use thiserror::Error;
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_FRAME_SIZE: usize = 1_048_576;
-pub const VOICE_PROTOCOL_VERSION: u16 = 1;
+pub const VOICE_PROTOCOL_VERSION: u16 = 2;
+pub const VOICE_INPUT_SAMPLE_RATE: u32 = 16_000;
 pub const VOICE_AUDIO_SAMPLE_RATE: u32 = 24_000;
 pub const VOICE_AUDIO_PAYLOAD_TYPE: u8 = 96;
 pub const VOICE_AUDIO_PACKET_SAMPLES: usize = 480;
@@ -299,6 +300,7 @@ pub struct VoiceControlMessage {
     pub session_id: u64,
     pub turn_id: u64,
     pub state_revision: u64,
+    pub voice_id: String,
     pub control: VoiceControl,
 }
 
@@ -557,6 +559,7 @@ mod tests {
             session_id: 12,
             turn_id: 3,
             state_revision: 8,
+            voice_id: "Ryan".to_string(),
             control: VoiceControl::ReleasePtt,
         };
 

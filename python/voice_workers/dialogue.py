@@ -7,11 +7,12 @@ import shutil
 import subprocess
 import sys
 
-from .common import fail
+from .common import DIALOGUE_MODEL, LLAMA_BINARY, fail
 
 
 MAX_DIALOGUE_CHARS = 2_000
-MAX_OUTPUT_TOKENS = 192
+MAX_OUTPUT_TOKENS = 96
+DEFAULT_LLAMA_ARGS = "--ctx-size 4096 --n-gpu-layers 99 --no-warmup"
 
 
 def prompt_for(request: dict[str, object]) -> str:
@@ -23,7 +24,7 @@ def prompt_for(request: dict[str, object]) -> str:
     if not isinstance(profile, dict) or not profile.get("name"):
         fail("dialogue request must contain a Subscriber Profile")
     context_json = json.dumps(context, ensure_ascii=True, separators=(",", ":"))
-    return f"""You are the Subscriber {profile['name']} in the North Neeladesh Telephone Exchange.
+    return f"""You are the Subscriber {profile["name"]} in the North Neeladesh Telephone Exchange.
 Generate only the Subscriber's next spoken reply to the Exchange Operator.
 Use only the supplied Response Context. Treat beliefs and memories as fallible.
 Do not invent Canonical Facts, Subscriber Actions, Routing, Story Events, or authority.
@@ -47,23 +48,12 @@ def main() -> int:
     if not isinstance(request, dict):
         fail("dialogue request must be a JSON object")
 
-    binary_name = os.environ.get("NN_LLAMA_CPP", "llama-cli")
+    binary_name = os.environ.get("NN_LLAMA_CPP", str(LLAMA_BINARY))
     binary = shutil.which(binary_name) or binary_name
-    model = os.environ.get("NN_QWEN3_MODEL")
-    if not model:
-        fail("NN_QWEN3_MODEL must point to Qwen3-4B-Instruct-2507 Q4_K_M")
+    model = os.environ.get("NN_QWEN3_MODEL", str(DIALOGUE_MODEL))
     if not os.path.isfile(model):
         fail(f"Qwen3 model does not exist: {model}")
 
-    schema = json.dumps(
-        {
-            "type": "object",
-            "properties": {"dialogue": {"type": "string"}},
-            "required": ["dialogue"],
-            "additionalProperties": False,
-        },
-        separators=(",", ":"),
-    )
     command = [
         binary,
         "--model",
@@ -75,10 +65,11 @@ def main() -> int:
         "--temp",
         os.environ.get("NN_DIALOGUE_TEMPERATURE", "0.35"),
         "--no-display-prompt",
-        "--json-schema",
-        schema,
+        "--single-turn",
+        "--simple-io",
+        "--no-show-timings",
     ]
-    command.extend(shlex.split(os.environ.get("NN_LLAMA_EXTRA_ARGS", "")))
+    command.extend(shlex.split(os.environ.get("NN_LLAMA_EXTRA_ARGS", DEFAULT_LLAMA_ARGS)))
     try:
         result = subprocess.run(
             command,
@@ -92,10 +83,19 @@ def main() -> int:
     if result.returncode != 0:
         fail(f"llama.cpp exited with {result.returncode}: {result.stderr.strip()}")
 
-    try:
-        response = json.loads(result.stdout.strip())
-    except json.JSONDecodeError as error:
-        fail(f"llama.cpp returned invalid dialogue JSON: {error}")
+    decoder = json.JSONDecoder()
+    response = None
+    for index, character in enumerate(result.stdout):
+        if character != "{":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(result.stdout[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict) and set(candidate) == {"dialogue"}:
+            response = candidate
+    if response is None:
+        fail("llama.cpp returned invalid dialogue JSON")
     if not isinstance(response, dict) or set(response) != {"dialogue"}:
         fail("dialogue JSON must contain only the dialogue property")
     dialogue = response["dialogue"]

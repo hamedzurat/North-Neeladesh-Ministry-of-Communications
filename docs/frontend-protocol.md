@@ -113,7 +113,7 @@ The Odin frontend probes the backend before creating a window. If the backend la
 
 The separate voice daemon uses the backend's UDP voice socket, normally `127.0.0.1:7879`. Status datagrams begin with tag `0x01` and contain a CBOR `VoiceStatusMessage`. PTT control datagrams begin with tag `0x02` and contain a CBOR `VoiceControlMessage`. Synthesized audio is RTP version 2 with the `L16/24000/1` payload type `96`; samples are signed 16-bit network-order PCM. The daemon announces `ready`, then the backend forwards accepted PTT start and release edges to the daemon.
 
-Voice status and audio do not advance the authoritative Routing state. A failed worker produces a backend diagnostic and no Story Event or Routing.
+Voice status and audio do not advance the authoritative Routing state. Each backend PTT control includes the selected Subscriber voice ID so the daemon does not choose a voice independently. A failed worker produces a backend diagnostic and no Story Event or Routing.
 
 Manual verification:
 
