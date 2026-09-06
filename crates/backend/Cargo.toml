@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 exchange-protocol = { path = "../protocol" }
+thiserror.workspace = true
 
 [[bin]]
 name = "exchange-backend"
