@@ -1,6 +1,6 @@
 use std::env;
 use std::io::{self, ErrorKind};
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
@@ -8,7 +8,8 @@ use std::time::Instant;
 use exchange_protocol::{
     BackendDiagnostic, ClockState, CordConnection, DirectoryPage, GamePhase, InputMessage,
     InputState, OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, ShiftPhase,
-    ShiftStatus, StateMessage, StateOutput, TuningState, read_frame, write_frame,
+    ShiftStatus, StateMessage, StateOutput, TuningState, VoiceControl, VoiceControlMessage,
+    VoiceStatus, decode_voice_status, encode_voice_control, read_frame, write_frame,
 };
 
 const MAX_FAULTS: usize = 16;
@@ -22,6 +23,13 @@ pub struct Backend {
     last_response: Option<StateMessage>,
     clock_started: Instant,
     last_crank_rotation_timestamps: [u64; 4],
+    voice_speaker_active: bool,
+    last_ptt: bool,
+    voice_peer: Option<SocketAddr>,
+    voice_session_id: Option<u64>,
+    voice_turn_id: Option<u64>,
+    voice_state_revision: Option<u64>,
+    pending_voice_control: Option<VoiceControlMessage>,
 }
 
 impl Backend {
@@ -37,6 +45,13 @@ impl Backend {
             last_response: None,
             clock_started: Instant::now(),
             last_crank_rotation_timestamps: [0; 4],
+            voice_speaker_active: false,
+            last_ptt: false,
+            voice_peer: None,
+            voice_session_id: None,
+            voice_turn_id: None,
+            voice_state_revision: None,
+            pending_voice_control: None,
         }
     }
 
@@ -64,6 +79,7 @@ impl Backend {
         }
 
         let input = &message.input;
+        let ptt = input.held_controls.ptt;
         let crank_rotation_timestamps = input.crank_rotation_timestamps;
         let mut next_state = self.state.clone();
         let transition = advance_call(&self.state, input, self.last_crank_rotation_timestamps);
@@ -91,7 +107,7 @@ impl Backend {
             line_lamps: next_state.line_lamps,
             game_phase: next_state.game_phase,
             clock: next_state.clock,
-            speaker_active: speaker_is_active(input),
+            speaker_active: speaker_is_active(input) || self.voice_speaker_active,
             tuning: input.tuning.clone(),
             directory_pages: directory_pages(input.directory_digits),
             printer_output: next_state.printer_output,
@@ -112,7 +128,92 @@ impl Backend {
         };
         self.last_request = Some(message);
         self.last_response = Some(response.clone());
+        if ptt != self.last_ptt {
+            self.last_ptt = ptt;
+            self.pending_voice_control = Some(VoiceControlMessage {
+                protocol_version: exchange_protocol::VOICE_PROTOCOL_VERSION,
+                session_id: 1,
+                turn_id: 1,
+                state_revision: self.state_revision,
+                control: if ptt {
+                    VoiceControl::StartPtt
+                } else {
+                    VoiceControl::ReleasePtt
+                },
+            });
+        }
         response
+    }
+
+    pub fn apply_voice_datagram(&mut self, datagram: &[u8]) -> bool {
+        self.apply_voice_datagram_from(datagram, None)
+    }
+
+    pub fn apply_voice_datagram_from(&mut self, datagram: &[u8], peer: Option<SocketAddr>) -> bool {
+        if let Ok(message) = decode_voice_status(datagram) {
+            if message.protocol_version != exchange_protocol::VOICE_PROTOCOL_VERSION {
+                return false;
+            }
+            if let Some(expected_peer) = self.voice_peer
+                && let Some(peer) = peer
+                && expected_peer != peer
+            {
+                return false;
+            }
+            if let Some(expected_session_id) = self.voice_session_id
+                && expected_session_id != message.session_id
+            {
+                return false;
+            }
+            if let Some(expected_turn_id) = self.voice_turn_id
+                && expected_turn_id != message.turn_id
+            {
+                return false;
+            }
+            if let Some(previous_revision) = self.voice_state_revision
+                && message.state_revision < previous_revision
+            {
+                return false;
+            }
+            if message.status == VoiceStatus::Ready {
+                if let Some(peer) = peer {
+                    self.voice_peer = Some(peer);
+                }
+                self.voice_session_id = Some(message.session_id);
+                self.voice_turn_id = Some(message.turn_id);
+            } else if self.voice_session_id.is_none() {
+                return false;
+            }
+            self.voice_state_revision = Some(
+                self.voice_state_revision
+                    .unwrap_or(message.state_revision)
+                    .max(message.state_revision),
+            );
+            self.voice_speaker_active = matches!(message.status, VoiceStatus::Playing);
+            if message.status == VoiceStatus::Failed {
+                self.state.debug.messages.push(BackendDiagnostic {
+                    code: "voice_failed".to_string(),
+                    message: message.error.map_or_else(
+                        || "voice daemon failed without details".to_string(),
+                        |error| format!("{}: {}", error.code, error.message),
+                    ),
+                });
+                if self.state.debug.messages.len() > MAX_FAULTS {
+                    self.state.debug.messages.remove(0);
+                }
+            }
+            return true;
+        }
+
+        if peer.is_some() && self.voice_peer != peer {
+            return false;
+        }
+        self.voice_session_id.is_some() && exchange_protocol::RtpL16Packet::decode(datagram).is_ok()
+    }
+
+    pub fn take_voice_control(&mut self) -> Option<(VoiceControlMessage, SocketAddr)> {
+        let peer = self.voice_peer?;
+        Some((self.pending_voice_control.take()?, peer))
     }
 }
 
@@ -412,14 +513,27 @@ fn has_exact_cords(cords: &[CordConnection], expected: &[(&PortId, &PortId)]) ->
 }
 
 pub fn serve(listener: TcpListener) -> io::Result<()> {
+    serve_with_voice(listener, None)
+}
+
+pub fn serve_with_voice(listener: TcpListener, voice_socket: Option<UdpSocket>) -> io::Result<()> {
     let backend = Arc::new(Mutex::new(Backend::new_with_printer_stress(
         printer_stress_enabled(),
     )));
+    let voice_socket = voice_socket.map(Arc::new);
+    if let Some(voice_socket) = &voice_socket {
+        let backend = Arc::clone(&backend);
+        let socket = voice_socket
+            .try_clone()
+            .map_err(|error| io::Error::other(format!("voice socket clone failed: {error}")))?;
+        thread::spawn(move || serve_voice(socket, backend));
+    }
     for connection in listener.incoming() {
         let stream = connection?;
         let backend = Arc::clone(&backend);
+        let voice_socket = voice_socket.as_ref().map(Arc::clone);
         thread::spawn(move || {
-            if let Err(error) = handle_connection(stream, backend) {
+            if let Err(error) = handle_connection_with_voice(stream, backend, voice_socket) {
                 eprintln!("frontend connection ended: {error}");
             }
         });
@@ -427,7 +541,26 @@ pub fn serve(listener: TcpListener) -> io::Result<()> {
     Ok(())
 }
 
-pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
+pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
+    let mut datagram = [0_u8; 65_535];
+    loop {
+        let (length, peer) = socket.recv_from(&mut datagram)?;
+        let mut backend = backend
+            .lock()
+            .map_err(|_| io::Error::other("backend state lock poisoned"))?;
+        backend.apply_voice_datagram_from(&datagram[..length], Some(peer));
+    }
+}
+
+pub fn handle_connection(stream: TcpStream, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
+    handle_connection_with_voice(stream, backend, None)
+}
+
+fn handle_connection_with_voice(
+    mut stream: TcpStream,
+    backend: Arc<Mutex<Backend>>,
+    voice_socket: Option<Arc<UdpSocket>>,
+) -> io::Result<()> {
     loop {
         let message = match read_frame(&mut stream) {
             Ok(message) => message,
@@ -441,10 +574,19 @@ pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) ->
             }
             Err(error) => return Err(io::Error::new(ErrorKind::InvalidData, error)),
         };
-        let response = backend
-            .lock()
-            .map_err(|_| io::Error::other("backend state lock poisoned"))?
-            .apply_input_message(message);
+        let (response, voice_control) = {
+            let mut backend = backend
+                .lock()
+                .map_err(|_| io::Error::other("backend state lock poisoned"))?;
+            let response = backend.apply_input_message(message);
+            (response, backend.take_voice_control())
+        };
+        if let (Some(socket), Some((control, peer))) = (voice_socket.as_ref(), voice_control) {
+            let datagram = encode_voice_control(&control).map_err(|error| {
+                io::Error::other(format!("voice control encode failed: {error}"))
+            })?;
+            socket.send_to(&datagram, peer)?;
+        }
         write_frame(&mut stream, &response)
             .map_err(|error| io::Error::new(ErrorKind::BrokenPipe, error))?;
     }

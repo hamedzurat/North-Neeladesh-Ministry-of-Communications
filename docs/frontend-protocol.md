@@ -109,6 +109,12 @@ The harness verifies string ports, timestamped ringing, routing, arbitrary physi
 
 The Odin frontend probes the backend before creating a window. If the backend later disconnects, the window stays open with an offline status and retries the connection.
 
+## Voice boundary
+
+The separate voice daemon uses the backend's UDP voice socket, normally `127.0.0.1:7879`. Status datagrams begin with tag `0x01` and contain a CBOR `VoiceStatusMessage`. PTT control datagrams begin with tag `0x02` and contain a CBOR `VoiceControlMessage`. Synthesized audio is RTP version 2 with the `L16/24000/1` payload type `96`; samples are signed 16-bit network-order PCM. The daemon announces `ready`, then the backend forwards accepted PTT start and release edges to the daemon.
+
+Voice status and audio do not advance the authoritative Routing state. A failed worker produces a backend diagnostic and no Story Event or Routing.
+
 Manual verification:
 
 1. Run `just backend` in one terminal.
@@ -116,3 +122,5 @@ Manual verification:
 3. Leave the initial directory selection at `0001`, connect Subscriber 0 to the Operator Jack, and verify the call enters the Operator Session.
 4. Connect Subscriber 1 to the Ring Generator, crank until the backend reports Ringing, then connect Subscriber 0 directly to Subscriber 1 and verify the printer records the Routing.
 5. Change the Directory Terminal digits and verify the e-paper pages update from the backend.
+
+For one local voice session, run `just voice-daemon` after starting `just backend`, with the four worker environment variables described in `docs/voice-daemon.md`. The daemon accepts `ptt` and `release` on stdin as a manual fallback for testing the same session boundary used by backend PTT controls.

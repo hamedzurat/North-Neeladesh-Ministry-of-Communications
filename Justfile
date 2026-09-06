@@ -1,14 +1,14 @@
-backend address="127.0.0.1:7878":
-    cargo run -p exchange-backend -- --bind {{address}}
+backend address="127.0.0.1:7878" voice_address="127.0.0.1:7879":
+    cargo run -p exchange-backend -- --bind {{address}} --voice-bind {{voice_address}}
 
-backend-trace address="127.0.0.1:7878":
-    NN_BACKEND_TRACE=1 cargo run -p exchange-backend -- --bind {{address}}
+backend-trace address="127.0.0.1:7878" voice_address="127.0.0.1:7879":
+    NN_BACKEND_TRACE=1 cargo run -p exchange-backend -- --bind {{address}} --voice-bind {{voice_address}}
 
-backend-stress address="127.0.0.1:7878":
-    NN_BACKEND_PRINTER_STRESS=1 cargo run -p exchange-backend -- --bind {{address}}
+backend-stress address="127.0.0.1:7878" voice_address="127.0.0.1:7879":
+    NN_BACKEND_PRINTER_STRESS=1 cargo run -p exchange-backend -- --bind {{address}} --voice-bind {{voice_address}}
 
-backend-debug address="127.0.0.1:7878":
-    NN_BACKEND_PRINTER_STRESS=1 NN_BACKEND_TRACE=1 cargo run -p exchange-backend -- --bind {{address}}
+backend-debug address="127.0.0.1:7878" voice_address="127.0.0.1:7879":
+    NN_BACKEND_PRINTER_STRESS=1 NN_BACKEND_TRACE=1 cargo run -p exchange-backend -- --bind {{address}} --voice-bind {{voice_address}}
 
 frontend-check:
     /bin/odin check frontend
@@ -32,6 +32,9 @@ protocol-harness:
 
 protocol-manual address="127.0.0.1:7878":
     cargo run -p exchange-protocol-harness -- --connect {{address}}
+
+voice-daemon backend_address="127.0.0.1:7879":
+    NN_VOICE_BACKEND_ADDRESS={{backend_address}} cargo run -p exchange-voice-daemon
 
 check: frontend-check
     cargo check --workspace

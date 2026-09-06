@@ -6,6 +6,10 @@ use thiserror::Error;
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_FRAME_SIZE: usize = 1_048_576;
+pub const VOICE_PROTOCOL_VERSION: u16 = 1;
+pub const VOICE_AUDIO_SAMPLE_RATE: u32 = 24_000;
+pub const VOICE_AUDIO_PAYLOAD_TYPE: u8 = 96;
+pub const VOICE_AUDIO_PACKET_SAMPLES: usize = 480;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PortId {
@@ -253,6 +257,184 @@ pub struct StateMessage {
     pub output: StateOutput,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceStatus {
+    Ready,
+    Listening,
+    Transcribing,
+    GeneratingResponse,
+    Synthesizing,
+    Playing,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceStatusMessage {
+    pub protocol_version: u16,
+    pub session_id: u64,
+    pub turn_id: u64,
+    pub state_revision: u64,
+    pub status: VoiceStatus,
+    pub transcript: Option<String>,
+    pub response_text: Option<String>,
+    pub error: Option<ProtocolError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceControl {
+    StartPtt,
+    ReleasePtt,
+    Cancel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceControlMessage {
+    pub protocol_version: u16,
+    pub session_id: u64,
+    pub turn_id: u64,
+    pub state_revision: u64,
+    pub control: VoiceControl,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RtpL16Packet {
+    pub marker: bool,
+    pub sequence: u16,
+    pub timestamp: u32,
+    pub ssrc: u32,
+    pub samples: Vec<i16>,
+}
+
+#[derive(Debug, Error)]
+pub enum VoiceDatagramError {
+    #[error("voice datagram is empty")]
+    Empty,
+    #[error("unsupported voice datagram tag {0}")]
+    UnknownTag(u8),
+    #[error("voice status CBOR error: {0}")]
+    Cbor(#[source] serde_cbor::Error),
+    #[error("RTP packet is too short")]
+    RtpTooShort,
+    #[error("RTP packet has unsupported version {0}")]
+    RtpVersion(u8),
+    #[error("RTP packet has unsupported payload type {0}")]
+    RtpPayloadType(u8),
+    #[error("RTP packet has an invalid CSRC or extension layout")]
+    RtpLayout,
+    #[error("RTP L16 payload must contain an even number of bytes")]
+    RtpOddPayload,
+}
+
+pub const VOICE_STATUS_TAG: u8 = 0x01;
+pub const VOICE_CONTROL_TAG: u8 = 0x02;
+
+pub fn encode_voice_status(message: &VoiceStatusMessage) -> Result<Vec<u8>, serde_cbor::Error> {
+    let mut datagram = vec![VOICE_STATUS_TAG];
+    datagram.extend(serde_cbor::to_vec(message)?);
+    Ok(datagram)
+}
+
+pub fn decode_voice_status(datagram: &[u8]) -> Result<VoiceStatusMessage, VoiceDatagramError> {
+    if datagram.is_empty() {
+        return Err(VoiceDatagramError::Empty);
+    }
+    if datagram[0] != VOICE_STATUS_TAG {
+        return Err(VoiceDatagramError::UnknownTag(datagram[0]));
+    }
+    serde_cbor::from_slice(&datagram[1..]).map_err(VoiceDatagramError::Cbor)
+}
+
+pub fn encode_voice_control(message: &VoiceControlMessage) -> Result<Vec<u8>, serde_cbor::Error> {
+    let mut datagram = vec![VOICE_CONTROL_TAG];
+    datagram.extend(serde_cbor::to_vec(message)?);
+    Ok(datagram)
+}
+
+pub fn decode_voice_control(datagram: &[u8]) -> Result<VoiceControlMessage, VoiceDatagramError> {
+    if datagram.is_empty() {
+        return Err(VoiceDatagramError::Empty);
+    }
+    if datagram[0] != VOICE_CONTROL_TAG {
+        return Err(VoiceDatagramError::UnknownTag(datagram[0]));
+    }
+    serde_cbor::from_slice(&datagram[1..]).map_err(VoiceDatagramError::Cbor)
+}
+
+impl RtpL16Packet {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut packet = Vec::with_capacity(12 + self.samples.len() * 2);
+        packet.push(0x80);
+        packet.push((u8::from(self.marker) << 7) | VOICE_AUDIO_PAYLOAD_TYPE);
+        packet.extend(self.sequence.to_be_bytes());
+        packet.extend(self.timestamp.to_be_bytes());
+        packet.extend(self.ssrc.to_be_bytes());
+        for sample in &self.samples {
+            packet.extend(sample.to_be_bytes());
+        }
+        packet
+    }
+
+    pub fn decode(packet: &[u8]) -> Result<Self, VoiceDatagramError> {
+        if packet.len() < 12 {
+            return Err(VoiceDatagramError::RtpTooShort);
+        }
+        let version = packet[0] >> 6;
+        if version != 2 {
+            return Err(VoiceDatagramError::RtpVersion(version));
+        }
+        let csrc_count = usize::from(packet[0] & 0x0f);
+        if packet[1] & 0x7f != VOICE_AUDIO_PAYLOAD_TYPE {
+            return Err(VoiceDatagramError::RtpPayloadType(packet[1] & 0x7f));
+        }
+        let header_len = 12 + csrc_count * 4;
+        if packet.len() < header_len {
+            return Err(VoiceDatagramError::RtpLayout);
+        }
+        let mut payload_offset = header_len;
+        if packet[0] & 0x10 != 0 {
+            if packet.len() < payload_offset + 4 {
+                return Err(VoiceDatagramError::RtpLayout);
+            }
+            let extension_words = usize::from(u16::from_be_bytes([
+                packet[payload_offset + 2],
+                packet[payload_offset + 3],
+            ]));
+            payload_offset += 4 + extension_words * 4;
+            if packet.len() < payload_offset {
+                return Err(VoiceDatagramError::RtpLayout);
+            }
+        }
+        let mut payload = &packet[payload_offset..];
+        if packet[0] & 0x20 != 0 {
+            let padding = usize::from(*payload.last().ok_or(VoiceDatagramError::RtpLayout)?);
+            if padding == 0 || padding > payload.len() {
+                return Err(VoiceDatagramError::RtpLayout);
+            }
+            payload = &payload[..payload.len() - padding];
+        }
+        if payload.len() % 2 != 0 {
+            return Err(VoiceDatagramError::RtpOddPayload);
+        }
+        let samples = payload
+            .chunks_exact(2)
+            .map(|bytes| i16::from_be_bytes([bytes[0], bytes[1]]))
+            .collect();
+        Ok(Self {
+            marker: packet[1] & 0x80 != 0,
+            sequence: u16::from_be_bytes([packet[2], packet[3]]),
+            timestamp: u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]),
+            ssrc: u32::from_be_bytes([packet[8], packet[9], packet[10], packet[11]]),
+            samples,
+        })
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum FrameError {
     #[error("I/O error while reading or writing frame: {0}")]
@@ -300,7 +482,12 @@ where
 mod tests {
     use std::io::Cursor;
 
-    use super::{FrameError, MAX_FRAME_SIZE, PortId, read_frame, write_frame};
+    use super::{
+        FrameError, MAX_FRAME_SIZE, PortId, RtpL16Packet, VOICE_AUDIO_PAYLOAD_TYPE,
+        VOICE_PROTOCOL_VERSION, VoiceControl, VoiceControlMessage, VoiceStatus, VoiceStatusMessage,
+        decode_voice_control, decode_voice_status, encode_voice_control, encode_voice_status,
+        read_frame, write_frame,
+    };
 
     #[test]
     fn frames_round_trip_with_a_big_endian_length_prefix() {
@@ -343,5 +530,63 @@ mod tests {
             serde_cbor::to_vec(&"subscriber_3").unwrap()
         );
         assert!(serde_cbor::from_slice::<PortId>(&serde_cbor::to_vec(&"tap_5").unwrap()).is_err());
+    }
+
+    #[test]
+    fn voice_status_is_a_tagged_cbor_datagram() {
+        let message = VoiceStatusMessage {
+            protocol_version: VOICE_PROTOCOL_VERSION,
+            session_id: 12,
+            turn_id: 3,
+            state_revision: 8,
+            status: VoiceStatus::Completed,
+            transcript: Some("send the report".to_string()),
+            response_text: Some("I will connect you now.".to_string()),
+            error: None,
+        };
+
+        let encoded = encode_voice_status(&message).unwrap();
+        assert_eq!(encoded[0], 1);
+        assert_eq!(decode_voice_status(&encoded).unwrap(), message);
+    }
+
+    #[test]
+    fn voice_control_is_a_separate_tagged_cbor_datagram() {
+        let message = VoiceControlMessage {
+            protocol_version: VOICE_PROTOCOL_VERSION,
+            session_id: 12,
+            turn_id: 3,
+            state_revision: 8,
+            control: VoiceControl::ReleasePtt,
+        };
+
+        let encoded = encode_voice_control(&message).unwrap();
+        assert_eq!(encoded[0], 2);
+        assert_eq!(decode_voice_control(&encoded).unwrap(), message);
+    }
+
+    #[test]
+    fn rtp_l16_uses_network_order_and_the_project_audio_payload_type() {
+        let packet = RtpL16Packet {
+            marker: true,
+            sequence: 41,
+            timestamp: 960,
+            ssrc: 0x1234_5678,
+            samples: vec![-2, 0x1234, i16::MAX],
+        };
+
+        let encoded = packet.encode();
+        assert_eq!(encoded[0], 0x80);
+        assert_eq!(encoded[1], 0x80 | VOICE_AUDIO_PAYLOAD_TYPE);
+        assert_eq!(
+            &encoded[12..],
+            &[
+                (-2_i16).to_be_bytes(),
+                0x1234_i16.to_be_bytes(),
+                i16::MAX.to_be_bytes()
+            ]
+            .concat()
+        );
+        assert_eq!(RtpL16Packet::decode(&encoded).unwrap(), packet);
     }
 }
