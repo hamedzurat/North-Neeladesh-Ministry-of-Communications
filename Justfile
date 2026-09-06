@@ -33,8 +33,8 @@ protocol-harness:
 protocol-manual address="127.0.0.1:7878":
     cargo run -p exchange-protocol-harness -- --connect {{address}}
 
-voice-daemon backend_address="127.0.0.1:7879":
-    NN_VOICE_BACKEND_ADDRESS={{backend_address}} cargo run -p exchange-voice-daemon
+voice-daemon backend_address="127.0.0.1:7879" capture_command="sh scripts/voice_smoke_capture.sh" stt_command="sh scripts/voice_smoke_stt.sh" dialogue_command="sh scripts/voice_smoke_dialogue.sh" tts_command="sh scripts/voice_smoke_tts.sh":
+    NN_VOICE_BACKEND_ADDRESS={{backend_address}} NN_VOICE_CAPTURE_COMMAND="{{capture_command}}" NN_VOICE_STT_COMMAND="{{stt_command}}" NN_VOICE_DIALOGUE_COMMAND="{{dialogue_command}}" NN_VOICE_TTS_COMMAND="{{tts_command}}" cargo run -p exchange-voice-daemon
 
 check: frontend-check
     cargo check --workspace
