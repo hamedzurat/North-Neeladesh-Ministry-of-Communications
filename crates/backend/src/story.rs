@@ -394,6 +394,307 @@ impl AuthoredContent {
             start_node_id: "run_start".to_string(),
         }
     }
+
+    pub fn four_shift_demo() -> Self {
+        let mut content = Self::demo();
+        let leya = content
+            .subscribers
+            .iter_mut()
+            .find(|subscriber| subscriber.id == "leyla_varan")
+            .expect("demo fixture includes the clinic Subscriber");
+        leya.id = "leya_varan".to_string();
+        leya.name = "Dr. Leya Varan".to_string();
+        content
+            .subscribers
+            .iter_mut()
+            .find(|subscriber| subscriber.id == "oren_vey")
+            .expect("demo fixture includes the border post Subscriber")
+            .name = "Captain Oren Vey".to_string();
+        for listing in &mut content.line_listings {
+            for subscriber_id in &mut listing.subscriber_ids {
+                if subscriber_id == "leyla_varan" {
+                    *subscriber_id = "leya_varan".to_string();
+                }
+            }
+        }
+        content.subscribers.push(Subscriber {
+            id: "neri_tal".to_string(),
+            name: "Neri Tal".to_string(),
+        });
+        content.line_listings.push(LineListing {
+            id: "signal_box".to_string(),
+            line: 4,
+            subscriber_ids: vec!["neri_tal".to_string()],
+        });
+        content.call_premises = vec![
+            CallPremise {
+                id: "relief_train_request".to_string(),
+                caller_id: "taren_kesh".to_string(),
+                callee_id: "vira_dhal".to_string(),
+                caller_line_id: "railway_dispatch_office".to_string(),
+                callee_line_id: "factory_records_office".to_string(),
+                directory_ids: vec![1, 2],
+            },
+            CallPremise {
+                id: "parent_collapse_request".to_string(),
+                caller_id: "leya_varan".to_string(),
+                callee_id: "oren_vey".to_string(),
+                caller_line_id: "clinic".to_string(),
+                callee_line_id: "border_post".to_string(),
+                directory_ids: vec![4],
+            },
+            CallPremise {
+                id: "signal_intercept_request".to_string(),
+                caller_id: "neri_tal".to_string(),
+                callee_id: "vira_dhal".to_string(),
+                caller_line_id: "signal_box".to_string(),
+                callee_line_id: "factory_records_office".to_string(),
+                directory_ids: vec![2],
+            },
+            CallPremise {
+                id: "factory_response_request".to_string(),
+                caller_id: "vira_dhal".to_string(),
+                callee_id: "taren_kesh".to_string(),
+                caller_line_id: "factory_records_office".to_string(),
+                callee_line_id: "railway_dispatch_office".to_string(),
+                directory_ids: vec![1],
+            },
+            CallPremise {
+                id: "final_taren_request".to_string(),
+                caller_id: "taren_kesh".to_string(),
+                callee_id: "vira_dhal".to_string(),
+                caller_line_id: "railway_dispatch_office".to_string(),
+                callee_line_id: "factory_records_office".to_string(),
+                directory_ids: vec![2],
+            },
+            CallPremise {
+                id: "final_oren_request".to_string(),
+                caller_id: "oren_vey".to_string(),
+                callee_id: "vira_dhal".to_string(),
+                caller_line_id: "border_post".to_string(),
+                callee_line_id: "factory_records_office".to_string(),
+                directory_ids: vec![4],
+            },
+        ];
+        content.story_beats = vec![
+            StoryBeat {
+                id: "relief_train_7".to_string(),
+                call_premise_id: "relief_train_request".to_string(),
+            },
+            StoryBeat {
+                id: "parent_collapse".to_string(),
+                call_premise_id: "parent_collapse_request".to_string(),
+            },
+            StoryBeat {
+                id: "intercepted_signal".to_string(),
+                call_premise_id: "signal_intercept_request".to_string(),
+            },
+            StoryBeat {
+                id: "final_taren_routing".to_string(),
+                call_premise_id: "final_taren_request".to_string(),
+            },
+            StoryBeat {
+                id: "final_oren_routing".to_string(),
+                call_premise_id: "final_oren_request".to_string(),
+            },
+        ];
+        content.story_events = vec![
+            authored_event("relief_train_success", "shift_2_call"),
+            authored_event("relief_train_missed", "shift_2_call"),
+            authored_event("relief_train_invalid", "shift_2_call"),
+            authored_event("parent_collapse_success", "shift_3_call"),
+            authored_event("parent_collapse_missed", "shift_3_call"),
+            authored_event("parent_collapse_invalid", "shift_3_call"),
+            authored_event("intercepted_signal_success", "final_choice"),
+            authored_event("intercepted_signal_missed", "final_choice"),
+            authored_event("intercepted_signal_invalid", "final_choice"),
+            StoryEvent {
+                id: "final_choice_event".to_string(),
+                outcomes: vec![
+                    StoryEventOutcome {
+                        id: "taren".to_string(),
+                        next_node_id: "final_taren_call".to_string(),
+                    },
+                    StoryEventOutcome {
+                        id: "oren".to_string(),
+                        next_node_id: "final_oren_call".to_string(),
+                    },
+                    StoryEventOutcome {
+                        id: "standoff".to_string(),
+                        next_node_id: "ending_civil_war".to_string(),
+                    },
+                ],
+            },
+            authored_event("final_taren_success", "final_taren_gate"),
+            authored_event("final_taren_missed", "ending_civil_war"),
+            authored_event("final_taren_invalid", "ending_civil_war"),
+            authored_event("final_oren_success", "final_oren_gate"),
+            authored_event("final_oren_missed", "ending_civil_war"),
+            authored_event("final_oren_invalid", "ending_civil_war"),
+        ];
+        content.endings = vec![
+            Ending {
+                id: "trade_detente".to_string(),
+                conclusion: "Trade Détente: Relief Train 7 crosses the Partition and the exchange keeps the corridor open.".to_string(),
+            },
+            Ending {
+                id: "managed_emergency_rule".to_string(),
+                conclusion: "Managed Emergency Rule: the emergency holds, but the Ministry keeps the exchange under emergency control.".to_string(),
+            },
+            Ending {
+                id: "renewed_civil_war".to_string(),
+                conclusion: "Renewed Civil War: the final exchange fails and the border stations return to open conflict.".to_string(),
+            },
+        ];
+        content.nodes = vec![
+            StoryNode {
+                id: "run_start".to_string(),
+                kind: StoryNodeKind::RunStart {
+                    next_node_id: "shift_1_call".to_string(),
+                },
+            },
+            shift_call_node(
+                "shift_1_call",
+                "relief_train_7",
+                "relief_train_success_event",
+                "relief_train_missed_event",
+                "relief_train_invalid_event",
+            ),
+            event_node("relief_train_success_event", "relief_train_success"),
+            event_node("relief_train_missed_event", "relief_train_missed"),
+            event_node("relief_train_invalid_event", "relief_train_invalid"),
+            shift_call_node(
+                "shift_2_call",
+                "parent_collapse",
+                "parent_collapse_success_event",
+                "parent_collapse_missed_event",
+                "parent_collapse_invalid_event",
+            ),
+            event_node("parent_collapse_success_event", "parent_collapse_success"),
+            event_node("parent_collapse_missed_event", "parent_collapse_missed"),
+            event_node("parent_collapse_invalid_event", "parent_collapse_invalid"),
+            shift_call_node(
+                "shift_3_call",
+                "intercepted_signal",
+                "intercepted_signal_success_event",
+                "intercepted_signal_missed_event",
+                "intercepted_signal_invalid_event",
+            ),
+            event_node(
+                "intercepted_signal_success_event",
+                "intercepted_signal_success",
+            ),
+            event_node(
+                "intercepted_signal_missed_event",
+                "intercepted_signal_missed",
+            ),
+            event_node(
+                "intercepted_signal_invalid_event",
+                "intercepted_signal_invalid",
+            ),
+            StoryNode {
+                id: "final_choice".to_string(),
+                kind: StoryNodeKind::StoryEvent {
+                    event_id: "final_choice_event".to_string(),
+                    default_outcome_id: "taren".to_string(),
+                },
+            },
+            shift_call_node(
+                "final_taren_call",
+                "final_taren_routing",
+                "final_taren_success_event",
+                "final_taren_missed_event",
+                "final_taren_invalid_event",
+            ),
+            event_node("final_taren_success_event", "final_taren_success"),
+            event_node("final_taren_missed_event", "final_taren_missed"),
+            event_node("final_taren_invalid_event", "final_taren_invalid"),
+            StoryNode {
+                id: "final_taren_gate".to_string(),
+                kind: StoryNodeKind::Conditional {
+                    condition: StoryCondition::MaxServiceErrors(0),
+                    on_met: "ending_trade_detente".to_string(),
+                    on_unmet: "ending_managed_emergency_rule".to_string(),
+                },
+            },
+            shift_call_node(
+                "final_oren_call",
+                "final_oren_routing",
+                "final_oren_success_event",
+                "final_oren_missed_event",
+                "final_oren_invalid_event",
+            ),
+            event_node("final_oren_success_event", "final_oren_success"),
+            event_node("final_oren_missed_event", "final_oren_missed"),
+            event_node("final_oren_invalid_event", "final_oren_invalid"),
+            StoryNode {
+                id: "final_oren_gate".to_string(),
+                kind: StoryNodeKind::Conditional {
+                    condition: StoryCondition::MaxServiceErrors(0),
+                    on_met: "ending_managed_emergency_rule".to_string(),
+                    on_unmet: "ending_civil_war".to_string(),
+                },
+            },
+            StoryNode {
+                id: "ending_trade_detente".to_string(),
+                kind: StoryNodeKind::Ending {
+                    ending_id: "trade_detente".to_string(),
+                },
+            },
+            StoryNode {
+                id: "ending_managed_emergency_rule".to_string(),
+                kind: StoryNodeKind::Ending {
+                    ending_id: "managed_emergency_rule".to_string(),
+                },
+            },
+            StoryNode {
+                id: "ending_civil_war".to_string(),
+                kind: StoryNodeKind::Ending {
+                    ending_id: "renewed_civil_war".to_string(),
+                },
+            },
+        ];
+        content.start_node_id = "run_start".to_string();
+        content
+    }
+}
+
+fn authored_event(id: &str, next_node_id: &str) -> StoryEvent {
+    StoryEvent {
+        id: id.to_string(),
+        outcomes: vec![StoryEventOutcome {
+            id: "default".to_string(),
+            next_node_id: next_node_id.to_string(),
+        }],
+    }
+}
+
+fn event_node(id: &str, event_id: &str) -> StoryNode {
+    StoryNode {
+        id: id.to_string(),
+        kind: StoryNodeKind::StoryEvent {
+            event_id: event_id.to_string(),
+            default_outcome_id: "default".to_string(),
+        },
+    }
+}
+
+fn shift_call_node(
+    id: &str,
+    beat_id: &str,
+    on_success: &str,
+    on_missed: &str,
+    on_invalid: &str,
+) -> StoryNode {
+    StoryNode {
+        id: id.to_string(),
+        kind: StoryNodeKind::ShiftCall {
+            beat_id: beat_id.to_string(),
+            on_success: on_success.to_string(),
+            on_missed: on_missed.to_string(),
+            on_invalid: on_invalid.to_string(),
+        },
+    }
 }
 
 impl CompiledStoryGraph {

@@ -2212,6 +2212,33 @@ mod tests {
     }
 
     #[test]
+    fn persistent_tts_emits_every_pcm_frame() {
+        let spec = CommandSpec::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "while IFS= read -r request; do printf '\\004\\000\\000\\000\\001\\000\\002\\000'; printf '\\004\\000\\000\\000\\003\\000\\004\\000'; printf '\\000\\000\\000\\000'; done".to_string(),
+            ],
+        );
+        let mut tts = PersistentQwen3TtsCommand::new(spec).unwrap();
+        let mut emitted = Vec::new();
+
+        let sample_count = tts
+            .synthesize_stream(
+                "Ryan",
+                "I need an ordinary connection to Vira Dhal, please.",
+                &mut |chunk| {
+                    emitted.extend_from_slice(chunk);
+                    Ok(())
+                },
+            )
+            .unwrap();
+
+        assert_eq!(sample_count, 4);
+        assert_eq!(emitted, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
     fn command_workers_accept_contract_fixtures_without_model_files() {
         let mut stt = CommandSpeechToText::new(CommandSpec::new(
             "sh",

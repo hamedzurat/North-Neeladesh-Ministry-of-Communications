@@ -1,7 +1,7 @@
 use exchange_backend::Backend;
 use exchange_protocol::{
     CallPhase, CordConnection, HeldControls, InputDebug, InputMessage, InputState,
-    PROTOCOL_VERSION, PortId, TuningState,
+    PROTOCOL_VERSION, PortId, ServiceErrorKind, TuningState,
 };
 
 fn input(sequence: u64, revision: u64, cords: Vec<CordConnection>) -> InputMessage {
@@ -150,8 +150,16 @@ fn missed_and_invalid_routing_follow_separate_authored_alternatives() {
     );
     assert_eq!(invalid.output.call.unwrap().phase, CallPhase::Misrouted);
     assert_eq!(backend.story_node_id(), "event_invalid");
-    apply(&mut backend, &mut sequence, vec![]);
+    let settled = apply(&mut backend, &mut sequence, vec![]);
     assert_eq!(backend.story_node_id(), "ending_invalid");
+    assert!(
+        settled
+            .output
+            .shift
+            .service_error_counts
+            .iter()
+            .any(|error| error.kind == ServiceErrorKind::MisroutedCall)
+    );
 }
 
 #[test]

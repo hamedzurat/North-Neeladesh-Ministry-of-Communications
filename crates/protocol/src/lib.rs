@@ -5,7 +5,8 @@ use std::fmt;
 use thiserror::Error;
 
 pub const PROTOCOL_VERSION: u16 = 1;
-pub const MAX_FRAME_SIZE: usize = 1_048_576;
+pub const DEBUG_PROTOCOL_VERSION: u16 = 2;
+pub const MAX_FRAME_SIZE: usize = 4 * 1_048_576;
 pub const VOICE_PROTOCOL_VERSION: u16 = 2;
 pub const VOICE_INPUT_SAMPLE_RATE: u32 = 16_000;
 pub const VOICE_INPUT_AUDIO_PACKET_SAMPLES: usize = 320;
@@ -208,6 +209,7 @@ pub struct ServiceCallStatus {
 #[serde(rename_all = "snake_case")]
 pub enum ServiceErrorKind {
     MissedRequiredServiceCall,
+    MisroutedCall,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -305,12 +307,36 @@ pub struct StateMessage {
 pub enum DebugCommand {
     Snapshot,
     ResetRun,
-    AdvanceTime { seconds: u32 },
-    InjectCall { caller_line: u8, callee_line: u8 },
-    ForceStoryEvent { event_id: String },
-    SelectStoryPath { node_id: String },
-    SetGodmode { enabled: bool },
-    SetBypassRestrictions { enabled: bool },
+    AdvanceTime {
+        seconds: u32,
+    },
+    InjectCall {
+        caller_line: u8,
+        callee_line: u8,
+    },
+    ForceStoryEvent {
+        event_id: String,
+    },
+    SelectStoryPath {
+        node_id: String,
+    },
+    SetGodmode {
+        enabled: bool,
+    },
+    SetBypassRestrictions {
+        enabled: bool,
+    },
+    GetVoiceAudio {
+        conversation_id: u64,
+        kind: DebugAudioKind,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DebugAudioKind {
+    Capture,
+    Tts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -327,6 +353,7 @@ pub struct DebugResponse {
     pub accepted: bool,
     pub error: Option<ProtocolError>,
     pub snapshot: DebugSnapshot,
+    pub audio: Option<DebugAudio>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -338,7 +365,6 @@ pub struct DebugSnapshot {
     pub subscribers: Vec<DebugSubscriberState>,
     pub story: DebugStoryState,
     pub counters: DebugCounters,
-    pub transitions: Vec<DebugTransition>,
     pub voice: DebugVoiceState,
     pub frontend: DebugFrontendState,
     pub recent_errors: Vec<BackendDiagnostic>,
@@ -374,6 +400,8 @@ pub struct DebugStoryState {
     pub current_node_id: String,
     pub frontier: Vec<String>,
     pub current_story_beat: Option<String>,
+    pub interference_reduced: bool,
+    pub operator_knowledge: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -388,14 +416,6 @@ pub struct DebugCounters {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DebugTransition {
-    pub revision: u64,
-    pub command: String,
-    pub result: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct DebugVoiceState {
     pub status: Option<VoiceStatus>,
     pub speaker_active: bool,
@@ -403,6 +423,32 @@ pub struct DebugVoiceState {
     pub turn_id: Option<u64>,
     pub transcript: Option<String>,
     pub response_text: Option<String>,
+    pub conversations: Vec<DebugVoiceConversation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugVoiceConversation {
+    pub id: u64,
+    pub session_id: u64,
+    pub turn_id: u64,
+    pub state_revision: u64,
+    pub status: Option<VoiceStatus>,
+    pub started_elapsed_seconds: u32,
+    pub finished_elapsed_seconds: Option<u32>,
+    pub captured_samples: u32,
+    pub tts_samples: u32,
+    pub transcript: Option<String>,
+    pub response_text: Option<String>,
+    pub error: Option<ProtocolError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugAudio {
+    pub sample_rate: u32,
+    pub channels: u8,
+    pub samples: Vec<i16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -411,6 +457,8 @@ pub struct DebugFrontendState {
     pub firmware_version: Option<String>,
     pub transport_connected: bool,
     pub device_faults: Vec<String>,
+    pub last_input_json: Option<String>,
+    pub last_output_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -425,6 +473,12 @@ pub enum VoiceStatus {
     Completed,
     Failed,
     Cancelled,
+}
+
+impl VoiceStatus {
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

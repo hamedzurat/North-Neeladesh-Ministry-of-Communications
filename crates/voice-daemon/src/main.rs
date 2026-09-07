@@ -54,6 +54,9 @@ fn run_relay_connection() -> Result<(), Box<dyn Error>> {
         session_id: 1,
         turn_id: 1,
         state_revision: 0,
+        audio_packets_received: 0,
+        audio_samples_received: 0,
+        last_audio_sequence: None,
     };
     relay.send_status(VoiceStatus::Ready, None)?;
     log_voice_event("voice relay ready; backend owns STT, dialogue, and Qwen3-TTS");
@@ -66,11 +69,24 @@ fn run_relay_connection() -> Result<(), Box<dyn Error>> {
             }
             Err(error) => return Err(error.into()),
         };
+        log_voice_event(format_args!(
+            "voice rx datagram bytes={} session={} turn={} revision={}",
+            datagram.len(),
+            relay.session_id,
+            relay.turn_id,
+            relay.state_revision
+        ));
         if let Ok(control) = exchange_protocol::decode_voice_control(&datagram) {
+            log_voice_event(format_args!(
+                "voice rx control session={} turn={} revision={} control={:?}",
+                control.session_id, control.turn_id, control.state_revision, control.control
+            ));
             if control.protocol_version == VOICE_PROTOCOL_VERSION
                 && control.session_id == relay.session_id
             {
                 relay.handle_control(control)?;
+            } else {
+                log_voice_event("voice rx control ignored: session or protocol mismatch");
             }
             continue;
         }
@@ -79,8 +95,10 @@ fn run_relay_connection() -> Result<(), Box<dyn Error>> {
             continue;
         }
         if let Ok(packet) = RtpL16Packet::decode(&datagram) {
-            relay.playback.write(&packet.samples)?;
+            relay.handle_audio(packet)?;
+            continue;
         }
+        log_voice_event("voice rx datagram ignored: unknown protocol payload");
     }
 }
 
@@ -91,6 +109,9 @@ struct RelaySession<'a> {
     session_id: u64,
     turn_id: u64,
     state_revision: u64,
+    audio_packets_received: u64,
+    audio_samples_received: u64,
+    last_audio_sequence: Option<u16>,
 }
 
 impl RelaySession<'_> {
@@ -99,6 +120,10 @@ impl RelaySession<'_> {
         status: VoiceStatus,
         error: Option<exchange_protocol::ProtocolError>,
     ) -> Result<(), VoiceError> {
+        log_voice_event(format_args!(
+            "voice tx status session={} turn={} revision={} status={status:?}",
+            self.session_id, self.turn_id, self.state_revision
+        ));
         self.udp.status(VoiceStatusMessage {
             protocol_version: VOICE_PROTOCOL_VERSION,
             session_id: self.session_id,
@@ -118,27 +143,63 @@ impl RelaySession<'_> {
         self.turn_id = control.turn_id;
         self.state_revision = control.state_revision;
         match control.control {
-            VoiceControl::StartPtt => match self.capture.start() {
-                Ok(()) => self.send_status(VoiceStatus::Listening, None),
-                Err(error) => self.send_status(
-                    VoiceStatus::Failed,
-                    Some(exchange_protocol::ProtocolError {
-                        code: error.code,
-                        message: error.message,
-                    }),
-                ),
-            },
-            VoiceControl::ReleasePtt => match self.capture.finish() {
-                Ok(samples) => self.send_input_audio(&samples),
-                Err(error) => self.send_status(
-                    VoiceStatus::Failed,
-                    Some(exchange_protocol::ProtocolError {
-                        code: error.code,
-                        message: error.message,
-                    }),
-                ),
-            },
+            VoiceControl::StartPtt => {
+                log_voice_event(format_args!(
+                    "voice capture start session={} turn={} revision={}",
+                    self.session_id, self.turn_id, self.state_revision
+                ));
+                match self.capture.start() {
+                    Ok(()) => self.send_status(VoiceStatus::Listening, None),
+                    Err(error) => {
+                        log_voice_event(format_args!(
+                            "voice capture start failed session={} turn={} code={} message={}",
+                            self.session_id, self.turn_id, error.code, error.message
+                        ));
+                        self.send_status(
+                            VoiceStatus::Failed,
+                            Some(exchange_protocol::ProtocolError {
+                                code: error.code,
+                                message: error.message,
+                            }),
+                        )
+                    }
+                }
+            }
+            VoiceControl::ReleasePtt => {
+                log_voice_event(format_args!(
+                    "voice capture release session={} turn={} revision={}",
+                    self.session_id, self.turn_id, self.state_revision
+                ));
+                match self.capture.finish() {
+                    Ok(samples) => {
+                        log_voice_event(format_args!(
+                            "voice capture complete session={} turn={} samples={}",
+                            self.session_id,
+                            self.turn_id,
+                            samples.len()
+                        ));
+                        self.send_input_audio(&samples)
+                    }
+                    Err(error) => {
+                        log_voice_event(format_args!(
+                            "voice capture failed session={} turn={} code={} message={}",
+                            self.session_id, self.turn_id, error.code, error.message
+                        ));
+                        self.send_status(
+                            VoiceStatus::Failed,
+                            Some(exchange_protocol::ProtocolError {
+                                code: error.code,
+                                message: error.message,
+                            }),
+                        )
+                    }
+                }
+            }
             VoiceControl::Cancel => {
+                log_voice_event(format_args!(
+                    "voice capture cancel session={} turn={} revision={}",
+                    self.session_id, self.turn_id, self.state_revision
+                ));
                 let _ = self.capture.finish();
                 self.send_status(VoiceStatus::Cancelled, None)
             }
@@ -150,6 +211,10 @@ impl RelaySession<'_> {
             .chunks(VOICE_INPUT_AUDIO_PACKET_SAMPLES)
             .collect::<Vec<_>>();
         if chunks.is_empty() {
+            log_voice_event(format_args!(
+                "voice tx input_audio session={} turn={} revision={} chunk=0 complete=true samples=0",
+                self.session_id, self.turn_id, self.state_revision
+            ));
             return self.udp.send_input_audio(&VoiceInputAudioMessage {
                 protocol_version: VOICE_PROTOCOL_VERSION,
                 session_id: self.session_id,
@@ -161,6 +226,15 @@ impl RelaySession<'_> {
             });
         }
         for (index, chunk) in chunks.iter().enumerate() {
+            log_voice_event(format_args!(
+                "voice tx input_audio session={} turn={} revision={} chunk={} complete={} samples={}",
+                self.session_id,
+                self.turn_id,
+                self.state_revision,
+                index,
+                index + 1 == chunks.len(),
+                chunk.len()
+            ));
             self.udp.send_input_audio(&VoiceInputAudioMessage {
                 protocol_version: VOICE_PROTOCOL_VERSION,
                 session_id: self.session_id,
@@ -176,12 +250,70 @@ impl RelaySession<'_> {
 
     fn handle_status(&mut self, status: VoiceStatusMessage) -> Result<(), VoiceError> {
         self.state_revision = status.state_revision;
+        log_voice_event(format_args!(
+            "voice rx status session={} turn={} revision={} status={:?} error={}",
+            status.session_id,
+            status.turn_id,
+            status.state_revision,
+            status.status,
+            status
+                .error
+                .as_ref()
+                .map_or("none", |error| error.code.as_str())
+        ));
         match status.status {
             VoiceStatus::Completed | VoiceStatus::Failed | VoiceStatus::Cancelled => {
+                log_voice_event(format_args!(
+                    "voice playback finish session={} turn={} packets={} samples={}",
+                    self.session_id,
+                    self.turn_id,
+                    self.audio_packets_received,
+                    self.audio_samples_received
+                ));
                 self.playback.finish()?;
+                log_voice_event(format_args!(
+                    "voice playback finished session={} turn={}",
+                    self.session_id, self.turn_id
+                ));
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    fn handle_audio(&mut self, packet: RtpL16Packet) -> Result<(), VoiceError> {
+        if let Some(previous) = self.last_audio_sequence {
+            let expected = previous.wrapping_add(1);
+            if packet.sequence != expected {
+                log_voice_event(format_args!(
+                    "voice rx audio gap session={} turn={} expected_seq={} actual_seq={} previous_seq={}",
+                    self.session_id, self.turn_id, expected, packet.sequence, previous
+                ));
+            }
+        }
+        self.last_audio_sequence = Some(packet.sequence);
+        self.audio_packets_received += 1;
+        self.audio_samples_received += packet.samples.len() as u64;
+        log_voice_event(format_args!(
+            "voice rx audio session={} turn={} seq={} timestamp={} ssrc={} marker={} samples={} total_packets={} total_samples={}",
+            self.session_id,
+            self.turn_id,
+            packet.sequence,
+            packet.timestamp,
+            packet.ssrc,
+            packet.marker,
+            packet.samples.len(),
+            self.audio_packets_received,
+            self.audio_samples_received
+        ));
+        self.playback.write(&packet.samples)?;
+        log_voice_event(format_args!(
+            "voice playback write session={} turn={} seq={} samples={}",
+            self.session_id,
+            self.turn_id,
+            packet.sequence,
+            packet.samples.len()
+        ));
         Ok(())
     }
 }

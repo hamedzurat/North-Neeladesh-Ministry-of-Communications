@@ -4,15 +4,16 @@ use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use exchange_protocol::{
-    BackendDiagnostic, ClockState, CordConnection, DebugCommand, DebugCounters, DebugFrontendState,
-    DebugRequest, DebugResponse, DebugRunState, DebugSnapshot, DebugStoryState,
-    DebugSubscriberState, DebugTransition, DebugVoiceState, DirectoryPage, GamePhase, InputMessage,
-    InputState, OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError,
-    ServiceCallPhase, ServiceCallStatus, ServiceErrorCount, ServiceErrorKind, ServiceKind,
-    ShiftPhase, ShiftStatus, StateMessage, StateOutput, TuningState, VoiceControl,
+    BackendDiagnostic, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION, DebugAudio,
+    DebugAudioKind, DebugCommand, DebugCounters, DebugFrontendState, DebugRequest, DebugResponse,
+    DebugRunState, DebugSnapshot, DebugStoryState, DebugSubscriberState, DebugVoiceConversation,
+    DebugVoiceState, DirectoryPage, GamePhase, InputMessage, InputState, OutputDebug,
+    PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, RtpL16Packet, ServiceCallPhase,
+    ServiceCallStatus, ServiceErrorCount, ServiceErrorKind, ServiceKind, ShiftPhase, ShiftStatus,
+    StateMessage, StateOutput, TuningState, VOICE_AUDIO_SAMPLE_RATE, VoiceControl,
     VoiceControlMessage, VoiceInputAudioMessage, VoiceStatus, decode_voice_input_audio,
     decode_voice_status, encode_voice_control, read_frame, write_frame,
 };
@@ -32,7 +33,6 @@ use story::{
 const MAX_FAULTS: usize = 16;
 const MAX_CORDS: usize = 8;
 const STRESS_PRINTER_ENTRY_COUNT: usize = 48;
-const MAX_DEBUG_TRANSITIONS: usize = 32;
 const VOICE_IDS: [&str; 9] = [
     "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee",
 ];
@@ -44,6 +44,8 @@ pub struct Backend {
     state_revision: u64,
     last_request: Option<InputMessage>,
     last_response: Option<StateMessage>,
+    last_frontend_input: Option<InputMessage>,
+    last_frontend_output: Option<StateMessage>,
     clock_started: Instant,
     last_crank_rotation_timestamps: [u64; 4],
     voice_speaker_active: bool,
@@ -51,19 +53,24 @@ pub struct Backend {
     voice_peer: Option<SocketAddr>,
     voice_session_id: Option<u64>,
     voice_turn_id: Option<u64>,
+    next_voice_turn_id: u64,
     voice_state_revision: Option<u64>,
     voice_request_voice_id: Option<String>,
     pending_voice_control: Option<VoiceControlMessage>,
     voice_status: Option<VoiceStatus>,
     voice_transcript: Option<String>,
     voice_response_text: Option<String>,
+    voice_subscriber_line: Option<u8>,
     frontend_firmware_version: Option<String>,
     frontend_transport_connected: bool,
     frontend_device_faults: Vec<String>,
     debug_elapsed_seconds: u64,
     debug_godmode: bool,
     debug_bypass_restrictions: bool,
-    debug_transitions: Vec<DebugTransition>,
+    voice_conversations: VecDeque<VoiceConversationRecord>,
+    next_voice_conversation_id: u64,
+    operator_knowledge: Vec<String>,
+    interference_reduced: bool,
     pending_voice_audio: VecDeque<Vec<u8>>,
     pending_voice_input: Option<VoiceInputAudioMessage>,
     pending_voice_input_samples: Vec<i16>,
@@ -71,8 +78,16 @@ pub struct Backend {
     voice_worker_active: bool,
     voice_id: Option<String>,
     run_generation: u64,
+    initial_required_service_calls: u32,
+    shift_started_elapsed_seconds: u32,
     last_ems: bool,
     service_error_recorded: bool,
+}
+
+struct VoiceConversationRecord {
+    summary: DebugVoiceConversation,
+    capture_audio: Vec<i16>,
+    tts_audio: Vec<i16>,
 }
 
 impl Backend {
@@ -80,11 +95,22 @@ impl Backend {
         Self::new_with_printer_stress(false)
     }
 
+    pub fn new_four_shift_demo() -> Self {
+        Self::new_four_shift_demo_with_printer_stress(false)
+    }
+
+    pub fn new_four_shift_demo_with_printer_stress(printer_stress: bool) -> Self {
+        let story = AuthoredContent::four_shift_demo()
+            .compile()
+            .expect("built-in four-Shift authored Story Graph must compile");
+        Self::with_story(story, printer_stress, 0)
+    }
+
     pub fn new_with_printer_stress(printer_stress: bool) -> Self {
         let story = AuthoredContent::demo()
             .compile()
             .expect("built-in authored Story Graph must compile");
-        Self::with_story(story, printer_stress)
+        Self::with_story(story, printer_stress, 1)
     }
 
     pub fn new_with_story(content: AuthoredContent) -> Result<Self, GraphCompileError> {
@@ -95,18 +121,34 @@ impl Backend {
         content: AuthoredContent,
         printer_stress: bool,
     ) -> Result<Self, GraphCompileError> {
-        Ok(Self::with_story(content.compile()?, printer_stress))
+        let initial_required_service_calls =
+            if content.nodes.iter().any(|node| node.id == "shift_2_call") {
+                0
+            } else {
+                1
+            };
+        Ok(Self::with_story(
+            content.compile()?,
+            printer_stress,
+            initial_required_service_calls,
+        ))
     }
 
-    fn with_story(story: CompiledStoryGraph, printer_stress: bool) -> Self {
+    fn with_story(
+        story: CompiledStoryGraph,
+        printer_stress: bool,
+        initial_required_service_calls: u32,
+    ) -> Self {
         let story_node_id = story.start_node_id().to_string();
         Self {
-            state: initial_state(printer_stress),
+            state: initial_state(printer_stress, initial_required_service_calls),
             story,
             story_node_id,
             state_revision: 0,
             last_request: None,
             last_response: None,
+            last_frontend_input: None,
+            last_frontend_output: None,
             clock_started: Instant::now(),
             last_crank_rotation_timestamps: [0; 4],
             voice_speaker_active: false,
@@ -114,19 +156,24 @@ impl Backend {
             voice_peer: None,
             voice_session_id: None,
             voice_turn_id: None,
+            next_voice_turn_id: 1,
             voice_state_revision: None,
             voice_request_voice_id: None,
             pending_voice_control: None,
             voice_status: None,
             voice_transcript: None,
             voice_response_text: None,
+            voice_subscriber_line: None,
             frontend_firmware_version: None,
             frontend_transport_connected: false,
             frontend_device_faults: Vec::new(),
             debug_elapsed_seconds: 0,
             debug_godmode: false,
             debug_bypass_restrictions: false,
-            debug_transitions: Vec::new(),
+            voice_conversations: VecDeque::new(),
+            next_voice_conversation_id: 1,
+            operator_knowledge: Vec::new(),
+            interference_reduced: false,
             pending_voice_audio: VecDeque::new(),
             pending_voice_input: None,
             pending_voice_input_samples: Vec::new(),
@@ -134,6 +181,8 @@ impl Backend {
             voice_worker_active: false,
             voice_id: None,
             run_generation: 0,
+            initial_required_service_calls,
+            shift_started_elapsed_seconds: 0,
             last_ems: false,
             service_error_recorded: false,
         }
@@ -168,34 +217,51 @@ impl Backend {
             .is_some_and(|node| !self.story.outgoing(&node.id).is_empty())
         {
             self.story_node_id = selection.node_id.clone();
+            if let Some(StoryNodeKind::Ending { ending_id }) =
+                self.story.node(&self.story_node_id).map(|node| &node.kind)
+            {
+                self.state.shift.phase = ShiftPhase::Settled;
+                self.state.game_phase = GamePhase::Ended;
+                if let Some(ending) = self.story.ending(ending_id) {
+                    append_printer(&mut self.state, &ending_receipt(ending.conclusion.as_str()));
+                }
+            }
         }
         selection
     }
 
     pub fn reset_run(&mut self) {
         let printer_stress = self.state.printer_output.len() == STRESS_PRINTER_ENTRY_COUNT;
-        self.state = initial_state(printer_stress);
+        self.state = initial_state(printer_stress, self.initial_required_service_calls);
         self.story_node_id = self.story.start_node_id().to_string();
         self.state_revision = 0;
         self.last_request = None;
         self.last_response = None;
+        self.last_frontend_input = None;
+        self.last_frontend_output = None;
         self.clock_started = Instant::now();
         self.last_crank_rotation_timestamps = [0; 4];
         self.voice_speaker_active = false;
         self.last_ptt = false;
         self.voice_state_revision = None;
+        self.next_voice_turn_id = 1;
         self.voice_request_voice_id = None;
         self.pending_voice_control = None;
         self.voice_status = self.voice_peer.map(|_| VoiceStatus::Ready);
         self.voice_transcript = None;
         self.voice_response_text = None;
+        self.voice_subscriber_line = None;
         self.frontend_firmware_version = None;
         self.frontend_transport_connected = false;
         self.frontend_device_faults.clear();
         self.debug_elapsed_seconds = 0;
+        self.shift_started_elapsed_seconds = 0;
         self.debug_godmode = false;
         self.debug_bypass_restrictions = false;
-        self.debug_transitions.clear();
+        self.voice_conversations.clear();
+        self.next_voice_conversation_id = 1;
+        self.operator_knowledge.clear();
+        self.interference_reduced = false;
         self.pending_voice_audio.clear();
         self.pending_voice_input = None;
         self.pending_voice_input_samples.clear();
@@ -208,26 +274,22 @@ impl Backend {
     }
 
     pub fn apply_input_message(&mut self, message: InputMessage) -> StateMessage {
-        trace_input(&message);
         let repeated = self.last_request.as_ref() == Some(&message);
         self.frontend_firmware_version = message.input.debug.firmware_version.clone();
         self.frontend_transport_connected = message.input.debug.transport_connected;
         self.frontend_device_faults = message.input.debug.device_faults.clone();
-        let response = self.apply_input_message_inner(message);
-        if !repeated {
-            self.record_transition(
-                format!("cabinet input #{}", response.input_sequence),
-                if response.accepted {
-                    "accepted".to_string()
-                } else {
-                    response
-                        .error
-                        .as_ref()
-                        .map_or_else(|| "rejected".to_string(), |error| error.code.clone())
-                },
-            );
+        let response = self.apply_input_message_inner(message.clone());
+        self.last_frontend_input = Some(message);
+        self.last_frontend_output = Some(response.clone());
+        if !repeated
+            && !response.accepted
+            && let Some(error) = &response.error
+        {
+            self.add_diagnostic(BackendDiagnostic {
+                code: format!("frontend_{}", error.code),
+                message: error.message.clone(),
+            });
         }
-        trace_state(&response);
         response
     }
 
@@ -296,6 +358,8 @@ impl Backend {
                 current_node_id: self.story_node_id.clone(),
                 frontier: self.story.outgoing(&self.story_node_id).to_vec(),
                 current_story_beat,
+                interference_reduced: self.interference_reduced,
+                operator_knowledge: self.operator_knowledge.clone(),
             },
             counters: DebugCounters {
                 completed_routings: self.state.shift.completed_routings,
@@ -304,7 +368,6 @@ impl Backend {
                 service_errors: self.state.shift.service_errors,
                 active_call_count: self.state.shift.active_call_count,
             },
-            transitions: self.debug_transitions.clone(),
             voice: DebugVoiceState {
                 status: self.voice_status,
                 speaker_active: self.state.speaker_active || self.voice_speaker_active,
@@ -312,19 +375,30 @@ impl Backend {
                 turn_id: self.voice_turn_id,
                 transcript: self.voice_transcript.clone(),
                 response_text: self.voice_response_text.clone(),
+                conversations: self
+                    .voice_conversations
+                    .iter()
+                    .map(|conversation| conversation.summary.clone())
+                    .collect(),
             },
             frontend: DebugFrontendState {
                 firmware_version: self.frontend_firmware_version.clone(),
                 transport_connected: self.frontend_transport_connected,
                 device_faults: self.frontend_device_faults.clone(),
+                last_input_json: self
+                    .last_frontend_input
+                    .as_ref()
+                    .and_then(|message| serde_json::to_string_pretty(message).ok()),
+                last_output_json: self
+                    .last_frontend_output
+                    .as_ref()
+                    .and_then(|message| serde_json::to_string_pretty(message).ok()),
             },
             recent_errors,
         }
     }
 
     pub fn apply_debug_command(&mut self, command: DebugCommand) -> DebugResponse {
-        let command_name = format!("{command:?}");
-        let is_snapshot = matches!(command, DebugCommand::Snapshot);
         let result = match command {
             DebugCommand::Snapshot => Ok(()),
             DebugCommand::ResetRun => {
@@ -336,6 +410,7 @@ impl Backend {
                     .debug_elapsed_seconds
                     .saturating_add(u64::from(seconds));
                 self.state.clock.elapsed_seconds = self.elapsed_seconds();
+                self.expire_calls();
                 self.state_revision += 1;
                 Ok(())
             }
@@ -353,20 +428,73 @@ impl Backend {
                 self.debug_bypass_restrictions = enabled;
                 Ok(())
             }
+            DebugCommand::GetVoiceAudio {
+                conversation_id,
+                kind,
+            } => match self.voice_audio(conversation_id, kind) {
+                Ok(audio) => {
+                    return DebugResponse {
+                        protocol_version: DEBUG_PROTOCOL_VERSION,
+                        accepted: true,
+                        error: None,
+                        snapshot: self.debug_snapshot(),
+                        audio: Some(audio),
+                    };
+                }
+                Err(error) => Err(error),
+            },
         };
-        let (accepted, error, result_text) = match result {
-            Ok(()) => (true, None, "accepted".to_string()),
-            Err(error) => (false, Some(error.clone()), error.code),
+        let (accepted, error) = match result {
+            Ok(()) => (true, None),
+            Err(error) => (false, Some(error)),
         };
-        if !is_snapshot {
-            self.record_transition(command_name, result_text);
-        }
         DebugResponse {
-            protocol_version: PROTOCOL_VERSION,
+            protocol_version: DEBUG_PROTOCOL_VERSION,
             accepted,
             error,
             snapshot: self.debug_snapshot(),
+            audio: None,
         }
+    }
+
+    fn voice_audio(
+        &self,
+        conversation_id: u64,
+        kind: DebugAudioKind,
+    ) -> Result<DebugAudio, ProtocolError> {
+        let conversation = self
+            .voice_conversations
+            .iter()
+            .find(|conversation| conversation.summary.id == conversation_id)
+            .ok_or_else(|| {
+                protocol_error(
+                    "voice_conversation_not_found",
+                    "voice conversation was not retained",
+                )
+            })?;
+        if kind == DebugAudioKind::Tts
+            && !conversation
+                .summary
+                .status
+                .is_some_and(VoiceStatus::is_terminal)
+        {
+            return Err(protocol_error(
+                "voice_audio_not_ready",
+                "TTS audio is still being generated",
+            ));
+        }
+        let samples = match kind {
+            DebugAudioKind::Capture => &conversation.capture_audio,
+            DebugAudioKind::Tts => &conversation.tts_audio,
+        };
+        Ok(DebugAudio {
+            sample_rate: match kind {
+                DebugAudioKind::Capture => exchange_protocol::VOICE_INPUT_SAMPLE_RATE,
+                DebugAudioKind::Tts => VOICE_AUDIO_SAMPLE_RATE,
+            },
+            channels: 1,
+            samples: samples.clone(),
+        })
     }
 
     fn debug_inject_call(&mut self, caller_line: u8, callee_line: u8) -> Result<(), ProtocolError> {
@@ -458,17 +586,6 @@ impl Backend {
             .min(u32::MAX as u64) as u32
     }
 
-    fn record_transition(&mut self, command: String, result: String) {
-        self.debug_transitions.push(DebugTransition {
-            revision: self.state_revision,
-            command,
-            result,
-        });
-        if self.debug_transitions.len() > MAX_DEBUG_TRANSITIONS {
-            self.debug_transitions.remove(0);
-        }
-    }
-
     fn apply_input_message_inner(&mut self, message: InputMessage) -> StateMessage {
         if self.last_request.as_ref() == Some(&message)
             && let Some(response) = &self.last_response
@@ -485,7 +602,14 @@ impl Backend {
             );
         }
 
+        self.state.clock.elapsed_seconds = self.elapsed_seconds();
+        self.expire_calls();
         let input = &message.input;
+        let monitoring_story = self.story_node_id == "shift_3_call"
+            || self.story_node_id.starts_with("intercepted_signal");
+        if self.story_node_id == "shift_2_call" {
+            self.interference_reduced = tuning_reduces_interference(&input.tuning);
+        }
         let ptt = input.held_controls.ptt;
         let ems = input.held_controls.ems;
         let crank_rotation_timestamps = input.crank_rotation_timestamps;
@@ -495,15 +619,27 @@ impl Backend {
         } else {
             self.story_call_for_node(&self.story_node_id, input.directory_digits)
         };
+        let final_standoff = self.story_node_id == "ending_civil_war";
         let authored_competing_call = operator_caller_line(&input.cord_topology)
             .and_then(|line| self.story.authored_call_for_caller_line(line));
-        let transition = advance_calls(
-            &self.state,
-            input,
-            self.last_crank_rotation_timestamps,
-            authored_call,
-            authored_competing_call,
-        );
+        let interference_blocks_routing = self.story_node_id == "shift_2_call"
+            && !self.interference_reduced
+            && self
+                .state
+                .call
+                .as_ref()
+                .is_some_and(|call| direct_routing_topology(input, call));
+        let transition = if interference_blocks_routing {
+            unchanged_call_transition(&self.state)
+        } else {
+            advance_calls(
+                &self.state,
+                input,
+                self.last_crank_rotation_timestamps,
+                authored_call,
+                authored_competing_call,
+            )
+        };
         if let Some(outcome) = transition.story_outcome {
             self.advance_story_outcome(outcome);
         }
@@ -512,9 +648,8 @@ impl Backend {
         next_state.line_lamps = transition.line_lamps;
         next_state.game_phase = transition.game_phase;
         next_state.shift = transition.shift;
-        if transition.story_event_complete {
-            next_state.shift.phase = ShiftPhase::Settled;
-            next_state.game_phase = GamePhase::Ended;
+        if transition.story_outcome == Some(StoryOutcome::Invalid) {
+            record_service_error(&mut next_state, ServiceErrorKind::MisroutedCall);
         }
         apply_service_transition(
             self,
@@ -522,15 +657,48 @@ impl Backend {
             input,
             transition.story_event_complete,
         );
+        if transition.story_event_complete {
+            self.settle_story_event(&next_state);
+            if self.story_is_terminal() {
+                next_state.shift.phase = ShiftPhase::Settled;
+                next_state.game_phase = GamePhase::Ended;
+                self.append_ending_receipt(&mut next_state);
+            } else {
+                next_state.calls.clear();
+                next_state.call = None;
+                next_state.line_lamps = [false; 16];
+                next_state.shift.number = next_state.shift.number.saturating_add(1);
+                next_state.shift.phase = ShiftPhase::Ready;
+                next_state.shift.active_call_count = 0;
+                next_state.shift.required_service_calls =
+                    self.required_service_calls_for_shift(next_state.shift.number);
+                next_state.game_phase = GamePhase::Ready;
+                next_state.clock.shift = next_state.shift.number;
+                self.shift_started_elapsed_seconds = self.elapsed_seconds();
+                self.interference_reduced = false;
+            }
+        }
+        if final_standoff {
+            next_state.calls.clear();
+            next_state.call = None;
+            next_state.line_lamps = [false; 16];
+            next_state.shift.phase = ShiftPhase::Settled;
+            next_state.shift.active_call_count = 0;
+            next_state.game_phase = GamePhase::Ended;
+            self.append_ending_receipt(&mut next_state);
+        }
         next_state.tap_bridge_monitoring = tap_bridge_monitoring(input, &next_state);
+        if next_state.tap_bridge_monitoring.is_some()
+            && monitoring_story
+            && self.operator_knowledge.is_empty()
+        {
+            self.operator_knowledge
+                .push("Neri Tal's intercepted signal mentions Vira Dhal".to_string());
+        }
         let routing_receipt = transition.routing_receipt;
 
         if let Some(text) = routing_receipt {
             append_printer(&mut next_state, &text);
-        }
-
-        if transition.story_event_complete {
-            self.settle_story_event(&next_state);
         }
 
         self.last_crank_rotation_timestamps = crank_rotation_timestamps;
@@ -580,11 +748,15 @@ impl Backend {
             };
             if ptt {
                 self.voice_id = Some(voice_id.clone());
+                self.voice_subscriber_line = self.state.call.as_ref().map(|call| call.caller_line);
+                self.voice_turn_id = Some(self.next_voice_turn_id);
+                self.next_voice_turn_id = self.next_voice_turn_id.wrapping_add(1);
             }
+            let turn_id = self.voice_turn_id.unwrap_or(1);
             self.pending_voice_control = Some(VoiceControlMessage {
                 protocol_version: exchange_protocol::VOICE_PROTOCOL_VERSION,
                 session_id: 1,
-                turn_id: 1,
+                turn_id,
                 state_revision: self.state_revision,
                 voice_id,
                 control: if ptt {
@@ -628,6 +800,29 @@ impl Backend {
                 return None;
             }
             self.story_node_id = selection.node_id;
+        }
+        if let Some(StoryNodeKind::StoryEvent { event_id, .. }) =
+            self.story.node(&self.story_node_id).map(|node| &node.kind)
+            && self
+                .story
+                .story_event(event_id)
+                .is_some_and(|event| event.outcomes.len() > 1)
+        {
+            let choice = match directory_id(digits) {
+                2 => Some("final_taren_call"),
+                4 => Some("final_oren_call"),
+                _ => Some("ending_civil_war"),
+            };
+            self.story_node_id = self
+                .story
+                .select_next_with_state(
+                    &self.story_node_id,
+                    choice,
+                    &StoryEligibilityState {
+                        service_errors: self.state.shift.service_errors,
+                    },
+                )
+                .node_id;
         }
         self.story_call_for_node(&self.story_node_id, digits)
     }
@@ -681,6 +876,14 @@ impl Backend {
     fn settle_story_event(&mut self, state: &StateOutput) {
         loop {
             let kind = self.story.node(&self.story_node_id).map(|node| &node.kind);
+            if let Some(StoryNodeKind::StoryEvent { event_id, .. }) = kind
+                && self
+                    .story
+                    .story_event(event_id)
+                    .is_some_and(|event| event.outcomes.len() > 1)
+            {
+                break;
+            }
             if !matches!(
                 kind,
                 Some(StoryNodeKind::StoryEvent { .. } | StoryNodeKind::Conditional { .. })
@@ -695,6 +898,89 @@ impl Backend {
                 },
             );
             self.story_node_id = selection.node_id;
+        }
+    }
+
+    fn story_is_terminal(&self) -> bool {
+        matches!(
+            self.story.node(&self.story_node_id).map(|node| &node.kind),
+            Some(StoryNodeKind::Ending { .. })
+        )
+    }
+
+    fn expire_calls(&mut self) {
+        let shift_elapsed = self
+            .state
+            .clock
+            .elapsed_seconds
+            .saturating_sub(self.shift_started_elapsed_seconds);
+        if shift_elapsed < call_patience_seconds(self.state.shift.number) {
+            return;
+        }
+        let mut focused_expired = false;
+        for call in &mut self.state.calls {
+            if !matches!(
+                call.phase,
+                exchange_protocol::CallPhase::Waiting
+                    | exchange_protocol::CallPhase::OperatorSession
+                    | exchange_protocol::CallPhase::AwaitingRouting
+                    | exchange_protocol::CallPhase::Held
+                    | exchange_protocol::CallPhase::Ringing
+            ) {
+                continue;
+            }
+            if self
+                .state
+                .call
+                .as_ref()
+                .is_some_and(|focused| focused.caller_line == call.caller_line)
+            {
+                focused_expired = true;
+            }
+            call.phase = exchange_protocol::CallPhase::Missed;
+        }
+        if focused_expired {
+            if let Some(call) = &mut self.state.call {
+                call.phase = exchange_protocol::CallPhase::Missed;
+            }
+            if matches!(
+                self.story.node(&self.story_node_id).map(|node| &node.kind),
+                Some(StoryNodeKind::ShiftCall { .. })
+            ) {
+                self.advance_story_outcome(StoryOutcome::Missed);
+            }
+        }
+        self.state.shift.active_call_count = self
+            .state
+            .calls
+            .iter()
+            .filter(|call| {
+                !matches!(
+                    call.phase,
+                    exchange_protocol::CallPhase::Completed
+                        | exchange_protocol::CallPhase::Missed
+                        | exchange_protocol::CallPhase::Misrouted
+                        | exchange_protocol::CallPhase::Failed
+                )
+            })
+            .count()
+            .min(u8::MAX as usize) as u8;
+    }
+
+    fn append_ending_receipt(&self, state: &mut StateOutput) {
+        if let Some(StoryNodeKind::Ending { ending_id }) =
+            self.story.node(&self.story_node_id).map(|node| &node.kind)
+            && let Some(ending) = self.story.ending(ending_id)
+        {
+            append_printer(state, &ending_receipt(ending.conclusion.as_str()));
+        }
+    }
+
+    fn required_service_calls_for_shift(&self, shift: u8) -> u32 {
+        if self.initial_required_service_calls == 0 {
+            u32::from(shift >= 2)
+        } else {
+            self.initial_required_service_calls
         }
     }
 
@@ -785,6 +1071,21 @@ impl Backend {
             }
             self.voice_status = Some(message.status);
             self.voice_speaker_active = matches!(message.status, VoiceStatus::Playing);
+            if message.status != VoiceStatus::Ready {
+                let conversation_id = self.ensure_voice_conversation(
+                    message.session_id,
+                    message.turn_id,
+                    message.state_revision,
+                    &[],
+                );
+                self.update_voice_conversation(
+                    conversation_id,
+                    message.status,
+                    message.error.clone(),
+                    None,
+                    None,
+                );
+            }
             if message.status == VoiceStatus::Failed {
                 self.add_diagnostic(BackendDiagnostic {
                     code: "voice_failed".to_string(),
@@ -816,21 +1117,117 @@ impl Backend {
         self.pending_voice_audio.push_back(datagram);
     }
 
-    fn take_voice_input(&mut self) -> Option<(VoiceInputAudioMessage, String, u64)> {
+    fn take_voice_input(
+        &mut self,
+    ) -> Option<(VoiceInputAudioMessage, String, u8, Vec<String>, u64, u64)> {
         if self.voice_worker_active {
             return None;
         }
         let input = self.pending_voice_input.take()?;
         self.voice_worker_active = true;
+        let conversation_id = self.ensure_voice_conversation(
+            input.session_id,
+            input.turn_id,
+            input.state_revision,
+            &input.samples,
+        );
+        if let Some(conversation) = self.voice_conversation_mut(conversation_id) {
+            conversation.capture_audio = input.samples.clone();
+            conversation.summary.captured_samples =
+                conversation.capture_audio.len().min(u32::MAX as usize) as u32;
+        }
         Some((
             input,
             self.voice_id.clone().unwrap_or_else(|| "Ryan".to_string()),
+            self.voice_subscriber_line.unwrap_or(0),
+            self.operator_knowledge.clone(),
             self.run_generation,
+            conversation_id,
         ))
     }
 
     fn finish_voice_worker(&mut self) {
         self.voice_worker_active = false;
+    }
+
+    fn ensure_voice_conversation(
+        &mut self,
+        session_id: u64,
+        turn_id: u64,
+        state_revision: u64,
+        capture_audio: &[i16],
+    ) -> u64 {
+        if let Some(conversation) = self.voice_conversations.iter().find(|conversation| {
+            conversation.summary.session_id == session_id && conversation.summary.turn_id == turn_id
+        }) {
+            return conversation.summary.id;
+        }
+        let conversation_id = self.next_voice_conversation_id;
+        self.next_voice_conversation_id = self.next_voice_conversation_id.wrapping_add(1);
+        self.voice_conversations.push_back(VoiceConversationRecord {
+            summary: DebugVoiceConversation {
+                id: conversation_id,
+                session_id,
+                turn_id,
+                state_revision,
+                status: None,
+                started_elapsed_seconds: self.elapsed_seconds(),
+                finished_elapsed_seconds: None,
+                captured_samples: capture_audio.len().min(u32::MAX as usize) as u32,
+                tts_samples: 0,
+                transcript: None,
+                response_text: None,
+                error: None,
+            },
+            capture_audio: capture_audio.to_vec(),
+            tts_audio: Vec::new(),
+        });
+        conversation_id
+    }
+
+    fn voice_conversation_mut(
+        &mut self,
+        conversation_id: u64,
+    ) -> Option<&mut VoiceConversationRecord> {
+        self.voice_conversations
+            .iter_mut()
+            .find(|conversation| conversation.summary.id == conversation_id)
+    }
+
+    fn update_voice_conversation(
+        &mut self,
+        conversation_id: u64,
+        status: VoiceStatus,
+        error: Option<ProtocolError>,
+        transcript: Option<String>,
+        response_text: Option<String>,
+    ) {
+        let finished_elapsed_seconds = self.elapsed_seconds();
+        if let Some(conversation) = self.voice_conversation_mut(conversation_id) {
+            conversation.summary.status = Some(status);
+            conversation.summary.error = error;
+            if let Some(transcript) = transcript {
+                conversation.summary.transcript = Some(transcript);
+            }
+            if let Some(response_text) = response_text {
+                conversation.summary.response_text = Some(response_text);
+            }
+            if status.is_terminal() {
+                conversation.summary.finished_elapsed_seconds = Some(finished_elapsed_seconds);
+            }
+        }
+    }
+
+    fn fail_voice_conversation(&mut self, conversation_id: u64, error: &VoiceError) {
+        let finished_elapsed_seconds = self.elapsed_seconds();
+        if let Some(conversation) = self.voice_conversation_mut(conversation_id) {
+            conversation.summary.status = Some(VoiceStatus::Failed);
+            conversation.summary.finished_elapsed_seconds = Some(finished_elapsed_seconds);
+            conversation.summary.error = Some(ProtocolError {
+                code: error.code.clone(),
+                message: error.message.clone(),
+            });
+        }
     }
 
     fn mark_frontend_disconnected(&mut self) {
@@ -846,13 +1243,7 @@ impl Backend {
 }
 
 fn select_voice_id(caller_line: u8) -> String {
-    if env::var("NN_VOICE_RANDOM_SPEAKER").is_ok_and(|value| value == "0") {
-        return "Ryan".to_string();
-    }
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.subsec_nanos() as usize);
-    VOICE_IDS[(nanos + caller_line as usize) % VOICE_IDS.len()].to_string()
+    VOICE_IDS[caller_line as usize % VOICE_IDS.len()].to_string()
 }
 
 impl Default for Backend {
@@ -882,7 +1273,7 @@ struct SingleCallTransition {
     story_event_complete: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StoryOutcome {
     Success,
     Missed,
@@ -1330,6 +1721,31 @@ fn unchanged_transition(state: &StateOutput) -> SingleCallTransition {
     }
 }
 
+fn unchanged_call_transition(state: &StateOutput) -> CallTransition {
+    let calls = if state.calls.is_empty() {
+        state.call.clone().into_iter().collect()
+    } else {
+        state.calls.clone()
+    };
+    CallTransition {
+        calls,
+        call: state.call.clone(),
+        line_lamps: state.line_lamps,
+        game_phase: state.game_phase.clone(),
+        shift: state.shift.clone(),
+        routing_receipt: None,
+        story_outcome: None,
+        story_event_complete: false,
+    }
+}
+
+fn direct_routing_topology(input: &InputState, call: &exchange_protocol::CallStatus) -> bool {
+    let caller = PortId::Subscriber(call.caller_line);
+    let callee = PortId::Subscriber(call.requested_callee_line);
+    has_exact_cords(&input.cord_topology, &[(&caller, &callee)])
+        || has_tap_bridge_circuit(&input.cord_topology, &caller, &callee)
+}
+
 fn crank_satisfies_ringing(current: [u64; 4], previous: [u64; 4]) -> bool {
     current[3] > previous[3]
 }
@@ -1351,6 +1767,19 @@ fn valid_crank_history(timestamps: [u64; 4]) -> bool {
         }
     }
     true
+}
+
+fn tuning_reduces_interference(tuning: &TuningState) -> bool {
+    (384..=640).contains(&tuning.coarse) && (384..=640).contains(&tuning.fine)
+}
+
+fn call_patience_seconds(shift: u8) -> u32 {
+    match shift {
+        1 => 90,
+        2 => 120,
+        3 => 150,
+        _ => 90,
+    }
 }
 
 fn speaker_is_active(input: &InputState, state: &StateOutput) -> bool {
@@ -1402,22 +1831,26 @@ fn apply_service_transition(
         && !backend.service_error_recorded
         && state.shift.completed_service_calls < state.shift.required_service_calls
     {
-        state.shift.service_errors += 1;
-        if let Some(error) = state
-            .shift
-            .service_error_counts
-            .iter_mut()
-            .find(|error| error.kind == ServiceErrorKind::MissedRequiredServiceCall)
-        {
-            error.count += 1;
-        } else {
-            state.shift.service_error_counts.push(ServiceErrorCount {
-                kind: ServiceErrorKind::MissedRequiredServiceCall,
-                count: 1,
-            });
-        }
+        record_service_error(state, ServiceErrorKind::MissedRequiredServiceCall);
         backend.service_error_recorded = true;
         append_printer(state, "SERVICE ERROR EMS REQUIRED");
+    }
+}
+
+fn record_service_error(state: &mut StateOutput, kind: ServiceErrorKind) {
+    state.shift.service_errors += 1;
+    if let Some(error) = state
+        .shift
+        .service_error_counts
+        .iter_mut()
+        .find(|error| error.kind == kind)
+    {
+        error.count += 1;
+    } else {
+        state
+            .shift
+            .service_error_counts
+            .push(ServiceErrorCount { kind, count: 1 });
     }
 }
 
@@ -1430,6 +1863,10 @@ fn append_printer(state: &mut StateOutput, text: &str) {
         entry_id,
         text: text.to_string(),
     });
+}
+
+fn ending_receipt(conclusion: &str) -> String {
+    format!("ENDING // {conclusion}")
 }
 
 fn directory_id(digits: [u8; 4]) -> u16 {
@@ -1547,15 +1984,21 @@ pub fn serve_with_voice_and_debug(
     voice_socket: Option<UdpSocket>,
     debug_listener: Option<TcpListener>,
 ) -> io::Result<()> {
-    let backend = Arc::new(Mutex::new(Backend::new_with_printer_stress(
-        printer_stress_enabled(),
-    )));
+    let backend = Arc::new(Mutex::new(
+        Backend::new_four_shift_demo_with_printer_stress(printer_stress_enabled()),
+    ));
     let voice_socket = voice_socket.map(Arc::new);
     if let Some(debug_listener) = debug_listener {
         let backend = Arc::clone(&backend);
+        let diagnostics_backend = Arc::clone(&backend);
         thread::spawn(move || {
             if let Err(error) = serve_debug(debug_listener, backend) {
-                eprintln!("debug surface ended: {error}");
+                if let Ok(mut backend) = diagnostics_backend.lock() {
+                    backend.add_diagnostic(BackendDiagnostic {
+                        code: "debug_surface_failed".to_string(),
+                        message: error.to_string(),
+                    });
+                }
             }
         });
     }
@@ -1570,9 +2013,15 @@ pub fn serve_with_voice_and_debug(
         let stream = connection?;
         let backend = Arc::clone(&backend);
         let voice_socket = voice_socket.as_ref().map(Arc::clone);
+        let diagnostics_backend = Arc::clone(&backend);
         thread::spawn(move || {
             if let Err(error) = handle_connection_with_voice(stream, backend, voice_socket) {
-                eprintln!("frontend connection ended: {error}");
+                if let Ok(mut backend) = diagnostics_backend.lock() {
+                    backend.add_diagnostic(BackendDiagnostic {
+                        code: "frontend_connection_failed".to_string(),
+                        message: error.to_string(),
+                    });
+                }
             }
         });
     }
@@ -1583,9 +2032,15 @@ pub fn serve_debug(listener: TcpListener, backend: Arc<Mutex<Backend>>) -> io::R
     for connection in listener.incoming() {
         let stream = connection?;
         let backend = Arc::clone(&backend);
+        let diagnostics_backend = Arc::clone(&backend);
         thread::spawn(move || {
             if let Err(error) = handle_debug_connection(stream, backend) {
-                eprintln!("debug connection ended: {error}");
+                if let Ok(mut backend) = diagnostics_backend.lock() {
+                    backend.add_diagnostic(BackendDiagnostic {
+                        code: "debug_connection_failed".to_string(),
+                        message: error.to_string(),
+                    });
+                }
             }
         });
     }
@@ -1610,15 +2065,16 @@ fn handle_debug_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) 
             let mut backend = backend
                 .lock()
                 .map_err(|_| io::Error::other("backend state lock poisoned"))?;
-            if request.protocol_version != PROTOCOL_VERSION {
+            if request.protocol_version != DEBUG_PROTOCOL_VERSION {
                 DebugResponse {
-                    protocol_version: PROTOCOL_VERSION,
+                    protocol_version: DEBUG_PROTOCOL_VERSION,
                     accepted: false,
                     error: Some(protocol_error(
                         "unsupported_protocol_version",
-                        format!("expected protocol version {PROTOCOL_VERSION}"),
+                        format!("expected debug protocol version {DEBUG_PROTOCOL_VERSION}"),
                     )),
                     snapshot: backend.debug_snapshot(),
+                    audio: None,
                 }
             } else {
                 backend.apply_debug_command(request.command)
@@ -1632,6 +2088,7 @@ fn handle_debug_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) 
 pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
     socket.set_read_timeout(Some(Duration::from_millis(50)))?;
     let mut datagram = [0_u8; 65_535];
+    let mut next_audio_send = None;
     loop {
         let mut peer = None;
         let work = match socket.recv_from(&mut datagram) {
@@ -1659,9 +2116,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
             )
         };
         if let Some(peer) = peer {
-            for datagram in outgoing {
-                socket.send_to(&datagram, peer)?;
-            }
+            send_voice_datagrams(&socket, peer, outgoing, &mut next_audio_send)?;
         }
         if let Some((control, peer)) = control {
             let datagram = encode_voice_control(&control).map_err(|error| {
@@ -1669,11 +2124,60 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
             })?;
             socket.send_to(&datagram, peer)?;
         }
-        if let Some((input, voice_id, generation)) = work {
+        if let Some((
+            input,
+            voice_id,
+            subscriber_line,
+            operator_knowledge,
+            generation,
+            conversation_id,
+        )) = work
+        {
             let backend = Arc::clone(&backend);
-            thread::spawn(move || run_voice_worker(input, voice_id, generation, backend));
+            thread::spawn(move || {
+                run_voice_worker(
+                    input,
+                    voice_id,
+                    subscriber_line,
+                    operator_knowledge,
+                    generation,
+                    conversation_id,
+                    backend,
+                )
+            });
         }
     }
+}
+
+fn send_voice_datagrams(
+    socket: &UdpSocket,
+    peer: SocketAddr,
+    outgoing: Vec<Vec<u8>>,
+    next_audio_send: &mut Option<Instant>,
+) -> io::Result<()> {
+    for datagram in outgoing {
+        let audio_samples = RtpL16Packet::decode(&datagram)
+            .ok()
+            .map(|packet| packet.samples.len());
+        if let Some(audio_samples) = audio_samples {
+            if let Some(deadline) = *next_audio_send {
+                let now = Instant::now();
+                if deadline > now {
+                    thread::sleep(deadline.duration_since(now));
+                }
+            }
+            socket.send_to(&datagram, peer)?;
+            *next_audio_send = Some(
+                Instant::now()
+                    + Duration::from_secs_f64(
+                        audio_samples as f64 / VOICE_AUDIO_SAMPLE_RATE as f64,
+                    ),
+            );
+        } else {
+            socket.send_to(&datagram, peer)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn handle_connection(stream: TcpStream, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
@@ -1860,22 +2364,6 @@ fn printer_stress_enabled() -> bool {
     matches!(env::var("NN_BACKEND_PRINTER_STRESS").as_deref(), Ok("1"))
 }
 
-fn backend_trace_enabled() -> bool {
-    matches!(env::var("NN_BACKEND_TRACE").as_deref(), Ok("1"))
-}
-
-fn trace_input(message: &InputMessage) {
-    if backend_trace_enabled() {
-        eprintln!("[backend <- frontend] {message:?}");
-    }
-}
-
-fn trace_state(message: &StateMessage) {
-    if backend_trace_enabled() {
-        eprintln!("[backend -> frontend] {message:?}");
-    }
-}
-
 struct ReceivedCapture {
     samples: Option<Vec<i16>>,
     active: bool,
@@ -1911,6 +2399,7 @@ impl MicrophoneCapture for ReceivedCapture {
 struct BackendVoiceOutput {
     backend: Arc<Mutex<Backend>>,
     generation: u64,
+    conversation_id: u64,
 }
 
 impl VoiceOutput for BackendVoiceOutput {
@@ -1939,6 +2428,13 @@ impl VoiceOutput for BackendVoiceOutput {
             backend.voice_response_text = message.response_text.clone();
         }
         backend.voice_speaker_active = matches!(message.status, VoiceStatus::Playing);
+        backend.update_voice_conversation(
+            self.conversation_id,
+            message.status,
+            message.error.clone(),
+            message.transcript.clone(),
+            message.response_text.clone(),
+        );
         if message.status == VoiceStatus::Failed {
             backend.add_diagnostic(BackendDiagnostic {
                 code: "voice_worker_failed".to_string(),
@@ -1962,6 +2458,11 @@ impl VoiceOutput for BackendVoiceOutput {
                 "voice worker belongs to a reset Run",
             ));
         }
+        if let Some(conversation) = backend.voice_conversation_mut(self.conversation_id) {
+            conversation.tts_audio.extend_from_slice(&packet.samples);
+            conversation.summary.tts_samples =
+                conversation.tts_audio.len().min(u32::MAX as usize) as u32;
+        }
         backend.queue_voice_datagram(packet.encode());
         Ok(())
     }
@@ -1970,7 +2471,10 @@ impl VoiceOutput for BackendVoiceOutput {
 fn run_voice_worker(
     input: VoiceInputAudioMessage,
     voice_id: String,
+    subscriber_line: u8,
+    operator_knowledge: Vec<String>,
     generation: u64,
+    conversation_id: u64,
     backend: Arc<Mutex<Backend>>,
 ) {
     let session_id = input.session_id;
@@ -1979,8 +2483,10 @@ fn run_voice_worker(
     let output: Box<dyn VoiceOutput> = Box::new(BackendVoiceOutput {
         backend: Arc::clone(&backend),
         generation,
+        conversation_id,
     });
-    let result = run_voice_worker_session(input, voice_id, output);
+    let result =
+        run_voice_worker_session(input, voice_id, subscriber_line, operator_knowledge, output);
     if let Err(error) = result {
         let mut backend = backend
             .lock()
@@ -2005,6 +2511,7 @@ fn run_voice_worker(
             }
             backend.voice_status = Some(VoiceStatus::Failed);
             backend.voice_speaker_active = false;
+            backend.fail_voice_conversation(conversation_id, &error);
             backend.add_diagnostic(BackendDiagnostic {
                 code: "voice_worker_failed".to_string(),
                 message: format!("{}: {}", error.code, error.message),
@@ -2024,6 +2531,8 @@ fn run_voice_worker(
 fn run_voice_worker_session(
     input: VoiceInputAudioMessage,
     voice_id: String,
+    subscriber_line: u8,
+    operator_knowledge: Vec<String>,
     output: Box<dyn VoiceOutput>,
 ) -> Result<(), VoiceError> {
     let stt = CommandSpec::from_words(&env::var("NN_VOICE_STT_COMMAND").map_err(|_| {
@@ -2053,7 +2562,7 @@ fn run_voice_worker_session(
     let mut session = OperatorSession::new(
         input.session_id,
         input.state_revision,
-        demo_response_context(voice_id),
+        demo_response_context(subscriber_line, voice_id, operator_knowledge),
         Box::new(ReceivedCapture::new(input.samples)),
         Box::new(CommandSpeechToText::new(stt)),
         Box::new(CommandDialogueGenerator::new(dialogue)),
@@ -2064,28 +2573,103 @@ fn run_voice_worker_session(
     session.release_ptt().map(|_| ())
 }
 
-fn demo_response_context(voice_id: String) -> ResponseContext {
+fn demo_response_context(
+    subscriber_line: u8,
+    voice_id: String,
+    operator_knowledge: Vec<String>,
+) -> ResponseContext {
+    let (subscriber_id, name, personality, goal, premise, direction, relationship) =
+        match subscriber_line {
+            1 => (
+                1,
+                "Vira Dhal",
+                "careful factory records clerk protecting a fragile supply ledger",
+                "Keep the relief records moving",
+                "A relief train record needs confirmation",
+                "Confirm the record without exposing the ledger",
+                "Taren Dhal is a trusted railway contact",
+            ),
+            2 => (
+                2,
+                "Dr. Leya Varan",
+                "direct emergency physician balancing triage and family duty",
+                "Get help to the parent collapse",
+                "A parent has collapsed near the exchange",
+                "Ask for the emergency connection",
+                "Oren Vey controls the border post response",
+            ),
+            3 => (
+                3,
+                "Captain Oren Vey",
+                "disciplined State Protection Directorate captain weighing order against civilians",
+                "Keep the border post under control",
+                "A railway and border dispatch requires a decision",
+                "State the condition of the corridor plainly",
+                "Vira Dhal holds records the Directorate wants",
+            ),
+            4 => (
+                4,
+                "Neri Tal",
+                "alert railway signal operator who notices patterns before officials do",
+                "Warn the exchange about the intercepted signal",
+                "A signal has been repeated across the railway line",
+                "Describe the signal without inventing its source",
+                "Taren Kesh works the railway dispatch desk",
+            ),
+            _ => (
+                0,
+                "Taren Kesh",
+                "precise railway dispatcher under pressure",
+                "Keep the railway moving",
+                "A railway dispatch is waiting",
+                "Ask for an ordinary connection",
+                "Vira Dhal is a trusted records clerk",
+            ),
+        };
+    let mut permitted_knowledge = vec![match subscriber_line {
+        1 => KnowledgeRecord {
+            fact: "Taren Kesh is waiting on a relief train record".to_string(),
+            learned_from: "railway_dispatch_call".to_string(),
+        },
+        2 => KnowledgeRecord {
+            fact: "The exchange can place an EMS Service Call".to_string(),
+            learned_from: "clinic_protocol".to_string(),
+        },
+        3 => KnowledgeRecord {
+            fact: "The border post is under emergency authority".to_string(),
+            learned_from: "directorate_notice".to_string(),
+        },
+        4 => KnowledgeRecord {
+            fact: "The railway signal repeated after the relief train request".to_string(),
+            learned_from: "signal_box_log".to_string(),
+        },
+        _ => KnowledgeRecord {
+            fact: "The directory lists Vira Dhal".to_string(),
+            learned_from: "directory_terminal".to_string(),
+        },
+    }];
+    permitted_knowledge.extend(operator_knowledge.into_iter().map(|fact| KnowledgeRecord {
+        fact,
+        learned_from: "tap_bridge_monitoring".to_string(),
+    }));
     ResponseContext {
         profile: SubscriberProfile {
-            subscriber_id: 0,
-            name: "Taren Kesh".to_string(),
+            subscriber_id,
+            name: name.to_string(),
             voice_id,
-            personality: "precise railway dispatcher under pressure".to_string(),
-            baseline_goals: vec!["Keep the railway moving".to_string()],
+            personality: personality.to_string(),
+            baseline_goals: vec![goal.to_string()],
             initial_perspective: "The exchange is under observation".to_string(),
             relationships: vec![RelationshipNote {
-                subject: "Vira Dhal".to_string(),
-                note: "A trusted records clerk".to_string(),
+                subject: relationship.to_string(),
+                note: "Relevant to the current Call".to_string(),
             }],
             permitted_actions: vec!["request_routing".to_string()],
         },
-        subscriber_goal: "Reach the requested Callee".to_string(),
-        call_premise: "A railway dispatch is waiting".to_string(),
-        story_beat_direction: "Ask for an ordinary connection".to_string(),
-        permitted_knowledge: vec![KnowledgeRecord {
-            fact: "The directory lists Vira Dhal".to_string(),
-            learned_from: "directory_terminal".to_string(),
-        }],
+        subscriber_goal: goal.to_string(),
+        call_premise: premise.to_string(),
+        story_beat_direction: direction.to_string(),
+        permitted_knowledge,
         beliefs: Vec::new(),
         relationship_notes: Vec::new(),
         memories: Vec::new(),
@@ -2094,7 +2678,7 @@ fn demo_response_context(voice_id: String) -> ResponseContext {
     }
 }
 
-fn initial_state(printer_stress: bool) -> StateOutput {
+fn initial_state(printer_stress: bool, required_service_calls: u32) -> StateOutput {
     StateOutput {
         line_lamps: [false; 16],
         game_phase: GamePhase::Ready,
@@ -2115,7 +2699,7 @@ fn initial_state(printer_stress: bool) -> StateOutput {
             phase: ShiftPhase::Ready,
             active_call_count: 0,
             completed_routings: 0,
-            required_service_calls: 1,
+            required_service_calls,
             completed_service_calls: 0,
             service_errors: 0,
             service_error_counts: Vec::new(),
@@ -2185,5 +2769,138 @@ fn directory_pages(digits: [u8; 4]) -> Vec<DirectoryPage> {
                 "CHECK DIRECTORY SELECTION".to_string(),
             ],
         }],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn voice_audio_datagrams_are_sent_at_realtime_rate() {
+        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
+        receiver
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let peer = receiver.local_addr().unwrap();
+        let packet = RtpL16Packet {
+            marker: false,
+            sequence: 0,
+            timestamp: 0,
+            ssrc: 1,
+            samples: vec![1; exchange_protocol::VOICE_AUDIO_PACKET_SAMPLES],
+        }
+        .encode();
+        let started = Instant::now();
+        let mut next_audio_send = None;
+
+        send_voice_datagrams(
+            &sender,
+            peer,
+            vec![packet.clone(), packet.clone(), packet],
+            &mut next_audio_send,
+        )
+        .unwrap();
+
+        assert!(started.elapsed() >= Duration::from_millis(30));
+        let mut buffer = [0_u8; 2_000];
+        for _ in 0..3 {
+            receiver.recv(&mut buffer).unwrap();
+        }
+    }
+
+    #[test]
+    fn voice_debug_retains_conversation_outputs_and_audio() {
+        let backend = Arc::new(Mutex::new(Backend::new()));
+        let ready = exchange_protocol::VoiceStatusMessage {
+            protocol_version: exchange_protocol::VOICE_PROTOCOL_VERSION,
+            session_id: 7,
+            turn_id: 3,
+            state_revision: 2,
+            status: VoiceStatus::Ready,
+            transcript: None,
+            response_text: None,
+            error: None,
+        };
+        let input = exchange_protocol::VoiceInputAudioMessage {
+            protocol_version: exchange_protocol::VOICE_PROTOCOL_VERSION,
+            session_id: 7,
+            turn_id: 3,
+            state_revision: 2,
+            chunk_index: 0,
+            complete: true,
+            samples: vec![10, 20, 30],
+        };
+        {
+            let mut state = backend.lock().unwrap();
+            assert!(
+                state
+                    .apply_voice_datagram(&exchange_protocol::encode_voice_status(&ready).unwrap())
+            );
+            assert!(state.apply_voice_datagram(
+                &exchange_protocol::encode_voice_input_audio(&input).unwrap()
+            ));
+            let (_, _, _, _, generation, conversation_id) = state.take_voice_input().unwrap();
+            drop(state);
+
+            let mut output = BackendVoiceOutput {
+                backend: Arc::clone(&backend),
+                generation,
+                conversation_id,
+            };
+            output
+                .status(exchange_protocol::VoiceStatusMessage {
+                    status: VoiceStatus::Playing,
+                    transcript: Some("heard words".to_string()),
+                    response_text: Some("spoken response".to_string()),
+                    ..ready.clone()
+                })
+                .unwrap();
+            output
+                .audio(RtpL16Packet {
+                    marker: true,
+                    sequence: 0,
+                    timestamp: 0,
+                    ssrc: 7,
+                    samples: vec![40, 50],
+                })
+                .unwrap();
+            let partial_audio =
+                backend
+                    .lock()
+                    .unwrap()
+                    .apply_debug_command(DebugCommand::GetVoiceAudio {
+                        conversation_id,
+                        kind: exchange_protocol::DebugAudioKind::Tts,
+                    });
+            assert!(!partial_audio.accepted);
+            output
+                .status(exchange_protocol::VoiceStatusMessage {
+                    status: VoiceStatus::Completed,
+                    ..ready
+                })
+                .unwrap();
+        }
+
+        let snapshot = backend.lock().unwrap().debug_snapshot();
+        let conversation = &snapshot.voice.conversations[0];
+        assert_eq!(conversation.transcript.as_deref(), Some("heard words"));
+        assert_eq!(
+            conversation.response_text.as_deref(),
+            Some("spoken response")
+        );
+        assert_eq!(conversation.captured_samples, 3);
+        assert_eq!(conversation.tts_samples, 2);
+
+        let audio = backend
+            .lock()
+            .unwrap()
+            .apply_debug_command(DebugCommand::GetVoiceAudio {
+                conversation_id: conversation.id,
+                kind: exchange_protocol::DebugAudioKind::Tts,
+            });
+        assert!(audio.accepted);
+        assert_eq!(audio.audio.unwrap().samples, vec![40, 50]);
     }
 }
