@@ -272,6 +272,7 @@ pub struct OutputDebug {
 pub struct StateOutput {
     pub line_lamps: [bool; 16],
     pub game_phase: GamePhase,
+    pub run_generation: u64,
     pub clock: ClockState,
     pub speaker_active: bool,
     pub interference_level: u8,

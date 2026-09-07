@@ -35,8 +35,12 @@ fn apply(
     cords: Vec<CordConnection>,
     held_controls: HeldControls,
 ) -> exchange_protocol::StateMessage {
-    let response =
-        backend.apply_input_message(input(*sequence, *sequence - 1, cords, held_controls));
+    let response = backend.apply_input_message(input(
+        *sequence,
+        backend.debug_snapshot().run.state_revision,
+        cords,
+        held_controls,
+    ));
     *sequence += 1;
     response
 }
@@ -46,8 +50,72 @@ fn apply_with_crank(
     sequence: &mut u64,
     cords: Vec<CordConnection>,
 ) -> exchange_protocol::StateMessage {
-    let mut message = input(*sequence, *sequence - 1, cords, HeldControls::default());
+    let mut message = input(
+        *sequence,
+        backend.debug_snapshot().run.state_revision,
+        cords,
+        HeldControls::default(),
+    );
     message.input.crank_rotation_timestamps = [0, 100, 200, 300];
+    let response = backend.apply_input_message(message);
+    *sequence += 1;
+    response
+}
+
+fn apply_with_directory(
+    backend: &mut Backend,
+    sequence: &mut u64,
+    cords: Vec<CordConnection>,
+    held_controls: HeldControls,
+    directory_id: u8,
+) -> exchange_protocol::StateMessage {
+    let mut message = input(
+        *sequence,
+        backend.debug_snapshot().run.state_revision,
+        cords,
+        held_controls,
+    );
+    message.input.directory_digits = [0, 0, 0, directory_id];
+    let response = backend.apply_input_message(message);
+    *sequence += 1;
+    response
+}
+
+fn apply_with_directory_and_crank(
+    backend: &mut Backend,
+    sequence: &mut u64,
+    cords: Vec<CordConnection>,
+    directory_id: u8,
+) -> exchange_protocol::StateMessage {
+    let mut message = input(
+        *sequence,
+        backend.debug_snapshot().run.state_revision,
+        cords,
+        HeldControls::default(),
+    );
+    message.input.directory_digits = [0, 0, 0, directory_id];
+    message.input.crank_rotation_timestamps = [0, 100, 200, 300];
+    let response = backend.apply_input_message(message);
+    *sequence += 1;
+    response
+}
+
+fn apply_with_directory_tuning(
+    backend: &mut Backend,
+    sequence: &mut u64,
+    cords: Vec<CordConnection>,
+    held_controls: HeldControls,
+    tuning: &TuningState,
+    directory_id: u8,
+) -> exchange_protocol::StateMessage {
+    let mut message = input(
+        *sequence,
+        backend.debug_snapshot().run.state_revision,
+        cords,
+        held_controls,
+    );
+    message.input.directory_digits = [0, 0, 0, directory_id];
+    message.input.tuning = tuning.clone();
     let response = backend.apply_input_message(message);
     *sequence += 1;
     response
@@ -207,6 +275,12 @@ fn direct_connection_before_ringing_is_rejected_without_a_routing_receipt() {
         direct.output.call.as_ref().unwrap().phase,
         CallPhase::OperatorSession
     );
+    assert!(!direct.accepted);
+    assert_eq!(
+        direct.error.as_ref().map(|error| error.code.as_str()),
+        Some("ring_generator_required")
+    );
+    assert_eq!(direct.state_revision, 2);
     assert_eq!(direct.output.shift.completed_routings, 0);
     assert!(
         !direct
@@ -251,13 +325,94 @@ fn direct_connection_before_ringing_is_rejected_without_a_routing_receipt() {
 }
 
 #[test]
+fn tap_bridge_connection_before_ringing_is_rejected() {
+    let mut backend = Backend::new();
+    let mut sequence = 1;
+    apply(&mut backend, &mut sequence, vec![], HeldControls::default());
+    let operator = apply(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
+        HeldControls::default(),
+    );
+    let tap = apply(
+        &mut backend,
+        &mut sequence,
+        vec![
+            cord(PortId::Subscriber(0), PortId::Tap(1)),
+            cord(PortId::Subscriber(1), PortId::Tap(2)),
+        ],
+        HeldControls::default(),
+    );
+
+    assert!(!tap.accepted);
+    assert_eq!(tap.error.as_ref().unwrap().code, "ring_generator_required");
+    assert_eq!(tap.state_revision, operator.state_revision);
+    assert_eq!(tap.output.shift.completed_routings, 0);
+}
+
+#[test]
+fn directory_selection_is_required_before_routing() {
+    let mut backend = Backend::new_hardware_demo();
+    let mut sequence = 1;
+    apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![],
+        HeldControls::default(),
+        2,
+    );
+    apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
+        HeldControls::default(),
+        2,
+    );
+    let ringing = apply_with_directory_and_crank(
+        &mut backend,
+        &mut sequence,
+        vec![
+            cord(PortId::Subscriber(0), PortId::Operator),
+            cord(PortId::Subscriber(1), PortId::RingGenerator),
+        ],
+        2,
+    );
+    assert_eq!(
+        ringing.output.call.as_ref().unwrap().phase,
+        CallPhase::Ringing
+    );
+
+    let wrong_directory = apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
+        HeldControls::default(),
+        1,
+    );
+    assert!(!wrong_directory.accepted);
+    assert_eq!(
+        wrong_directory
+            .error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("directory_selection_required")
+    );
+    assert_eq!(
+        wrong_directory.output.call.as_ref().unwrap().phase,
+        CallPhase::Ringing
+    );
+    assert_eq!(wrong_directory.output.shift.completed_routings, 0);
+}
+
+#[test]
 fn police_ems_and_fire_controls_share_press_release_service_behavior() {
     for (service, text) in [
         (ServiceKind::Police, "POLICE"),
         (ServiceKind::Ems, "EMS"),
         (ServiceKind::Fire, "FIRE"),
     ] {
-        let mut backend = Backend::new();
+        let mut backend = Backend::new_with_required_service(service);
         let mut sequence = 1;
         apply(&mut backend, &mut sequence, vec![], HeldControls::default());
         apply(
@@ -273,12 +428,22 @@ fn police_ems_and_fire_controls_share_press_release_service_behavior() {
             ServiceKind::Ems => held.ems = true,
             ServiceKind::Fire => held.fire = true,
         }
-        let active = apply(
-            &mut backend,
-            &mut sequence,
-            vec![cord(PortId::Subscriber(0), PortId::Operator)],
-            held,
-        );
+        let active = if service == ServiceKind::Police {
+            apply_with_directory(
+                &mut backend,
+                &mut sequence,
+                vec![cord(PortId::Subscriber(0), PortId::Operator)],
+                held,
+                2,
+            )
+        } else {
+            apply(
+                &mut backend,
+                &mut sequence,
+                vec![cord(PortId::Subscriber(0), PortId::Operator)],
+                held,
+            )
+        };
         assert_eq!(
             active.output.service_call.as_ref().unwrap().service,
             service
@@ -308,253 +473,280 @@ fn police_ems_and_fire_controls_share_press_release_service_behavior() {
 }
 
 #[test]
-fn hardware_demo_exposes_directory_interference_police_and_tap_bridge_state() {
-    let mut backend = Backend::new_hardware_demo();
+fn wrong_service_kind_does_not_satisfy_the_required_service() {
+    let mut backend = Backend::new();
     let mut sequence = 1;
-    let send_demo = |backend: &mut Backend,
-                     sequence: &mut u64,
-                     cords: Vec<CordConnection>,
-                     held_controls: HeldControls,
-                     tuning: TuningState| {
-        let mut message = input(*sequence, *sequence - 1, cords, held_controls);
-        message.input.directory_digits = [0, 0, 0, 2];
-        message.input.tuning = tuning;
-        let response = backend.apply_input_message(message);
-        *sequence += 1;
-        response
-    };
-
-    let waiting = send_demo(
+    apply(&mut backend, &mut sequence, vec![], HeldControls::default());
+    apply(
         &mut backend,
         &mut sequence,
-        vec![],
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
         HeldControls::default(),
-        TuningState::default(),
-    );
-    assert_eq!(
-        waiting.output.call.as_ref().unwrap().phase,
-        CallPhase::Waiting
-    );
-    assert_eq!(waiting.output.interference_level, 100);
-    assert!(
-        waiting.output.directory_pages[0]
-            .lines
-            .iter()
-            .any(|line| line.contains("LINE LISTING"))
     );
 
-    let ems_attempt = send_demo(
+    let police = apply(
         &mut backend,
         &mut sequence,
         vec![cord(PortId::Subscriber(0), PortId::Operator)],
         HeldControls {
-            ems: true,
+            police: true,
             ..HeldControls::default()
         },
-        TuningState::default(),
     );
-    assert_eq!(ems_attempt.output.service_call, None);
+    assert_eq!(police.output.service_call, None);
+    assert_eq!(police.output.shift.completed_service_calls, 0);
     assert!(
-        ems_attempt
+        police
             .output
             .debug
             .messages
             .iter()
-            .any(|message| message.code == "police_service_required")
+            .any(|message| message.code == "required_service_kind")
     );
-    send_demo(
-        &mut backend,
-        &mut sequence,
-        vec![cord(PortId::Subscriber(0), PortId::Operator)],
-        HeldControls::default(),
-        TuningState::default(),
-    );
+}
 
-    let police = HeldControls {
-        police: true,
-        ..HeldControls::default()
+#[test]
+fn hardware_demo_authors_three_mechanical_shifts() {
+    let backend = Backend::new_hardware_demo();
+    let graph = backend.story_graph();
+
+    assert!(graph.node("hardware_demo_call").is_some());
+    assert!(graph.node("hardware_demo_interference_call").is_some());
+    assert!(graph.node("hardware_demo_tap_call").is_some());
+    assert_eq!(graph.outgoing("hardware_demo_call").len(), 3);
+    assert_eq!(graph.outgoing("hardware_demo_interference_call").len(), 3);
+    assert_eq!(graph.outgoing("hardware_demo_tap_call").len(), 3);
+}
+
+#[test]
+fn hardware_demo_runtime_enforces_all_three_service_shifts() {
+    let mut backend = Backend::new_hardware_demo();
+    let mut sequence = 1;
+    let clear = TuningState {
+        coarse: 512,
+        fine: 512,
     };
-    let police_active = send_demo(
-        &mut backend,
-        &mut sequence,
-        vec![cord(PortId::Subscriber(0), PortId::Operator)],
-        police,
-        TuningState::default(),
-    );
-    assert_eq!(
-        police_active.output.service_call.as_ref().unwrap().service,
-        ServiceKind::Police
-    );
-    let police_completed = send_demo(
+
+    apply_with_directory(
         &mut backend,
         &mut sequence,
         vec![],
         HeldControls::default(),
-        TuningState::default(),
+        2,
     );
-    assert_eq!(police_completed.output.shift.completed_service_calls, 1);
-
-    send_demo(
+    apply_with_directory(
         &mut backend,
         &mut sequence,
         vec![cord(PortId::Subscriber(0), PortId::Operator)],
         HeldControls::default(),
-        TuningState::default(),
+        2,
     );
-    let ringing = apply_with_crank(
+    assert_eq!(
+        apply_with_directory(
+            &mut backend,
+            &mut sequence,
+            vec![cord(PortId::Subscriber(0), PortId::Operator)],
+            HeldControls {
+                police: true,
+                ..HeldControls::default()
+            },
+            2,
+        )
+        .output
+        .service_call
+        .unwrap()
+        .service,
+        ServiceKind::Police
+    );
+    apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![],
+        HeldControls::default(),
+        2,
+    );
+    apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
+        HeldControls::default(),
+        2,
+    );
+    apply_with_directory(
         &mut backend,
         &mut sequence,
         vec![
             cord(PortId::Subscriber(0), PortId::Operator),
             cord(PortId::Subscriber(1), PortId::RingGenerator),
         ],
+        HeldControls::default(),
+        2,
     );
     assert_eq!(
-        ringing.output.call.as_ref().unwrap().phase,
+        apply_with_directory_and_crank(
+            &mut backend,
+            &mut sequence,
+            vec![
+                cord(PortId::Subscriber(0), PortId::Operator),
+                cord(PortId::Subscriber(1), PortId::RingGenerator),
+            ],
+            2,
+        )
+        .output
+        .call
+        .unwrap()
+        .phase,
         CallPhase::Ringing
     );
-    assert!(ringing.output.line_lamps[1]);
-
-    let tap = send_demo(
+    apply_with_directory_tuning(
         &mut backend,
         &mut sequence,
-        vec![
-            cord(PortId::Subscriber(0), PortId::Tap(3)),
-            cord(PortId::Subscriber(1), PortId::Tap(4)),
-        ],
+        vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
         HeldControls::default(),
-        TuningState {
-            coarse: 512,
-            fine: 512,
-        },
+        &clear,
+        2,
     );
-    assert_eq!(
-        tap.output.call.as_ref().unwrap().phase,
-        CallPhase::Connected
-    );
-    assert_eq!(tap.output.interference_level, 0);
-
-    let wrong_bridge_control = send_demo(
+    apply_with_directory_tuning(
         &mut backend,
         &mut sequence,
-        vec![
-            cord(PortId::Subscriber(0), PortId::Tap(3)),
-            cord(PortId::Subscriber(1), PortId::Tap(4)),
-        ],
-        HeldControls {
-            tap_1: true,
-            ..HeldControls::default()
-        },
-        TuningState {
-            coarse: 512,
-            fine: 512,
-        },
-    );
-    assert_eq!(wrong_bridge_control.output.tap_bridge_monitoring, None);
-    assert!(!wrong_bridge_control.output.tap_bridge_audio_active);
-
-    let listening_controls = HeldControls {
-        tap_2: true,
-        ..HeldControls::default()
-    };
-    let listening = send_demo(
-        &mut backend,
-        &mut sequence,
-        vec![
-            cord(PortId::Subscriber(0), PortId::Tap(3)),
-            cord(PortId::Subscriber(1), PortId::Tap(4)),
-        ],
-        listening_controls.clone(),
-        TuningState {
-            coarse: 512,
-            fine: 512,
-        },
-    );
-    assert_eq!(listening.output.tap_bridge_monitoring, Some(2));
-    assert!(listening.output.tap_bridge_audio_active);
-    assert!(backend.debug_snapshot().story.operator_knowledge.is_empty());
-    let listening_again = send_demo(
-        &mut backend,
-        &mut sequence,
-        vec![
-            cord(PortId::Subscriber(0), PortId::Tap(3)),
-            cord(PortId::Subscriber(1), PortId::Tap(4)),
-        ],
-        listening_controls,
-        TuningState {
-            coarse: 512,
-            fine: 512,
-        },
-    );
-    assert_eq!(listening_again.output.tap_bridge_monitoring, Some(2));
-    assert!(
-        backend
-            .debug_snapshot()
-            .story
-            .operator_knowledge
-            .iter()
-            .any(|fact| fact.contains("intercepted signal"))
-    );
-
-    let released = send_demo(
-        &mut backend,
-        &mut sequence,
-        vec![
-            cord(PortId::Subscriber(0), PortId::Tap(3)),
-            cord(PortId::Subscriber(1), PortId::Tap(4)),
-        ],
+        vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
         HeldControls::default(),
-        TuningState {
-            coarse: 512,
-            fine: 512,
-        },
+        &clear,
+        2,
     );
-    assert_eq!(released.output.tap_bridge_monitoring, None);
-    assert!(!released.output.tap_bridge_audio_active);
-
-    let completed = send_demo(
-        &mut backend,
-        &mut sequence,
-        vec![
-            cord(PortId::Subscriber(0), PortId::Tap(3)),
-            cord(PortId::Subscriber(1), PortId::Tap(4)),
-        ],
-        HeldControls::default(),
-        TuningState {
-            coarse: 512,
-            fine: 512,
-        },
-    );
-    assert_eq!(
-        completed.output.call.as_ref().unwrap().phase,
-        CallPhase::Completed
-    );
-    let settled = send_demo(
+    apply_with_directory_tuning(
         &mut backend,
         &mut sequence,
         vec![],
         HeldControls::default(),
-        TuningState {
-            coarse: 512,
-            fine: 512,
-        },
+        &clear,
+        2,
+    );
+    assert_eq!(backend.story_node_id(), "hardware_demo_interference_call");
+
+    apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![],
+        HeldControls::default(),
+        2,
+    );
+    apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(4), PortId::Operator)],
+        HeldControls::default(),
+        2,
     );
     assert_eq!(
-        settled.output.game_phase,
-        exchange_protocol::GamePhase::Ended
+        apply_with_directory(
+            &mut backend,
+            &mut sequence,
+            vec![cord(PortId::Subscriber(4), PortId::Operator)],
+            HeldControls {
+                ems: true,
+                ..HeldControls::default()
+            },
+            2,
+        )
+        .output
+        .service_call
+        .unwrap()
+        .service,
+        ServiceKind::Ems
     );
-    assert_eq!(settled.output.shift.service_errors, 0);
-    assert!(
-        settled
-            .output
-            .printer_output
-            .iter()
-            .any(|entry| entry.text.contains("demonstration completed"))
+    apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![],
+        HeldControls::default(),
+        2,
     );
+    apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(4), PortId::Operator)],
+        HeldControls::default(),
+        2,
+    );
+    apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![
+            cord(PortId::Subscriber(4), PortId::Operator),
+            cord(PortId::Subscriber(1), PortId::RingGenerator),
+        ],
+        HeldControls::default(),
+        2,
+    );
+    apply_with_directory_and_crank(
+        &mut backend,
+        &mut sequence,
+        vec![
+            cord(PortId::Subscriber(4), PortId::Operator),
+            cord(PortId::Subscriber(1), PortId::RingGenerator),
+        ],
+        2,
+    );
+    let blocked = apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(4), PortId::Subscriber(1))],
+        HeldControls::default(),
+        2,
+    );
+    assert_eq!(blocked.output.call.unwrap().phase, CallPhase::Ringing);
+    apply_with_directory_tuning(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(4), PortId::Subscriber(1))],
+        HeldControls::default(),
+        &clear,
+        2,
+    );
+    apply_with_directory_tuning(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(4), PortId::Subscriber(1))],
+        HeldControls::default(),
+        &clear,
+        2,
+    );
+    apply_with_directory_tuning(
+        &mut backend,
+        &mut sequence,
+        vec![],
+        HeldControls::default(),
+        &clear,
+        2,
+    );
+    assert_eq!(backend.story_node_id(), "hardware_demo_tap_call");
 
-    backend.reset_run();
-    assert_eq!(backend.debug_snapshot().run.elapsed_seconds, 8 * 60 * 60);
-    assert_eq!(backend.debug_snapshot().story.current_node_id, "run_start");
+    apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![],
+        HeldControls::default(),
+        4,
+    );
+    apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(2), PortId::Operator)],
+        HeldControls::default(),
+        4,
+    );
+    let fire = apply_with_directory(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(2), PortId::Operator)],
+        HeldControls {
+            fire: true,
+            ..HeldControls::default()
+        },
+        4,
+    );
+    assert_eq!(fire.output.service_call.unwrap().service, ServiceKind::Fire);
 }
 
 #[test]

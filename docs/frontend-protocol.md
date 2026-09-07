@@ -57,6 +57,7 @@ The response wire shape is exactly:
   "output": {
     "line_lamps": [bool; 16],
     "game_phase": string,
+    "run_generation": u64,
     "clock": {"shift": u8, "elapsed_seconds": u32},
     "speaker_active": bool,
     "interference_level": u8,

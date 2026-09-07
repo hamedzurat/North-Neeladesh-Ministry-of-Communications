@@ -397,22 +397,65 @@ impl AuthoredContent {
 
     pub fn hardware_demo() -> Self {
         let mut content = Self::four_shift_demo();
-        content.call_premises = vec![CallPremise {
-            id: "hardware_training_request".to_string(),
-            caller_id: "taren_kesh".to_string(),
-            callee_id: "vira_dhal".to_string(),
-            caller_line_id: "railway_dispatch_office".to_string(),
-            callee_line_id: "factory_records_office".to_string(),
-            directory_ids: vec![2],
-        }];
-        content.story_beats = vec![StoryBeat {
-            id: "hardware_training".to_string(),
-            call_premise_id: "hardware_training_request".to_string(),
-        }];
+        content.call_premises = vec![
+            CallPremise {
+                id: "hardware_training_request".to_string(),
+                caller_id: "taren_kesh".to_string(),
+                callee_id: "vira_dhal".to_string(),
+                caller_line_id: "railway_dispatch_office".to_string(),
+                callee_line_id: "factory_records_office".to_string(),
+                directory_ids: vec![2],
+            },
+            CallPremise {
+                id: "hardware_interference_request".to_string(),
+                caller_id: "neri_tal".to_string(),
+                callee_id: "vira_dhal".to_string(),
+                caller_line_id: "signal_box".to_string(),
+                callee_line_id: "factory_records_office".to_string(),
+                directory_ids: vec![2],
+            },
+            CallPremise {
+                id: "hardware_tap_request".to_string(),
+                caller_id: "leya_varan".to_string(),
+                callee_id: "oren_vey".to_string(),
+                caller_line_id: "clinic".to_string(),
+                callee_line_id: "border_post".to_string(),
+                directory_ids: vec![4],
+            },
+        ];
+        content.story_beats = vec![
+            StoryBeat {
+                id: "hardware_training".to_string(),
+                call_premise_id: "hardware_training_request".to_string(),
+            },
+            StoryBeat {
+                id: "hardware_interference".to_string(),
+                call_premise_id: "hardware_interference_request".to_string(),
+            },
+            StoryBeat {
+                id: "hardware_tap".to_string(),
+                call_premise_id: "hardware_tap_request".to_string(),
+            },
+        ];
         content.story_events = vec![
-            authored_event("hardware_demo_success", "hardware_demo_success_ending"),
-            authored_event("hardware_demo_missed", "hardware_demo_missed_ending"),
-            authored_event("hardware_demo_invalid", "hardware_demo_invalid_ending"),
+            authored_event(
+                "hardware_training_success",
+                "hardware_demo_interference_call",
+            ),
+            authored_event("hardware_training_missed", "hardware_demo_missed_ending"),
+            authored_event("hardware_training_invalid", "hardware_demo_invalid_ending"),
+            authored_event("hardware_interference_success", "hardware_demo_tap_call"),
+            authored_event(
+                "hardware_interference_missed",
+                "hardware_demo_missed_ending",
+            ),
+            authored_event(
+                "hardware_interference_invalid",
+                "hardware_demo_invalid_ending",
+            ),
+            authored_event("hardware_tap_success", "hardware_demo_success_ending"),
+            authored_event("hardware_tap_missed", "hardware_demo_missed_ending"),
+            authored_event("hardware_tap_invalid", "hardware_demo_invalid_ending"),
         ];
         content.endings = vec![
             Ending {
@@ -439,13 +482,48 @@ impl AuthoredContent {
             shift_call_node(
                 "hardware_demo_call",
                 "hardware_training",
-                "hardware_demo_success_event",
-                "hardware_demo_missed_event",
-                "hardware_demo_invalid_event",
+                "hardware_training_success_event",
+                "hardware_training_missed_event",
+                "hardware_training_invalid_event",
             ),
-            event_node("hardware_demo_success_event", "hardware_demo_success"),
-            event_node("hardware_demo_missed_event", "hardware_demo_missed"),
-            event_node("hardware_demo_invalid_event", "hardware_demo_invalid"),
+            event_node(
+                "hardware_training_success_event",
+                "hardware_training_success",
+            ),
+            event_node("hardware_training_missed_event", "hardware_training_missed"),
+            event_node(
+                "hardware_training_invalid_event",
+                "hardware_training_invalid",
+            ),
+            shift_call_node(
+                "hardware_demo_interference_call",
+                "hardware_interference",
+                "hardware_interference_success_event",
+                "hardware_interference_missed_event",
+                "hardware_interference_invalid_event",
+            ),
+            event_node(
+                "hardware_interference_success_event",
+                "hardware_interference_success",
+            ),
+            event_node(
+                "hardware_interference_missed_event",
+                "hardware_interference_missed",
+            ),
+            event_node(
+                "hardware_interference_invalid_event",
+                "hardware_interference_invalid",
+            ),
+            shift_call_node(
+                "hardware_demo_tap_call",
+                "hardware_tap",
+                "hardware_tap_success_event",
+                "hardware_tap_missed_event",
+                "hardware_tap_invalid_event",
+            ),
+            event_node("hardware_tap_success_event", "hardware_tap_success"),
+            event_node("hardware_tap_missed_event", "hardware_tap_missed"),
+            event_node("hardware_tap_invalid_event", "hardware_tap_invalid"),
             StoryNode {
                 id: "hardware_demo_success_ending".to_string(),
                 kind: StoryNodeKind::Ending {
