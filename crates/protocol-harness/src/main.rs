@@ -97,7 +97,11 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
             [0; 4],
         ),
     )?;
-    assert!(pre_ring.accepted);
+    assert!(!pre_ring.accepted);
+    assert_eq!(
+        pre_ring.error.as_ref().unwrap().code,
+        "ring_generator_required"
+    );
     assert_eq!(
         pre_ring.output.call.as_ref().unwrap().phase,
         exchange_protocol::CallPhase::OperatorSession
@@ -115,7 +119,7 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
         stream,
         physical_message(
             6,
-            5,
+            4,
             vec![
                 cord(PortId::Subscriber(0), PortId::Operator),
                 cord(PortId::Subscriber(1), PortId::RingGenerator),
@@ -133,7 +137,7 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
         stream,
         physical_message(
             7,
-            6,
+            5,
             vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
             [0; 4],
         ),
@@ -158,7 +162,7 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
         stream,
         physical_message(
             8,
-            7,
+            6,
             vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
             [0; 4],
         ),
@@ -169,7 +173,7 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
         exchange_protocol::CallPhase::Completed
     );
 
-    let cleared = exchange(stream, physical_message(9, 8, vec![], [0; 4]))?;
+    let cleared = exchange(stream, physical_message(9, 7, vec![], [0; 4]))?;
     assert!(
         cleared.accepted,
         "clearing the circuit was rejected: {:?}",
@@ -194,7 +198,7 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
             .contains("ENDING")
     );
 
-    let invalid = exchange(stream, message(10, 9, [0, 0, 0, 12]))?;
+    let invalid = exchange(stream, message(10, 8, [0, 0, 0, 12]))?;
     assert!(!invalid.accepted);
     assert_eq!(invalid.error.unwrap().code, "invalid_directory_digits");
     assert_eq!(invalid.state_revision, cleared.state_revision);

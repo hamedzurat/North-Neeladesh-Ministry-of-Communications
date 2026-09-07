@@ -31,6 +31,7 @@ class OutputMapper:
         self._page_index = 0
         self._next_page_at = 0.0
         self._seen_printer_entries: set[int] = set()
+        self._last_run_generation: int | None = None
         self._last_audio_state: bool | None = None
         self._last_interference_level = 0
         self.faults: list[str] = []
@@ -67,7 +68,15 @@ class OutputMapper:
             self._try("epaper", lambda: self.epaper.show_directory(pages, self._page_index))
             self._next_page_at = (self.clock() if now is None else now) + self.epaper_page_interval
 
-        for entry in output.get("printer_output", []):
+        run_generation = int(output.get("run_generation", 0))
+        if (
+            self._last_run_generation is not None
+            and run_generation != self._last_run_generation
+        ):
+            self._seen_printer_entries.clear()
+        self._last_run_generation = run_generation
+        printer_entries = output.get("printer_output", [])
+        for entry in printer_entries:
             entry_id = int(entry.get("entry_id", -1))
             printer_text = str(entry.get("text", ""))
             if entry_id not in self._seen_printer_entries and self._try(

@@ -74,3 +74,37 @@ class OutputMapperTests(unittest.TestCase):
 
         self.assertEqual(components[2].calls[0][1:], (output["directory_pages"], 0))
         self.assertEqual(components[2].calls[1][1:], (output["directory_pages"], 1))
+
+    def test_accepts_reused_printer_ids_after_a_backend_reset(self) -> None:
+        components = [Spy() for _ in range(5)]
+        mapper = OutputMapper(*components)
+        first_run = {
+            "line_lamps": [],
+            "clock": {"elapsed_seconds": 0},
+            "run_generation": 0,
+            "directory_pages": [],
+            "printer_output": [
+                {"entry_id": 1, "text": "RUN RESET // SHIFT READY"},
+                {"entry_id": 2, "text": "ROUTING 0 -> 1"},
+            ],
+            "speaker_active": False,
+        }
+        second_run = {
+            **first_run,
+            "run_generation": 1,
+            "printer_output": [
+                {"entry_id": 1, "text": "RUN RESET // SHIFT READY"},
+            ],
+        }
+
+        mapper.apply(first_run)
+        mapper.apply(second_run)
+
+        self.assertEqual(
+            components[3].calls,
+            [
+                ("printer", "RUN RESET // SHIFT READY"),
+                ("printer", "ROUTING 0 -> 1"),
+                ("printer", "RUN RESET // SHIFT READY"),
+            ],
+        )

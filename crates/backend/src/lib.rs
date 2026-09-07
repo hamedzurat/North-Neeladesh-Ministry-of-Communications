@@ -126,6 +126,13 @@ impl Backend {
         Self::with_story(story, printer_stress, 1, Some(ServiceKind::Ems))
     }
 
+    pub fn new_with_required_service(service: ServiceKind) -> Self {
+        let story = AuthoredContent::demo()
+            .compile()
+            .expect("built-in authored Story Graph must compile");
+        Self::with_story(story, false, 1, Some(service))
+    }
+
     pub fn new_hardware_demo() -> Self {
         Self::new_hardware_demo_with_printer_stress(false)
     }
@@ -310,6 +317,7 @@ impl Backend {
         self.voice_worker_active = false;
         self.voice_id = None;
         self.run_generation = self.run_generation.wrapping_add(1);
+        self.state.run_generation = self.run_generation;
         self.last_held_service = None;
         self.service_error_recorded = false;
         self.last_interference_level = 0;
@@ -659,14 +667,9 @@ impl Backend {
             );
         }
 
-        self.state.clock.elapsed_seconds = self.elapsed_seconds();
-        self.expire_calls();
         let input = &message.input;
         let input_service = service_from_controls(&input.held_controls);
         let selected_directory_id = directory_id(input.directory_digits);
-        if known_directory_id(selected_directory_id) {
-            self.directory_lookup_id = Some(selected_directory_id);
-        }
         let monitoring_story = self.story_node_id == "shift_3_call"
             || self.story_node_id.starts_with("intercepted_signal")
             || self.story_node_id.starts_with("hardware_demo");
@@ -677,13 +680,62 @@ impl Backend {
         } else {
             self.story_call_for_node(&self.story_node_id, input.directory_digits)
         };
-        if has_diegetic_interference(&self.story_node_id) {
-            self.interference_reduced = tuning_reduces_interference(&input.tuning);
-        }
         let interference_level = interference_level(&self.story_node_id, &input.tuning);
         let mut next_state = self.state.clone();
         next_state.interference_level = interference_level;
-        if interference_level != self.last_interference_level {
+        let final_standoff = self.story_node_id == "ending_civil_war";
+        let authored_competing_call = operator_caller_line(&input.cord_topology)
+            .and_then(|line| self.story.authored_call_for_caller_line(line));
+        let pre_ring_direct_connection = self.state.call.as_ref().is_some_and(|call| {
+            matches!(
+                call.phase,
+                exchange_protocol::CallPhase::OperatorSession
+                    | exchange_protocol::CallPhase::AwaitingRouting
+            ) && (has_direct_subscriber_circuit(input, call.caller_line)
+                || has_tap_bridge_circuit(
+                    &input.cord_topology,
+                    &PortId::Subscriber(call.caller_line),
+                    &PortId::Subscriber(call.requested_callee_line),
+                ))
+        });
+        let directory_selection_mismatch = self.state.call.as_ref().is_some_and(|call| {
+            matches!(
+                call.phase,
+                exchange_protocol::CallPhase::OperatorSession
+                    | exchange_protocol::CallPhase::AwaitingRouting
+                    | exchange_protocol::CallPhase::Ringing
+            ) && !self.directory_selection_matches_call(call, input.directory_digits)
+                && (direct_routing_topology(input, call)
+                    || has_ring_generator(
+                        &input.cord_topology,
+                        &PortId::Subscriber(call.caller_line),
+                        &PortId::Subscriber(call.requested_callee_line),
+                    ))
+        });
+        let input_error = if directory_selection_mismatch {
+            Some(protocol_error(
+                "directory_selection_required",
+                "select the requested Callee in the Directory before routing",
+            ))
+        } else if pre_ring_direct_connection {
+            Some(protocol_error(
+                "ring_generator_required",
+                "connect the requested Callee to the Ring Generator and crank before routing",
+            ))
+        } else {
+            None
+        };
+        self.state.clock.elapsed_seconds = self.elapsed_seconds();
+        if input_error.is_none() {
+            self.expire_calls();
+        }
+        if input_error.is_none() && has_diegetic_interference(&self.story_node_id) {
+            self.interference_reduced = tuning_reduces_interference(&input.tuning);
+        }
+        if input_error.is_none() && known_directory_id(selected_directory_id) {
+            self.directory_lookup_id = Some(selected_directory_id);
+        }
+        if input_error.is_none() && interference_level != self.last_interference_level {
             append_printer(
                 &mut next_state,
                 &format!(
@@ -697,9 +749,6 @@ impl Backend {
             );
             self.last_interference_level = interference_level;
         }
-        let final_standoff = self.story_node_id == "ending_civil_war";
-        let authored_competing_call = operator_caller_line(&input.cord_topology)
-            .and_then(|line| self.story.authored_call_for_caller_line(line));
         let interference_blocks_routing = has_diegetic_interference(&self.story_node_id)
             && !self.interference_reduced
             && self
@@ -707,19 +756,10 @@ impl Backend {
                 .call
                 .as_ref()
                 .is_some_and(|call| direct_routing_topology(input, call));
-        let pre_ring_direct_connection = self.state.call.as_ref().is_some_and(|call| {
-            matches!(
-                call.phase,
-                exchange_protocol::CallPhase::OperatorSession
-                    | exchange_protocol::CallPhase::AwaitingRouting
-            ) && (has_direct_subscriber_circuit(input, call.caller_line)
-                || has_tap_bridge_circuit(
-                    &input.cord_topology,
-                    &PortId::Subscriber(call.caller_line),
-                    &PortId::Subscriber(call.requested_callee_line),
-                ))
-        });
-        let transition = if pre_ring_direct_connection || interference_blocks_routing {
+        let transition = if directory_selection_mismatch
+            || pre_ring_direct_connection
+            || interference_blocks_routing
+        {
             unchanged_call_transition(&self.state)
         } else {
             advance_calls(
@@ -741,7 +781,15 @@ impl Backend {
         if transition.story_outcome == Some(StoryOutcome::Invalid) {
             record_service_error(&mut next_state, ServiceErrorKind::MisroutedCall);
         }
-        if pre_ring_direct_connection {
+        if directory_selection_mismatch {
+            next_state.debug.messages.push(BackendDiagnostic {
+                code: "directory_selection_required".to_string(),
+                message: "select the requested Callee in the Directory before routing".to_string(),
+            });
+            if next_state.debug.messages.len() > MAX_FAULTS {
+                next_state.debug.messages.remove(0);
+            }
+        } else if pre_ring_direct_connection {
             next_state.debug.messages.push(BackendDiagnostic {
                 code: "ring_generator_required".to_string(),
                 message:
@@ -799,21 +847,39 @@ impl Backend {
             next_state.game_phase = GamePhase::Ended;
             self.append_ending_receipt(&mut next_state);
         }
-        next_state.tap_bridge_monitoring = tap_bridge_monitoring(input, &next_state);
-        next_state.tap_bridge_audio_active = next_state.tap_bridge_monitoring.is_some();
-        if next_state.tap_bridge_monitoring.is_some() && monitoring_story {
-            self.tap_bridge_listen_frames = self.tap_bridge_listen_frames.saturating_add(1);
-            if self.tap_bridge_listen_frames >= 2 && self.operator_knowledge.is_empty() {
-                self.operator_knowledge
-                    .push("Neri Tal's intercepted signal mentions Vira Dhal".to_string());
+        if input_error.is_none() {
+            next_state.tap_bridge_monitoring = tap_bridge_monitoring(input, &next_state);
+            next_state.tap_bridge_audio_active = next_state.tap_bridge_monitoring.is_some();
+            if next_state.tap_bridge_monitoring.is_some() && monitoring_story {
+                self.tap_bridge_listen_frames = self.tap_bridge_listen_frames.saturating_add(1);
+                if self.tap_bridge_listen_frames >= 2 && self.operator_knowledge.is_empty() {
+                    self.operator_knowledge
+                        .push("Neri Tal's intercepted signal mentions Vira Dhal".to_string());
+                }
+            } else {
+                self.tap_bridge_listen_frames = 0;
             }
-        } else {
-            self.tap_bridge_listen_frames = 0;
         }
         let routing_receipt = transition.routing_receipt;
 
         if let Some(text) = routing_receipt {
             append_printer(&mut next_state, &text);
+        }
+
+        if let Some(error) = input_error {
+            let mut output = self.state.clone();
+            output.debug.messages.push(BackendDiagnostic {
+                code: error.code.clone(),
+                message: error.message.clone(),
+            });
+            if output.debug.messages.len() > MAX_FAULTS {
+                output.debug.messages.remove(0);
+            }
+            let response =
+                rejected_response(message.input_sequence, error, self.state_revision, &output);
+            self.last_request = Some(message);
+            self.last_response = Some(response.clone());
+            return response;
         }
 
         self.last_crank_rotation_timestamps = crank_rotation_timestamps;
@@ -823,6 +889,7 @@ impl Backend {
         self.state = StateOutput {
             line_lamps: next_state.line_lamps,
             game_phase: next_state.game_phase,
+            run_generation: self.run_generation,
             clock: next_state.clock,
             speaker_active,
             interference_level: next_state.interference_level,
@@ -945,6 +1012,34 @@ impl Backend {
     }
 
     fn story_call_for_node(&self, node_id: &str, digits: [u8; 4]) -> Option<(u8, u8)> {
+        let (caller_line, callee_line, directory_ids) = self.story_call_directory_ids(node_id)?;
+        let directory_id = directory_id(digits);
+        directory_ids
+            .contains(&directory_id)
+            .then_some((caller_line, callee_line))
+    }
+
+    fn story_call_matches(&self, node_id: &str, digits: [u8; 4]) -> bool {
+        self.story_call_for_node(node_id, digits).is_some()
+    }
+
+    fn directory_selection_matches_call(
+        &self,
+        call: &exchange_protocol::CallStatus,
+        digits: [u8; 4],
+    ) -> bool {
+        let Some((caller_line, callee_line, directory_ids)) =
+            self.story_call_directory_ids(&self.story_node_id)
+        else {
+            return true;
+        };
+        if caller_line != call.caller_line || callee_line != call.requested_callee_line {
+            return true;
+        }
+        directory_ids.contains(&directory_id(digits))
+    }
+
+    fn story_call_directory_ids(&self, node_id: &str) -> Option<(u8, u8, &[u16])> {
         let node = self.story.node(node_id)?;
         let StoryNodeKind::ShiftCall { beat_id, .. } = &node.kind else {
             return None;
@@ -953,15 +1048,7 @@ impl Backend {
         let premise = self.story.call_premise(&beat.call_premise_id)?;
         let caller_line = self.line_for_listing(&premise.caller_line_id)?;
         let callee_line = self.line_for_listing(&premise.callee_line_id)?;
-        let directory_id = directory_id(digits);
-        premise
-            .directory_ids
-            .contains(&directory_id)
-            .then_some((caller_line, callee_line))
-    }
-
-    fn story_call_matches(&self, node_id: &str, digits: [u8; 4]) -> bool {
-        self.story_call_for_node(node_id, digits).is_some()
+        Some((caller_line, callee_line, premise.directory_ids.as_slice()))
     }
 
     fn line_for_listing(&self, listing_id: &str) -> Option<u8> {
@@ -1107,6 +1194,14 @@ impl Backend {
     }
 
     fn required_service_kind_for_shift(&self, shift: u8) -> Option<ServiceKind> {
+        if self.story_node_id.starts_with("hardware_demo_") {
+            return match shift {
+                1 => Some(ServiceKind::Police),
+                2 => Some(ServiceKind::Ems),
+                3 => Some(ServiceKind::Fire),
+                _ => None,
+            };
+        }
         (self.required_service_calls_for_shift(shift) > 0)
             .then_some(self.required_service_kind)
             .flatten()
@@ -1923,7 +2018,7 @@ fn tuning_reduces_interference(tuning: &TuningState) -> bool {
 }
 
 fn has_diegetic_interference(story_node_id: &str) -> bool {
-    story_node_id == "shift_2_call" || story_node_id == "hardware_demo_call"
+    story_node_id == "shift_2_call" || story_node_id == "hardware_demo_interference_call"
 }
 
 fn interference_level(story_node_id: &str, tuning: &TuningState) -> u8 {
@@ -2011,10 +2106,19 @@ fn apply_service_transition(
         {
             let service = held_service.expect("service checked above");
             let required_service = backend.required_service_kind_for_shift(state.shift.number);
-            if required_service == Some(ServiceKind::Police) && service != ServiceKind::Police {
+            if let Some(required_service) = required_service
+                && service != required_service
+            {
                 state.debug.messages.push(BackendDiagnostic {
-                    code: "police_service_required".to_string(),
-                    message: "the hardware demo requires the Police Service Call".to_string(),
+                    code: if required_service == ServiceKind::Police {
+                        "police_service_required".to_string()
+                    } else {
+                        "required_service_kind".to_string()
+                    },
+                    message: format!(
+                        "this Shift requires the {} Service Call",
+                        service_label(required_service)
+                    ),
                 });
                 if state.debug.messages.len() > MAX_FAULTS {
                     state.debug.messages.remove(0);
@@ -2944,6 +3048,7 @@ fn initial_state(
     StateOutput {
         line_lamps: [false; 16],
         game_phase: GamePhase::Ready,
+        run_generation: 0,
         clock: ClockState {
             shift: 1,
             elapsed_seconds: accelerated_clock_seconds(0),
