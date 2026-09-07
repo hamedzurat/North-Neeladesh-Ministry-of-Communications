@@ -26,9 +26,9 @@ fn four_shift_demo_compiles_with_the_authored_cast_and_terminal_choices() {
             "Neri Tal"
         ]
     );
-    assert_eq!(graph.node("shift_1_call").is_some(), true);
-    assert_eq!(graph.node("shift_2_call").is_some(), true);
-    assert_eq!(graph.node("shift_3_call").is_some(), true);
+    assert!(graph.node("shift_1_call").is_some());
+    assert!(graph.node("shift_2_call").is_some());
+    assert!(graph.node("shift_3_call").is_some());
     assert_eq!(
         graph.outgoing("final_choice"),
         ["final_taren_call", "final_oren_call", "ending_civil_war",]

@@ -244,7 +244,7 @@
         alert.className = 'alert';
       }
        document.getElementById('run').innerHTML = rows({run: snapshot.run.number, revision: snapshot.run.state_revision, elapsed: snapshot.run.elapsed_seconds + 's', phase: snapshot.run.game_phase, godmode: snapshot.run.godmode, bypass: snapshot.run.bypass_restrictions, shift: snapshot.shift.number, shift_phase: snapshot.shift.phase});
-       document.getElementById('story').innerHTML = rows({node: snapshot.story.current_node_id, beat: snapshot.story.current_story_beat || '-', frontier: snapshot.story.frontier, interference: snapshot.story.interference_reduced, knowledge: snapshot.story.operator_knowledge});
+       document.getElementById('story').innerHTML = rows({node: snapshot.story.current_node_id, beat: snapshot.story.current_story_beat || '-', frontier: snapshot.story.frontier, interference_level: snapshot.story.interference_level + '%', interference_clear: snapshot.story.interference_reduced, knowledge: snapshot.story.operator_knowledge});
        renderStoryGraph(snapshot.story);
        document.getElementById('counters').innerHTML = rows(snapshot.counters || {});
       document.getElementById('frontend').innerHTML = rows({firmware: snapshot.frontend.firmware_version || '-', transport: snapshot.frontend.transport_connected, faults: snapshot.frontend.device_faults});

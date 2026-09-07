@@ -56,6 +56,7 @@ State_Output :: struct {
 	game_phase: string,
 	clock_shift: u8,
 	elapsed_seconds: u32,
+	interference_level: u8,
 	tuning: Tuning,
 	directory_pages: [dynamic]Page,
  printer_output: [dynamic]Printer_Entry,

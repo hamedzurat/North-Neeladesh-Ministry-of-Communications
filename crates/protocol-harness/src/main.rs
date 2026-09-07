@@ -88,11 +88,34 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
         exchange_protocol::GamePhase::Shift
     );
 
-    let ringing = exchange(
+    let pre_ring = exchange(
         stream,
         physical_message(
             5,
             4,
+            vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
+            [0; 4],
+        ),
+    )?;
+    assert!(pre_ring.accepted);
+    assert_eq!(
+        pre_ring.output.call.as_ref().unwrap().phase,
+        exchange_protocol::CallPhase::OperatorSession
+    );
+    assert!(
+        pre_ring
+            .output
+            .debug
+            .messages
+            .iter()
+            .any(|message| message.code == "ring_generator_required")
+    );
+
+    let ringing = exchange(
+        stream,
+        physical_message(
+            6,
+            5,
             vec![
                 cord(PortId::Subscriber(0), PortId::Operator),
                 cord(PortId::Subscriber(1), PortId::RingGenerator),
@@ -109,8 +132,8 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
     let routed = exchange(
         stream,
         physical_message(
+            7,
             6,
-            5,
             vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
             [0; 4],
         ),
@@ -134,8 +157,8 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
     let completed = exchange(
         stream,
         physical_message(
+            8,
             7,
-            6,
             vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
             [0; 4],
         ),
@@ -146,14 +169,21 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
         exchange_protocol::CallPhase::Completed
     );
 
-    let cleared = exchange(stream, physical_message(8, 7, vec![], [0; 4]))?;
+    let cleared = exchange(stream, physical_message(9, 8, vec![], [0; 4]))?;
     assert!(
         cleared.accepted,
         "clearing the circuit was rejected: {:?}",
         cleared.error
     );
     assert!(cleared.output.call.is_none());
-    assert_eq!(cleared.output.printer_output.len(), 4);
+    assert_eq!(cleared.output.printer_output.len(), 5);
+    assert!(
+        cleared
+            .output
+            .printer_output
+            .iter()
+            .any(|entry| entry.text.contains("SERVICE ERROR"))
+    );
     assert!(
         cleared
             .output
@@ -161,15 +191,15 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
             .last()
             .unwrap()
             .text
-            .contains("SERVICE ERROR")
+            .contains("ENDING")
     );
 
-    let invalid = exchange(stream, message(9, 8, [0, 0, 0, 12]))?;
+    let invalid = exchange(stream, message(10, 9, [0, 0, 0, 12]))?;
     assert!(!invalid.accepted);
     assert_eq!(invalid.error.unwrap().code, "invalid_directory_digits");
     assert_eq!(invalid.state_revision, cleared.state_revision);
 
-    let restarted = exchange(stream, message(10, cleared.state_revision, [0, 0, 0, 2]))?;
+    let restarted = exchange(stream, message(11, cleared.state_revision, [0, 0, 0, 2]))?;
     assert!(restarted.accepted);
     assert!(restarted.output.call.is_none());
     assert!(restarted.output.calls.is_empty());

@@ -29,17 +29,16 @@ Open `http://127.0.0.1:7881`. The backend debug command boundary is `127.0.0.1:7
 7. Complete a voice turn and confirm the retained conversation shows the captured input, STT transcript, LLM response, synthesized output, sample counts, and replay controls.
 8. Trigger a failed voice turn and confirm the failure banner and retained conversation show the provider error.
 
-## Four-Shift Demo
+## Hardware Demo
 
-The normal backend command starts the complete authored demo. The smaller `Backend::new()` fixture remains available to focused one-Shift contract tests; it is not the live demo configuration.
+The normal backend command starts the small authored hardware demo. The four-Shift fixture remains available to focused development tests; it is not the live demo configuration.
 
-1. Start `just backend-debug` and `just debug-surface`, then confirm the graph starts at `run_start` with five Subscribers: Taren Kesh, Vira Dhal, Dr. Leya Varan, Captain Oren Vey, and Neri Tal.
-2. In Shift 1, use Directory IDs `0001` and `0002`, answer Taren, crank the Ring Generator, and route Taren to Vira. Clear the Circuit and confirm the graph enters Shift 2, `relief_train_7` is printed, and the Call list resets.
-3. In Shift 2, answer Dr. Leya, tune both controls into the clear band, hold EMS, release it, then route the parent-collapse Call to Oren. Confirm the interference indicator, EMS receipt, and no Service Error.
-4. In Shift 3, answer Neri while another Caller is Held, route the Circuit through a Tap Bridge, and hold then release its listen control. Confirm `tap_bridge_monitoring` follows the control, the intercepted fact appears in Operator Knowledge, and the graph reaches `final_choice`.
-5. At `final_choice`, use Directory ID `0002` for Taren and Trade Détente, `0004` for Oren and Managed Emergency Rule, or an unlisted ID for the standoff. Complete the final Routing where selected. Exactly one Ending is printed.
-6. Repeat the run with the required Call or EMS Call missed. Confirm authored fallback progression, the typed Service Error counter, and a terminal Ending still occur.
-7. Reset the Run and confirm the graph, Calls, counters, printer output, voice evidence, elapsed time, and frontend state return to the authored start.
+1. Start `just backend-debug` and `just debug-surface`, then confirm the graph starts at `run_start` with the authored hardware-demo Subscribers and a Directory page for `0001`.
+2. Start the Caller and use Directory ID `0002`; confirm the Directory presents Vira Dhal's `RECORDS OFFICE` listing and public note.
+3. Connect the Caller to the Operator, attempt a direct Circuit, and confirm the `ring_generator_required` diagnostic appears without a Routing receipt.
+4. Connect the requested Callee to the Ring Generator, crank, confirm the Callee Line Lamp lights, then replace the ring connection with a Tap Bridge Circuit.
+5. Tune both controls into the clear band, hold and release Police, then hold and release the Tap Bridge listen control. Confirm interference, Police completion, `tap_bridge_monitoring`, speaker activity, and Operator Knowledge.
+6. Complete and clear the Circuit. Confirm the successful Ending and all printer receipts, then reset and verify the graph, Calls, counters, printer output, voice evidence, clock, and frontend state return to the authored start.
 
 ## Component Checks
 

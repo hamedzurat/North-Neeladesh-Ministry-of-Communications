@@ -274,6 +274,7 @@ pub struct StateOutput {
     pub game_phase: GamePhase,
     pub clock: ClockState,
     pub speaker_active: bool,
+    pub interference_level: u8,
     pub tuning: TuningState,
     pub directory_pages: Vec<DirectoryPage>,
     pub printer_output: Vec<PrinterEntry>,
@@ -401,6 +402,7 @@ pub struct DebugStoryState {
     pub frontier: Vec<String>,
     pub current_story_beat: Option<String>,
     pub interference_reduced: bool,
+    pub interference_level: u8,
     pub operator_knowledge: Vec<String>,
     pub graph: Vec<DebugStoryNode>,
 }
@@ -678,12 +680,14 @@ impl RtpL16Packet {
             }
             payload = &payload[..payload.len() - padding];
         }
-        if payload.len() % 2 != 0 {
+        if !payload.len().is_multiple_of(2) {
             return Err(VoiceDatagramError::RtpOddPayload);
         }
         let samples = payload
-            .chunks_exact(2)
-            .map(|bytes| i16::from_be_bytes([bytes[0], bytes[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|bytes| i16::from_be_bytes(*bytes))
             .collect();
         Ok(Self {
             marker: packet[1] & 0x80 != 0,

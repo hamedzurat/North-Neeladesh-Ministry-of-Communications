@@ -59,6 +59,7 @@ The response wire shape is exactly:
     "game_phase": string,
     "clock": {"shift": u8, "elapsed_seconds": u32},
     "speaker_active": bool,
+    "interference_level": u8,
     "tuning": {"coarse": u16, "fine": u16},
     "directory_pages": [...],
     "printer_output": [...],
@@ -72,7 +73,7 @@ The response wire shape is exactly:
 }
 ```
 
-The response never echoes topology, held controls, directory digits, crank timestamps, Cabinet Frontend diagnostics, or Cabinet Frontend/session data. `speaker_active`, `tuning`, `calls`, `service_call`, and `tap_bridge_monitoring` are backend-owned output state. `call` is the Call currently connected to the Operator, while `calls` contains the current Call records, including competing and Held Callers. Terminal Call phases remain visible until their physical topology is cleared. `speaker_active` reflects an active Operator, service, or held Tap Bridge monitoring control. Backend diagnostics are only in `output.debug`; Cabinet Frontend diagnostics are only in `input.debug`.
+The response never echoes topology, held controls, directory digits, crank timestamps, Cabinet Frontend diagnostics, or Cabinet Frontend/session data. `speaker_active`, `interference_level`, `tuning`, `calls`, `service_call`, and `tap_bridge_monitoring` are backend-owned output state. `call` is the Call currently connected to the Operator, while `calls` contains the current Call records, including competing and Held Callers. Terminal Call phases remain visible until their physical topology is cleared. `speaker_active` reflects an active Operator, service, or held Tap Bridge monitoring control. `interference_level` is a bounded percentage for authored Diegetic Interference, where zero is clear. The demo clock maps eight real minutes to the Shift display from `08:00` through `16:00`; debug time advancement uses the same conversion. Backend diagnostics are only in `output.debug`; Cabinet Frontend diagnostics are only in `input.debug`.
 
 ## Commands
 
@@ -121,7 +122,7 @@ Voice status and audio do not advance the authoritative Routing state. Each back
 Manual verification:
 
 1. Run `just backend` in one terminal and `just frontend` in another.
-2. Complete the four authored Shifts: Taren/Vira relief dispatch, Leya/Oren parent-collapse response with tuned interference and EMS, Neri/Vira intercepted Signal with competing Calls and Tap Bridge monitoring, and the final Taren or Oren Routing.
+2. Complete the authored hardware demonstration: Taren/Vira routing with Directory lookup, tuned interference, a Police Service Call, and Tap Bridge monitoring. The four-Shift fixture remains available for development coverage.
 3. Verify that Directory lookup, Ring Generator cranking, Held Callers, Tap Bridge listen control, EMS completion, printer receipts, and backend-owned Shift transitions appear on the Cabinet.
 4. Repeat the run with a missed Call or omitted EMS Service Call. Verify the typed Service Error and that an authored Ending is still reached.
 5. Change the Directory Terminal digits and verify the e-paper pages update from the backend; use `0002` or `0004` for the final Routing and an unlisted ID for the standoff branch.

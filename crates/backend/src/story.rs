@@ -395,6 +395,80 @@ impl AuthoredContent {
         }
     }
 
+    pub fn hardware_demo() -> Self {
+        let mut content = Self::demo();
+        content.call_premises = vec![CallPremise {
+            id: "hardware_training_request".to_string(),
+            caller_id: "taren_kesh".to_string(),
+            callee_id: "vira_dhal".to_string(),
+            caller_line_id: "railway_dispatch_office".to_string(),
+            callee_line_id: "factory_records_office".to_string(),
+            directory_ids: vec![2],
+        }];
+        content.story_beats = vec![StoryBeat {
+            id: "hardware_training".to_string(),
+            call_premise_id: "hardware_training_request".to_string(),
+        }];
+        content.story_events = vec![
+            authored_event("hardware_demo_success", "hardware_demo_success_ending"),
+            authored_event("hardware_demo_missed", "hardware_demo_missed_ending"),
+            authored_event("hardware_demo_invalid", "hardware_demo_invalid_ending"),
+        ];
+        content.endings = vec![
+            Ending {
+                id: "hardware_demo_complete".to_string(),
+                conclusion: "The Cabinet routing demonstration completed successfully.".to_string(),
+            },
+            Ending {
+                id: "hardware_demo_missed".to_string(),
+                conclusion: "The Caller waited, but the Cabinet demonstration missed the Call."
+                    .to_string(),
+            },
+            Ending {
+                id: "hardware_demo_invalid".to_string(),
+                conclusion: "The Cabinet demonstration recorded an invalid Routing.".to_string(),
+            },
+        ];
+        content.nodes = vec![
+            StoryNode {
+                id: "run_start".to_string(),
+                kind: StoryNodeKind::RunStart {
+                    next_node_id: "hardware_demo_call".to_string(),
+                },
+            },
+            shift_call_node(
+                "hardware_demo_call",
+                "hardware_training",
+                "hardware_demo_success_event",
+                "hardware_demo_missed_event",
+                "hardware_demo_invalid_event",
+            ),
+            event_node("hardware_demo_success_event", "hardware_demo_success"),
+            event_node("hardware_demo_missed_event", "hardware_demo_missed"),
+            event_node("hardware_demo_invalid_event", "hardware_demo_invalid"),
+            StoryNode {
+                id: "hardware_demo_success_ending".to_string(),
+                kind: StoryNodeKind::Ending {
+                    ending_id: "hardware_demo_complete".to_string(),
+                },
+            },
+            StoryNode {
+                id: "hardware_demo_missed_ending".to_string(),
+                kind: StoryNodeKind::Ending {
+                    ending_id: "hardware_demo_missed".to_string(),
+                },
+            },
+            StoryNode {
+                id: "hardware_demo_invalid_ending".to_string(),
+                kind: StoryNodeKind::Ending {
+                    ending_id: "hardware_demo_invalid".to_string(),
+                },
+            },
+        ];
+        content.start_node_id = "run_start".to_string();
+        content
+    }
+
     pub fn four_shift_demo() -> Self {
         let mut content = Self::demo();
         let leya = content
@@ -753,6 +827,15 @@ impl CompiledStoryGraph {
             .line_listings
             .iter()
             .find(|listing| listing.subscriber_ids.iter().any(|id| id == subscriber_id))
+    }
+
+    pub fn subscriber_id_for_line(&self, line: u8) -> Option<&str> {
+        self.content
+            .line_listings
+            .iter()
+            .find(|listing| listing.line == line)
+            .and_then(|listing| listing.subscriber_ids.first())
+            .map(String::as_str)
     }
 
     pub fn authored_call_for_caller_line(&self, caller_line: u8) -> Option<(u8, u8)> {
