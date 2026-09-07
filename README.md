@@ -2,8 +2,9 @@
 
 Local development instructions for the hardware-first demo. The Rust backend
 owns the game state. The Odin frontend is the GUI simulator for the telephone
-cabinet. The Python Cabinet Frontend is an optional dummy hardware client that
-uses the same backend protocol.
+cabinet. Odin and the Python Cabinet Frontend are alternative gameplay clients:
+use Odin to test locally, and use the Cabinet Frontend as the arcade client.
+Only one gameplay client should be connected to a backend at a time.
 
 ## Prerequisites
 
@@ -39,17 +40,11 @@ The GUI build can be checked separately:
 just frontend-build
 ```
 
-## Recommended Full Local Demo
+## GUI Test Run
 
-Run the backend, debug dashboard, Odin GUI, and optional dummy Cabinet together.
-This is the setup for proving the game works through the GUI and that the
-Cabinet Frontend can consume the same backend state.
-
-Use three terminals for the Odin run. Use a fourth terminal later for a
-separate Cabinet-client run; do not connect Odin and the Cabinet Frontend to
-the same backend at the same time. The backend currently accepts one ordered
-gameplay input stream, so two clients would overwrite or reject each other's
-topology and state revision.
+This is the complete local Odin setup, including real voice transport. Use four
+terminals. Do not start the Cabinet Frontend in this run; it is the alternative
+arcade client described later.
 
 ### Terminal 1: debug backend
 
@@ -93,14 +88,42 @@ At the end, click `Reset run` and verify that Calls, counters, elapsed time,
 printer output, Story Graph state, and retained voice evidence return to the
 start state.
 
-### Terminal 3: Odin gameplay GUI
+### Terminal 3: voice daemon
+
+The daemon is required for microphone capture and speaker playback. It is the
+Cabinet-side audio transport; the backend still runs STT, dialogue, and TTS.
+
+Before the first real voice run, provision the local model assets:
+
+```sh
+just voice-setup
+just voice-preflight
+```
+
+Then start the daemon:
+
+```sh
+just voice-daemon
+```
+
+For a no-microphone test, use the synthetic capture path instead:
+
+```sh
+just voice-demo
+```
+
+Without either `voice-daemon` or `voice-demo`, PTT may send a backend request,
+but there will be no microphone-to-STT-to-TTS-to-speaker path.
+
+### Terminal 4: Odin gameplay GUI
 
 ```sh
 just frontend
 ```
 
 This builds the frontend and opens a borderless full-screen window connected to
-`127.0.0.1:7878`. Close the window to stop it.
+`127.0.0.1:7878`. Close the window to stop it. With an Operator cord
+connected, hold `PTT / OPERATOR` to test the complete voice path.
 
 For wire-level troubleshooting instead:
 
@@ -110,24 +133,6 @@ just frontend-trace
 
 The frontend stays open and displays `BACKEND OFFLINE // RETRYING` if the
 backend is unavailable. Start Terminal 1 first, or wait for reconnection.
-
-### Terminal 4: dummy Cabinet Frontend, after Odin
-
-```sh
-NN_HARDWARE_MODE=dummy uv run --directory python/cabinet_frontend \
-  python -m hardware_frontend --backend-address 127.0.0.1:7878
-```
-
-Before starting this command, close Odin and click `Reset run` in the debug
-dashboard. This runs the Cabinet Frontend as the sole game client. It prints
-dummy lamp, Directory, printer, speaker, and audio updates. It does not open a
-second game or own story logic.
-
-The current dummy input components are intentionally no-op, so this mode
-validates Cabinet output mapping and protocol connection, not complete gameplay
-through dummy controls. Use the Odin GUI for the playable local run. Once the
-Cabinet input components are implemented, replace Odin with the Cabinet client
-and run the same manual sequence below against the same backend.
 
 ## Odin Controls
 
@@ -170,7 +175,8 @@ Odin before continuing.
 4. Hold `PTT / OPERATOR` briefly. The speaker indicator should become active.
 5. Before ringing, drag `RAIL DISPATCH` directly to `KHARAD CLINIC`.
 6. Check the Odin diagnostic and dashboard for `ring_generator_required`.
-7. Remove the rejected direct cord, then remove the Operator cord.
+7. Remove the rejected direct cord. The attempted direct connection replaces
+   the Operator cord in the GUI; the Call remains pending.
 
 This verifies that the GUI sends a valid topology, Directory digits, and held
 controls, and that the backend returns its state rather than the GUI inventing
@@ -225,14 +231,54 @@ The third authored Call is Leya Varan to Oren Vey and requires Directory
 9. Hold `FIRE` when the Fire Service state appears, then release it after the
    state and receipt update.
 
-## Dummy Cabinet Frontend
+## Arcade Cabinet Client
 
-The dummy Cabinet is a second protocol client. It does not provide another
-GUI; use it to verify that the same backend snapshots drive lamps, Directory,
-printer, audio state, and other hardware adapters.
+The Cabinet Frontend is the intended arcade client. It is not an observer that
+should run beside Odin. The normal split is:
 
-To run only the dummy Cabinet, stop the Odin frontend, keep the debug backend
-running, then use a terminal:
+- Odin GUI: local development and gameplay testing.
+- Raspberry Pi Cabinet Frontend: the physical arcade client.
+- Rust backend: one authoritative game process used by either client.
+
+After the Cabinet input adapters are implemented, play the exact same manual
+sequence from the Cabinet controls instead of starting Odin. Do not connect
+Odin and the Cabinet Frontend to the same backend at once; both send ordered
+input snapshots and would compete over topology and state revision.
+
+For a networked arcade setup, run the backend on the laptop/arcade host with a
+LAN-reachable address, then configure the Pi to use that host:
+
+```sh
+# On the laptop or arcade host. Restrict these ports with the local firewall.
+just backend address=0.0.0.0:7878 voice_address=0.0.0.0:7879
+
+# On the Pi, for the Cabinet-side audio transport.
+just voice-daemon backend_address=192.168.1.20:7879
+```
+
+Replace `192.168.1.20` with the host's LAN address. Deploy and configure the
+Cabinet Frontend from [`python/cabinet_frontend/README.md`](python/cabinet_frontend/README.md),
+using `NN_BACKEND_ADDRESS=192.168.1.20:7878`. Start the installed service on
+the Pi:
+
+```sh
+sudo systemctl start north-neeladesh-hardware-frontend.service
+journalctl -u north-neeladesh-hardware-frontend.service -f
+```
+
+The voice daemon is separate from the Cabinet Frontend process. It carries
+microphone PCM to the laptop backend and plays returned synthesized audio on
+the Cabinet device. The Cabinet Frontend carries controls and hardware output.
+
+### Dummy mode: adapter check only
+
+Dummy mode is not the arcade and is not a second GUI. Its purpose is to let you
+develop and test the Cabinet protocol/output boundary on a laptop without GPIO,
+SPI, I2C, `/dev/leds0`, or physical hardware. The current dummy input devices
+are no-op, so they cannot play the game by themselves.
+
+Stop Odin first, keep the debug backend and debug dashboard running, click
+`Reset run`, then run the dummy client as the only game client:
 
 ```sh
 NN_HARDWARE_MODE=dummy uv run --directory python/cabinet_frontend \
@@ -259,31 +305,25 @@ uv run --directory python/cabinet_frontend \
   python -m unittest discover -s hardware_frontend/tests -t . -v
 ```
 
-## Optional Voice Test
+## Voice Diagnostics
 
-The GUI can exercise the voice boundary through PTT, but local model assets
-must be installed first:
-
-```sh
-uv sync --project python
-just voice-preflight
-```
-
-For a hardware-free relay check, keep `just backend-debug` running and use
-another terminal:
+For a hardware-free relay check, keep the backend running and use another
+terminal:
 
 ```sh
 just voice-smoke
 ```
 
-For the synthetic capture demo:
+For a synthetic capture demo that still exercises the backend workers and
+audio return path:
 
 ```sh
 just voice-demo
 ```
 
-Then hold `PTT / OPERATOR` while the Operator cord is connected. Voice failure
-must produce a diagnostic; it must not create a fake Routing or Story event.
+Voice failure must produce a diagnostic; it must not create a fake Routing or
+Story event. For the real microphone/speaker path, use `just voice-daemon` as
+described in the GUI test run.
 
 ## Debug Surface Reference
 
