@@ -223,6 +223,31 @@ fn direct_connection_before_ringing_is_rejected_without_a_routing_receipt() {
             .iter()
             .any(|message| message.code == "ring_generator_required")
     );
+
+    let awaiting = apply(&mut backend, &mut sequence, vec![], HeldControls::default());
+    assert_eq!(
+        awaiting.output.call.as_ref().unwrap().phase,
+        CallPhase::AwaitingRouting
+    );
+    let bypass = apply(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
+        HeldControls::default(),
+    );
+    assert_eq!(
+        bypass.output.call.as_ref().unwrap().phase,
+        CallPhase::AwaitingRouting
+    );
+    assert_eq!(bypass.output.shift.completed_routings, 0);
+    assert!(
+        bypass
+            .output
+            .debug
+            .messages
+            .iter()
+            .any(|message| message.code == "ring_generator_required")
+    );
 }
 
 #[test]
