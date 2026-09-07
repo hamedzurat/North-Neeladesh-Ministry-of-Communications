@@ -10,6 +10,14 @@ fn debug_snapshot_exposes_authoritative_run_story_and_diagnostics() {
     assert_eq!(snapshot.run.state_revision, 0);
     assert_eq!(snapshot.story.current_node_id, "run_start");
     assert_eq!(snapshot.story.frontier, vec!["shift_call"]);
+    let start = snapshot
+        .story
+        .graph
+        .iter()
+        .find(|node| node.id == "run_start")
+        .expect("debug snapshot should expose the authored start node");
+    assert_eq!(start.kind, "run_start");
+    assert_eq!(start.outgoing, vec!["shift_call"]);
     assert_eq!(snapshot.subscribers.len(), 4);
     assert_eq!(snapshot.subscribers[0].line, Some(0));
     assert_eq!(snapshot.frontend.transport_connected, false);

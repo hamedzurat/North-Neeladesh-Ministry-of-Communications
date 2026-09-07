@@ -114,6 +114,27 @@
     .wire-json pre { max-height: 300px; padding: 10px; border: 2px solid var(--ink); background: #1d1d1d; color: #f7edc7; overflow: auto; }
     .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
     .wide { grid-column: 1 / -1; }
+    .graph-meta { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; color: var(--muted); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+    .graph-key { display: inline-flex; align-items: center; gap: 6px; }
+    .graph-key::before { content: ""; width: 13px; height: 13px; display: inline-block; border: 2px solid var(--ink); background: #fffdf5; }
+    .graph-key.current::before { background: var(--cyan); }
+    .graph-key.frontier::before { background: var(--yellow); }
+    .graph-key.ending::before { background: var(--red); }
+    .story-graph { min-height: 270px; padding: 12px; border: 3px solid var(--ink); background: #171717; overflow-x: auto; }
+    .story-graph svg { display: block; min-width: 900px; }
+    .story-edge { fill: none; stroke: #8e8b80; stroke-width: 2; marker-end: url(#story-arrow); }
+    .story-edge.live { stroke: var(--yellow); stroke-width: 4; }
+    .story-node { cursor: default; outline: none; }
+    .story-node.frontier { cursor: pointer; }
+    .story-node rect { fill: #fffdf5; stroke: var(--ink); stroke-width: 3; }
+    .story-node.current rect { fill: var(--cyan); }
+    .story-node.frontier rect { fill: var(--yellow); }
+    .story-node.ending rect { fill: var(--red); }
+    .story-node.current.frontier rect { fill: var(--green); }
+    .story-node:focus rect, .story-node:hover rect { stroke: var(--blue); stroke-width: 5; }
+    .story-node text { pointer-events: none; fill: var(--ink); font-weight: 900; }
+    .story-node .node-id { font-size: 11px; }
+    .story-node .node-kind { font-size: 10px; font-weight: 400; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 8px 6px; border-bottom: 2px solid var(--ink); text-align: left; vertical-align: top; }
     th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
@@ -174,10 +195,11 @@
     </section>
 
     <div class="grid">
-      <section class="panel"><div class="panel-title"><h2>Run / shift</h2></div><div id="run" class="facts"></div></section>
-      <section class="panel"><div class="panel-title"><h2>Story graph</h2></div><div id="story" class="facts"></div></section>
-      <section class="panel"><div class="panel-title"><h2>Counters</h2></div><div id="counters" class="facts"></div></section>
-      <section class="panel"><div class="panel-title"><h2>Cabinet frontend</h2></div><div id="frontend" class="facts"></div></section>
+       <section class="panel"><div class="panel-title"><h2>Run / shift</h2></div><div id="run" class="facts"></div></section>
+       <section class="panel"><div class="panel-title"><h2>Story graph</h2></div><div id="story" class="facts"></div></section>
+       <section class="panel"><div class="panel-title"><h2>Counters</h2></div><div id="counters" class="facts"></div></section>
+       <section class="panel wide"><div class="panel-title"><h2>Authored story DAG</h2><span id="graph-status" class="muted">waiting for graph</span></div><div class="graph-meta"><span class="graph-key current">current node</span><span class="graph-key frontier">authored frontier</span><span class="graph-key ending">ending</span><span>click a frontier node to request an authored path</span></div><div id="story-graph" class="story-graph"><div class="empty">Waiting for the authoritative Story Graph.</div></div></section>
+       <section class="panel"><div class="panel-title"><h2>Cabinet frontend</h2></div><div id="frontend" class="facts"></div></section>
       <section class="panel wide"><div class="panel-title"><h2>Frontend wire state</h2><span class="muted">exact JSON received and sent</span></div><div class="wire-json"><div class="label">last input received from frontend</div><pre id="frontend-input">No frontend input received.</pre></div><div class="wire-json"><div class="label">last output sent to frontend</div><pre id="frontend-output">No backend output sent.</pre></div></section>
       <section class="panel wide"><div class="panel-title"><h2>Calls</h2></div><div id="calls"></div></section>
       <section class="panel wide"><div class="panel-title"><h2>Subscribers</h2></div><div id="subscribers"></div></section>
@@ -221,9 +243,10 @@
       } else {
         alert.className = 'alert';
       }
-      document.getElementById('run').innerHTML = rows({run: snapshot.run.number, revision: snapshot.run.state_revision, elapsed: snapshot.run.elapsed_seconds + 's', phase: snapshot.run.game_phase, godmode: snapshot.run.godmode, bypass: snapshot.run.bypass_restrictions, shift: snapshot.shift.number, shift_phase: snapshot.shift.phase});
-      document.getElementById('story').innerHTML = rows({node: snapshot.story.current_node_id, beat: snapshot.story.current_story_beat || '-', frontier: snapshot.story.frontier, interference: snapshot.story.interference_reduced, knowledge: snapshot.story.operator_knowledge});
-      document.getElementById('counters').innerHTML = rows(snapshot.counters || {});
+       document.getElementById('run').innerHTML = rows({run: snapshot.run.number, revision: snapshot.run.state_revision, elapsed: snapshot.run.elapsed_seconds + 's', phase: snapshot.run.game_phase, godmode: snapshot.run.godmode, bypass: snapshot.run.bypass_restrictions, shift: snapshot.shift.number, shift_phase: snapshot.shift.phase});
+       document.getElementById('story').innerHTML = rows({node: snapshot.story.current_node_id, beat: snapshot.story.current_story_beat || '-', frontier: snapshot.story.frontier, interference: snapshot.story.interference_reduced, knowledge: snapshot.story.operator_knowledge});
+       renderStoryGraph(snapshot.story);
+       document.getElementById('counters').innerHTML = rows(snapshot.counters || {});
       document.getElementById('frontend').innerHTML = rows({firmware: snapshot.frontend.firmware_version || '-', transport: snapshot.frontend.transport_connected, faults: snapshot.frontend.device_faults});
       document.getElementById('frontend-input').textContent = snapshot.frontend.last_input_json || 'No frontend input received.';
       document.getElementById('frontend-output').textContent = snapshot.frontend.last_output_json || 'No backend output sent.';
@@ -234,8 +257,89 @@
       document.getElementById('errors').innerHTML = failures.length ? failures.map(error => `<div class="conversation failed"><div><div class="conversation-id">${esc(error.code)}</div><span class="badge failed">failure</span></div><div class="conversation-copy"><p>${esc(error.message)}</p></div><div class="muted">backend diagnostic</div></div>`).join('') : '<div class="empty">No failures retained.</div>';
       document.getElementById('voice-history').innerHTML = conversations.length ? [...conversations].reverse().map(conversationCard).join('') : '<div class="empty">No voice conversations retained.</div>';
       document.getElementById('calls').innerHTML = table(snapshot.calls, ['caller_line', 'requested_callee_line', 'phase']);
-      document.getElementById('subscribers').innerHTML = table(snapshot.subscribers, ['id', 'name', 'line', 'status', 'availability', 'pressure', 'current_goal', 'status_flags']);
-    }
+       document.getElementById('subscribers').innerHTML = table(snapshot.subscribers, ['id', 'name', 'line', 'status', 'availability', 'pressure', 'current_goal', 'status_flags']);
+     }
+
+     function renderStoryGraph(story) {
+       const graph = story.graph || [];
+       const container = document.getElementById('story-graph');
+       const status = document.getElementById('graph-status');
+       if (!graph.length) {
+         status.textContent = 'graph unavailable';
+         container.innerHTML = '<div class="empty">The backend snapshot did not include an authored graph.</div>';
+         return;
+       }
+       const byId = new Map(graph.map(node => [node.id, node]));
+       const indegree = new Map(graph.map(node => [node.id, 0]));
+       graph.forEach(node => node.outgoing.forEach(next => indegree.set(next, (indegree.get(next) || 0) + 1)));
+       const rank = new Map([[graph.find(node => node.id === 'run_start')?.id || graph[0].id, 0]]);
+       const queue = [...rank.keys()];
+       const remaining = new Map(indegree);
+       while (queue.length) {
+         const id = queue.shift();
+         const node = byId.get(id);
+         if (!node) continue;
+         node.outgoing.forEach(next => {
+           rank.set(next, Math.max(rank.get(next) || 0, (rank.get(id) || 0) + 1));
+           remaining.set(next, remaining.get(next) - 1);
+           if (remaining.get(next) === 0) queue.push(next);
+         });
+       }
+       graph.forEach(node => { if (!rank.has(node.id)) rank.set(node.id, 0); });
+       const layers = new Map();
+       graph.forEach(node => {
+         const layer = layers.get(rank.get(node.id)) || [];
+         layer.push(node);
+         layers.set(rank.get(node.id), layer);
+       });
+       [...layers.values()].forEach(layer => layer.sort((left, right) => left.id.localeCompare(right.id)));
+       const nodeWidth = 168;
+       const nodeHeight = 64;
+       const columnGap = 28;
+       const rowGap = 48;
+       const pad = 32;
+       const maxLayer = Math.max(...[...layers.values()].map(layer => layer.length));
+       const width = Math.max(900, pad * 2 + maxLayer * nodeWidth + (maxLayer - 1) * columnGap);
+       const height = pad * 2 + (Math.max(...rank.values()) + 1) * nodeHeight + Math.max(...rank.values()) * rowGap;
+       const positions = new Map();
+       layers.forEach((layer, layerRank) => layer.forEach((node, index) => positions.set(node.id, {
+         x: pad + index * (nodeWidth + columnGap),
+         y: pad + layerRank * (nodeHeight + rowGap),
+       })));
+       const current = story.current_node_id;
+       const frontier = new Set(story.frontier || []);
+       const edges = graph.flatMap(node => node.outgoing.map(next => {
+         const from = positions.get(node.id);
+         const to = positions.get(next);
+         if (!from || !to) return '';
+         const live = node.id === current && frontier.has(next);
+         const startX = from.x + nodeWidth / 2;
+         const endX = to.x + nodeWidth / 2;
+         const startY = from.y + nodeHeight;
+         const endY = to.y;
+         const bend = Math.max(18, (endY - startY) / 2);
+         return `<path class="story-edge ${live ? 'live' : ''}" d="M ${startX} ${startY} C ${startX} ${startY + bend}, ${endX} ${endY - bend}, ${endX} ${endY}"/>`;
+       })).join('');
+       const nodes = graph.map(node => {
+         const position = positions.get(node.id);
+         const ending = node.kind === 'ending';
+         const classes = [
+           'story-node',
+           node.id === current ? 'current' : '',
+           frontier.has(node.id) ? 'frontier' : '',
+           ending ? 'ending' : '',
+         ].filter(Boolean).join(' ');
+         const action = frontier.has(node.id) ? ' tabindex="0" role="button"' : '';
+         return `<g class="${classes}" data-node-id="${esc(node.id)}" transform="translate(${position.x} ${position.y})"${action}><rect width="${nodeWidth}" height="${nodeHeight}"/><text class="node-id" x="10" y="25">${esc(node.id)}</text><text class="node-kind" x="10" y="45">${esc(node.kind)}</text></g>`;
+       }).join('');
+       container.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Authored Story Graph"><defs><marker id="story-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 z" fill="#8e8b80"/></marker></defs>${edges}${nodes}</svg>`;
+       container.querySelectorAll('.story-node.frontier').forEach(node => {
+         const select = () => send('select_story_path', {id: node.dataset.nodeId});
+         node.addEventListener('click', select);
+         node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(); } });
+       });
+       status.textContent = `${graph.length} nodes // current ${current} // revision ${latestSnapshot.run.state_revision}`;
+     }
 
     function conversationCard(conversation) {
       const failed = conversation.status === 'failed' || conversation.error;
