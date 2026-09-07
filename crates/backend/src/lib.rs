@@ -708,13 +708,16 @@ impl Backend {
                 .as_ref()
                 .is_some_and(|call| direct_routing_topology(input, call));
         let pre_ring_direct_connection = self.state.call.as_ref().is_some_and(|call| {
-            call.phase == exchange_protocol::CallPhase::OperatorSession
-                && (has_direct_subscriber_circuit(input, call.caller_line)
-                    || has_tap_bridge_circuit(
-                        &input.cord_topology,
-                        &PortId::Subscriber(call.caller_line),
-                        &PortId::Subscriber(call.requested_callee_line),
-                    ))
+            matches!(
+                call.phase,
+                exchange_protocol::CallPhase::OperatorSession
+                    | exchange_protocol::CallPhase::AwaitingRouting
+            ) && (has_direct_subscriber_circuit(input, call.caller_line)
+                || has_tap_bridge_circuit(
+                    &input.cord_topology,
+                    &PortId::Subscriber(call.caller_line),
+                    &PortId::Subscriber(call.requested_callee_line),
+                ))
         });
         let transition = if pre_ring_direct_connection || interference_blocks_routing {
             unchanged_call_transition(&self.state)
