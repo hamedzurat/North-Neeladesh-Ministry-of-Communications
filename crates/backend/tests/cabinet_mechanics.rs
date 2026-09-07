@@ -318,6 +318,33 @@ fn hardware_demo_exposes_directory_interference_police_and_tap_bridge_state() {
             .any(|line| line.contains("LINE LISTING"))
     );
 
+    let ems_attempt = send_demo(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
+        HeldControls {
+            ems: true,
+            ..HeldControls::default()
+        },
+        TuningState::default(),
+    );
+    assert_eq!(ems_attempt.output.service_call, None);
+    assert!(
+        ems_attempt
+            .output
+            .debug
+            .messages
+            .iter()
+            .any(|message| message.code == "police_service_required")
+    );
+    send_demo(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
+        HeldControls::default(),
+        TuningState::default(),
+    );
+
     let police = HeldControls {
         police: true,
         ..HeldControls::default()

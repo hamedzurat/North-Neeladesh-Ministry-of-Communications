@@ -32,6 +32,7 @@ class OutputMapper:
         self._next_page_at = 0.0
         self._seen_printer_entries: set[int] = set()
         self._last_audio_state: bool | None = None
+        self._last_interference_level = 0
         self.faults: list[str] = []
 
     def apply(self, output: dict[str, Any], now: float | None = None) -> None:
@@ -74,7 +75,16 @@ class OutputMapper:
             ):
                 self._seen_printer_entries.add(entry_id)
 
-        audio_active = bool(output.get("speaker_active", False))
+        interference_level = max(0, min(100, int(output.get("interference_level", 0))))
+        if interference_level != self._last_interference_level and self._try(
+            "audio_interference",
+            lambda: self.audio.set_interference(interference_level),
+        ):
+            self._last_interference_level = interference_level
+
+        audio_active = bool(output.get("speaker_active", False)) or bool(
+            output.get("tap_bridge_audio_active", False)
+        )
         if audio_active != self._last_audio_state and self._try(
             "audio", lambda: self.audio.set_active(audio_active)
         ):

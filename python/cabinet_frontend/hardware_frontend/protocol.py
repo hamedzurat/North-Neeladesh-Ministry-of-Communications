@@ -162,6 +162,8 @@ def validate_state_message(message: dict[str, Any]) -> None:
         "game_phase",
         "clock",
         "speaker_active",
+        "interference_level",
+        "tap_bridge_audio_active",
         "tuning",
         "directory_pages",
         "printer_output",
