@@ -167,6 +167,7 @@ fn tap_bridge_routes_a_circuit_and_only_monitors_while_held() {
         listening,
     );
     assert_eq!(listening.output.tap_bridge_monitoring, Some(1));
+    assert!(listening.output.tap_bridge_audio_active);
     assert!(listening.output.speaker_active);
 
     let released = apply(
@@ -179,6 +180,7 @@ fn tap_bridge_routes_a_circuit_and_only_monitors_while_held() {
         HeldControls::default(),
     );
     assert_eq!(released.output.tap_bridge_monitoring, None);
+    assert!(!released.output.tap_bridge_audio_active);
     assert!(!released.output.speaker_active);
 }
 
@@ -380,7 +382,26 @@ fn hardware_demo_exposes_directory_interference_police_and_tap_bridge_state() {
     );
     assert_eq!(tap.output.interference_level, 0);
 
-    let listening = HeldControls {
+    let wrong_bridge_control = send_demo(
+        &mut backend,
+        &mut sequence,
+        vec![
+            cord(PortId::Subscriber(0), PortId::Tap(3)),
+            cord(PortId::Subscriber(1), PortId::Tap(4)),
+        ],
+        HeldControls {
+            tap_1: true,
+            ..HeldControls::default()
+        },
+        TuningState {
+            coarse: 512,
+            fine: 512,
+        },
+    );
+    assert_eq!(wrong_bridge_control.output.tap_bridge_monitoring, None);
+    assert!(!wrong_bridge_control.output.tap_bridge_audio_active);
+
+    let listening_controls = HeldControls {
         tap_2: true,
         ..HeldControls::default()
     };
@@ -391,13 +412,29 @@ fn hardware_demo_exposes_directory_interference_police_and_tap_bridge_state() {
             cord(PortId::Subscriber(0), PortId::Tap(3)),
             cord(PortId::Subscriber(1), PortId::Tap(4)),
         ],
-        listening,
+        listening_controls.clone(),
         TuningState {
             coarse: 512,
             fine: 512,
         },
     );
     assert_eq!(listening.output.tap_bridge_monitoring, Some(2));
+    assert!(listening.output.tap_bridge_audio_active);
+    assert!(backend.debug_snapshot().story.operator_knowledge.is_empty());
+    let listening_again = send_demo(
+        &mut backend,
+        &mut sequence,
+        vec![
+            cord(PortId::Subscriber(0), PortId::Tap(3)),
+            cord(PortId::Subscriber(1), PortId::Tap(4)),
+        ],
+        listening_controls,
+        TuningState {
+            coarse: 512,
+            fine: 512,
+        },
+    );
+    assert_eq!(listening_again.output.tap_bridge_monitoring, Some(2));
     assert!(
         backend
             .debug_snapshot()
@@ -421,6 +458,7 @@ fn hardware_demo_exposes_directory_interference_police_and_tap_bridge_state() {
         },
     );
     assert_eq!(released.output.tap_bridge_monitoring, None);
+    assert!(!released.output.tap_bridge_audio_active);
 
     let completed = send_demo(
         &mut backend,
@@ -475,6 +513,77 @@ fn hardware_demo_clock_maps_eight_real_minutes_to_the_shift_display() {
 
     assert!(advanced.accepted);
     assert_eq!(advanced.snapshot.run.elapsed_seconds, 16 * 60 * 60);
+}
+
+#[test]
+fn hardware_demo_requires_directory_report_before_police_service() {
+    let mut backend = Backend::new_hardware_demo();
+    let mut sequence = 1;
+    let mut directory = input(sequence, sequence - 1, vec![], HeldControls::default());
+    directory.input.directory_digits = [0, 0, 0, 2];
+    backend.apply_input_message(directory);
+    sequence += 1;
+    let directory_operator = input(
+        sequence,
+        sequence - 1,
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
+        HeldControls::default(),
+    );
+    backend.apply_input_message(directory_operator);
+    sequence += 1;
+    let mut wrong_directory = input(
+        sequence,
+        sequence - 1,
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
+        HeldControls::default(),
+    );
+    wrong_directory.input.directory_digits = [0, 0, 0, 1];
+    backend.apply_input_message(wrong_directory);
+    sequence += 1;
+    let premature = apply(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
+        HeldControls {
+            police: true,
+            ..HeldControls::default()
+        },
+    );
+    assert_eq!(premature.output.service_call, None);
+    assert!(
+        premature
+            .output
+            .debug
+            .messages
+            .iter()
+            .any(|message| message.code == "directory_report_required")
+    );
+
+    let operator_cord = vec![cord(PortId::Subscriber(0), PortId::Operator)];
+    let mut directory = input(
+        sequence,
+        sequence - 1,
+        operator_cord.clone(),
+        HeldControls::default(),
+    );
+    directory.input.directory_digits = [0, 0, 0, 2];
+    backend.apply_input_message(directory);
+    sequence += 1;
+    let mut police = input(
+        sequence,
+        sequence - 1,
+        operator_cord,
+        HeldControls {
+            police: true,
+            ..HeldControls::default()
+        },
+    );
+    police.input.directory_digits = [0, 0, 0, 2];
+    let police = backend.apply_input_message(police);
+    assert_eq!(
+        police.output.service_call.as_ref().unwrap().service,
+        ServiceKind::Police
+    );
 }
 
 #[test]

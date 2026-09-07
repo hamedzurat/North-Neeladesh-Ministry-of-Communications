@@ -93,6 +93,8 @@ pub struct Backend {
     last_service: Option<ServiceKind>,
     service_error_recorded: bool,
     last_interference_level: u8,
+    directory_lookup_id: Option<u16>,
+    tap_bridge_listen_frames: u8,
 }
 
 struct VoiceConversationRecord {
@@ -215,6 +217,8 @@ impl Backend {
             last_service: None,
             service_error_recorded: false,
             last_interference_level: 0,
+            directory_lookup_id: None,
+            tap_bridge_listen_frames: 0,
         }
     }
 
@@ -309,6 +313,8 @@ impl Backend {
         self.last_service = None;
         self.service_error_recorded = false;
         self.last_interference_level = 0;
+        self.directory_lookup_id = None;
+        self.tap_bridge_listen_frames = 0;
     }
 
     pub fn apply_input_message(&mut self, message: InputMessage) -> StateMessage {
@@ -657,6 +663,10 @@ impl Backend {
         self.expire_calls();
         let input = &message.input;
         let input_service = service_from_controls(&input.held_controls);
+        let selected_directory_id = directory_id(input.directory_digits);
+        if known_directory_id(selected_directory_id) {
+            self.directory_lookup_id = Some(selected_directory_id);
+        }
         let monitoring_story = self.story_node_id == "shift_3_call"
             || self.story_node_id.starts_with("intercepted_signal")
             || self.story_node_id.starts_with("hardware_demo");
@@ -787,12 +797,15 @@ impl Backend {
             self.append_ending_receipt(&mut next_state);
         }
         next_state.tap_bridge_monitoring = tap_bridge_monitoring(input, &next_state);
-        if next_state.tap_bridge_monitoring.is_some()
-            && monitoring_story
-            && self.operator_knowledge.is_empty()
-        {
-            self.operator_knowledge
-                .push("Neri Tal's intercepted signal mentions Vira Dhal".to_string());
+        next_state.tap_bridge_audio_active = next_state.tap_bridge_monitoring.is_some();
+        if next_state.tap_bridge_monitoring.is_some() && monitoring_story {
+            self.tap_bridge_listen_frames = self.tap_bridge_listen_frames.saturating_add(1);
+            if self.tap_bridge_listen_frames >= 2 && self.operator_knowledge.is_empty() {
+                self.operator_knowledge
+                    .push("Neri Tal's intercepted signal mentions Vira Dhal".to_string());
+            }
+        } else {
+            self.tap_bridge_listen_frames = 0;
         }
         let routing_receipt = transition.routing_receipt;
 
@@ -810,6 +823,7 @@ impl Backend {
             clock: next_state.clock,
             speaker_active,
             interference_level: next_state.interference_level,
+            tap_bridge_audio_active: next_state.tap_bridge_audio_active,
             tuning: input.tuning.clone(),
             directory_pages: directory_pages(input.directory_digits),
             printer_output: next_state.printer_output,
@@ -1993,17 +2007,31 @@ fn apply_service_transition(
             && state.shift.phase == ShiftPhase::Active =>
         {
             let service = held_service.expect("service checked above");
-            state.service_call = Some(ServiceCallStatus {
-                service,
-                phase: ServiceCallPhase::Active,
-            });
-            for call in &mut state.calls {
-                if call.phase == exchange_protocol::CallPhase::OperatorSession {
-                    call.phase = exchange_protocol::CallPhase::Held;
+            if backend.required_service_kind_for_shift(state.shift.number)
+                == Some(ServiceKind::Police)
+                && backend.directory_lookup_id != Some(2)
+            {
+                state.debug.messages.push(BackendDiagnostic {
+                    code: "directory_report_required".to_string(),
+                    message: "look up Directory 0002 before placing the Police Service Call"
+                        .to_string(),
+                });
+                if state.debug.messages.len() > MAX_FAULTS {
+                    state.debug.messages.remove(0);
                 }
+            } else {
+                state.service_call = Some(ServiceCallStatus {
+                    service,
+                    phase: ServiceCallPhase::Active,
+                });
+                for call in &mut state.calls {
+                    if call.phase == exchange_protocol::CallPhase::OperatorSession {
+                        call.phase = exchange_protocol::CallPhase::Held;
+                    }
+                }
+                state.call = None;
+                state.line_lamps = lamps_for_calls(&state.calls);
             }
-            state.call = None;
-            state.line_lamps = lamps_for_calls(&state.calls);
         }
         _ => {}
     }
@@ -2069,6 +2097,10 @@ fn directory_id(digits: [u8; 4]) -> u16 {
         .fold(0_u16, |value, digit| value * 10 + *digit as u16)
 }
 
+fn known_directory_id(id: u16) -> bool {
+    matches!(id, 1..=5)
+}
+
 fn has_wrong_direct_circuit(cords: &[CordConnection], caller: &PortId, callee: &PortId) -> bool {
     cords.len() == 1
         && cords.iter().any(|cord| {
@@ -2117,12 +2149,19 @@ fn lamps_for_calls(calls: &[exchange_protocol::CallStatus]) -> [bool; 16] {
 }
 
 fn has_tap_bridge_circuit(cords: &[CordConnection], caller: &PortId, callee: &PortId) -> bool {
-    (1..=2).any(|bridge| {
-        let first = PortId::Tap(bridge * 2 - 1);
-        let second = PortId::Tap(bridge * 2);
-        has_exact_cords(cords, &[(caller, &first), (callee, &second)])
-            || has_exact_cords(cords, &[(caller, &second), (callee, &first)])
-    })
+    (1..=2).any(|bridge| has_tap_bridge_circuit_on_bridge(cords, caller, callee, bridge))
+}
+
+fn has_tap_bridge_circuit_on_bridge(
+    cords: &[CordConnection],
+    caller: &PortId,
+    callee: &PortId,
+    bridge: u8,
+) -> bool {
+    let first = PortId::Tap(bridge * 2 - 1);
+    let second = PortId::Tap(bridge * 2);
+    has_exact_cords(cords, &[(caller, &first), (callee, &second)])
+        || has_exact_cords(cords, &[(caller, &second), (callee, &first)])
 }
 
 fn tap_bridge_monitoring(input: &InputState, state: &StateOutput) -> Option<u8> {
@@ -2136,10 +2175,11 @@ fn tap_bridge_monitoring(input: &InputState, state: &StateOutput) -> Option<u8> 
             matches!(
                 call.phase,
                 exchange_protocol::CallPhase::Connected | exchange_protocol::CallPhase::Completed
-            ) && has_tap_bridge_circuit(
+            ) && has_tap_bridge_circuit_on_bridge(
                 &input.cord_topology,
                 &PortId::Subscriber(call.caller_line),
                 &PortId::Subscriber(call.requested_callee_line),
+                *bridge,
             )
         })
     })
@@ -2899,6 +2939,7 @@ fn initial_state(
         },
         speaker_active: false,
         interference_level: 0,
+        tap_bridge_audio_active: false,
         tuning: TuningState::default(),
         directory_pages: directory_pages([0, 0, 0, 1]),
         printer_output: initial_printer_output(

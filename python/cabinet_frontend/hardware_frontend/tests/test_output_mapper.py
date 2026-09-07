@@ -34,7 +34,7 @@ class OutputMapperTests(unittest.TestCase):
         mapper = OutputMapper(*components)
         output = {
             "line_lamps": [True, False],
-            "clock": {"elapsed_seconds": 65},
+            "clock": {"elapsed_seconds": 28865},
             "directory_pages": [{"page_number": 1, "heading": "A", "lines": ["B"]}],
             "printer_output": [{"entry_id": 7, "text": "ROUTING 0 -> 1"}],
             "speaker_active": True,
@@ -44,7 +44,7 @@ class OutputMapperTests(unittest.TestCase):
         mapper.apply(output)
 
         self.assertEqual(components[0].calls, [("lines", [True, False])])
-        self.assertEqual(components[1].calls, [("seven_segment", "0105")])
+        self.assertEqual(components[1].calls, [("seven_segment", "0801")])
         self.assertEqual(components[2].calls, [("epaper", output["directory_pages"], 0)])
         self.assertEqual(components[3].calls, [("printer", "ROUTING 0 -> 1")])
         self.assertEqual(components[4].calls, [("audio", True)])

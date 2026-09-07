@@ -396,7 +396,7 @@ impl AuthoredContent {
     }
 
     pub fn hardware_demo() -> Self {
-        let mut content = Self::demo();
+        let mut content = Self::four_shift_demo();
         content.call_premises = vec![CallPremise {
             id: "hardware_training_request".to_string(),
             caller_id: "taren_kesh".to_string(),

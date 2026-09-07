@@ -60,6 +60,7 @@ The response wire shape is exactly:
     "clock": {"shift": u8, "elapsed_seconds": u32},
     "speaker_active": bool,
     "interference_level": u8,
+    "tap_bridge_audio_active": bool,
     "tuning": {"coarse": u16, "fine": u16},
     "directory_pages": [...],
     "printer_output": [...],
@@ -73,7 +74,7 @@ The response wire shape is exactly:
 }
 ```
 
-The response never echoes topology, held controls, directory digits, crank timestamps, Cabinet Frontend diagnostics, or Cabinet Frontend/session data. `speaker_active`, `interference_level`, `tuning`, `calls`, `service_call`, and `tap_bridge_monitoring` are backend-owned output state. `call` is the Call currently connected to the Operator, while `calls` contains the current Call records, including competing and Held Callers. Terminal Call phases remain visible until their physical topology is cleared. `speaker_active` reflects an active Operator, service, or held Tap Bridge monitoring control. `interference_level` is a bounded percentage for authored Diegetic Interference, where zero is clear. The demo clock maps eight real minutes to the Shift display from `08:00` through `16:00`; debug time advancement uses the same conversion. Backend diagnostics are only in `output.debug`; Cabinet Frontend diagnostics are only in `input.debug`.
+The response never echoes topology, held controls, directory digits, crank timestamps, Cabinet Frontend diagnostics, or Cabinet Frontend/session data. `speaker_active`, `interference_level`, `tap_bridge_audio_active`, `tuning`, `calls`, `service_call`, and `tap_bridge_monitoring` are backend-owned output state. `call` is the Call currently connected to the Operator, while `calls` contains the current Call records, including competing and Held Callers. Terminal Call phases remain visible until their physical topology is cleared. `speaker_active` reflects an active Operator, service, or held Tap Bridge monitoring control. `tap_bridge_audio_active` is true only while the held listen control matches a live Tap Bridge Circuit; it represents the authored dummy monitoring stream. `interference_level` is a bounded percentage for authored Diegetic Interference, where zero is clear. The demo clock maps eight real minutes to the Shift display from `08:00` through `16:00`; consumers interpret `elapsed_seconds` as seconds since midnight, not an elapsed MM:SS duration. Backend diagnostics are only in `output.debug`; Cabinet Frontend diagnostics are only in `input.debug`.
 
 ## Commands
 
@@ -123,8 +124,8 @@ Manual verification:
 
 1. Run `just backend` in one terminal and `just frontend` in another.
 2. Complete the authored hardware demonstration: Taren/Vira routing with Directory lookup, tuned interference, a Police Service Call, and Tap Bridge monitoring. The four-Shift fixture remains available for development coverage.
-3. Verify that Directory lookup, Ring Generator cranking, Held Callers, Tap Bridge listen control, EMS completion, printer receipts, and backend-owned Shift transitions appear on the Cabinet.
-4. Repeat the run with a missed Call or omitted EMS Service Call. Verify the typed Service Error and that an authored Ending is still reached.
+3. Verify that Directory lookup, Ring Generator cranking, Held Callers, Tap Bridge listen control, Police completion, printer receipts, and backend-owned Shift transitions appear on the Cabinet.
+4. Repeat the run with a missed Call or omitted Police Service Call. Verify the typed Service Error and that an authored Ending is still reached.
 5. Change the Directory Terminal digits and verify the e-paper pages update from the backend; use `0002` or `0004` for the final Routing and an unlisted ID for the standoff branch.
 
 For one real voice session, run `uv sync --project python` once during provisioning, configure the offline model assets, run `just voice-preflight`, then run `just backend` and `just voice-daemon`. PTT is controlled by the Cabinet Frontend; the relay stays listening while idle and carries only audio/status traffic. Use `just voice-smoke` for a hardware-free relay test; see `docs/voice-daemon.md` for the model and device configuration.

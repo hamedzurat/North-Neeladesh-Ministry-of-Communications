@@ -271,6 +271,20 @@ fn third_shift_supports_competing_calls_and_tap_bridge_monitoring() {
     let listening = backend.apply_input_message(listening);
     assert_eq!(listening.output.tap_bridge_monitoring, Some(1));
     assert!(listening.output.speaker_active);
+    assert!(backend.debug_snapshot().story.operator_knowledge.is_empty());
+    sequence += 1;
+    let mut listening_again = message(
+        sequence,
+        sequence - 1,
+        2,
+        vec![
+            cord(PortId::Subscriber(4), PortId::Tap(1)),
+            cord(PortId::Subscriber(1), PortId::Tap(2)),
+        ],
+    );
+    listening_again.input.held_controls.tap_1 = true;
+    let listening_again = backend.apply_input_message(listening_again);
+    assert_eq!(listening_again.output.tap_bridge_monitoring, Some(1));
     assert_eq!(
         backend.debug_snapshot().story.operator_knowledge,
         vec!["Neri Tal's intercepted signal mentions Vira Dhal"]

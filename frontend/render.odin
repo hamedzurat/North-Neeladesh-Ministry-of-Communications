@@ -179,9 +179,9 @@ ref_draw_clock :: proc(app: ^Input_State) {
 	area := ref_rect(940, 20, 480, 145)
 	ref_panel(area)
 	total_seconds := app.backend_output.elapsed_seconds
-	minutes := int(total_seconds / 60) % 100
-	seconds := int(total_seconds % 60)
-	digits := [4]int{minutes / 10, minutes % 10, seconds / 10, seconds % 10}
+	hours := int(total_seconds / 3600) % 100
+	minutes := int(total_seconds / 60) % 60
+	digits := [4]int{hours / 10, hours % 10, minutes / 10, minutes % 10}
 	start_x := area.x + 84
 	for digit, index in digits {
 		x := start_x + f32(index) * 76
@@ -197,7 +197,7 @@ ref_draw_clock :: proc(app: ^Input_State) {
 		ref_text(fmt.tprintf("CALL // %s", call.phase), area.x + 14, area.y + 98, 10, BLUE)
 	}
 	if app.backend_output.tap_bridge_monitoring >= 0 {
-		ref_text(fmt.tprintf("TAP BRIDGE %d MONITORING", app.backend_output.tap_bridge_monitoring), area.x + 14, area.y + 80, 10, BLUE)
+		ref_text(fmt.tprintf("TAP BRIDGE %d // DUMMY AUDIO", app.backend_output.tap_bridge_monitoring), area.x + 14, area.y + 80, 10, BLUE)
 	}
 	if service, ok := app.backend_output.service_call.?; ok {
 		ref_text(fmt.tprintf("SERVICE // %s %s", service.service, service.phase), area.x + 14, area.y + 80, 10, AMBER)

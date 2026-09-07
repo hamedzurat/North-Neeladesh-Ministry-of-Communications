@@ -275,6 +275,7 @@ pub struct StateOutput {
     pub clock: ClockState,
     pub speaker_active: bool,
     pub interference_level: u8,
+    pub tap_bridge_audio_active: bool,
     pub tuning: TuningState,
     pub directory_pages: Vec<DirectoryPage>,
     pub printer_output: Vec<PrinterEntry>,
