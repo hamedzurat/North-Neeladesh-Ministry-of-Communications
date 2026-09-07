@@ -37,6 +37,8 @@ The normal backend command starts the small authored hardware demo. The four-Shi
 2. Start the Caller and use Directory ID `0002`; confirm the Directory presents Vira Dhal's `RECORDS OFFICE` listing and public note.
 3. Connect the Caller to the Operator, attempt a direct Circuit, and confirm the `ring_generator_required` diagnostic appears without a Routing receipt.
 4. Connect the requested Callee to the Ring Generator, crank, confirm the Callee Line Lamp lights, then replace the ring connection with a Tap Bridge Circuit.
+5. Hold the matching Tap Bridge listen control and confirm the backend reports the bridge and dummy audio stream; keep listening for the authored intercepted fact before it appears in the debug story state.
+6. Look up Directory `0002` before holding Police, complete the Police Service Call, and confirm the receipt and completion counter.
 5. Tune both controls into the clear band, hold and release Police, then hold and release the Tap Bridge listen control. Confirm interference, Police completion, `tap_bridge_monitoring`, speaker activity, and Operator Knowledge.
 6. Complete and clear the Circuit. Confirm the successful Ending and all printer receipts, then reset and verify the graph, Calls, counters, printer output, voice evidence, clock, and frontend state return to the authored start.
 

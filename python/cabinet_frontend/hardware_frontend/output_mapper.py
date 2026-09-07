@@ -45,7 +45,7 @@ class OutputMapper:
 
         clock = output.get("clock", {})
         elapsed = max(0, int(clock.get("elapsed_seconds", 0)))
-        display = f"{(elapsed // 60) % 100:02d}{elapsed % 60:02d}"
+        display = f"{(elapsed // 3600) % 100:02d}{(elapsed // 60) % 60:02d}"
         if display != self._last_seven_segment and self._try(
             "seven_segment", lambda: self.seven_segment.show(display)
         ):
