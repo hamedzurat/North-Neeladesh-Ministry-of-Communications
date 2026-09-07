@@ -682,14 +682,12 @@ impl RtpL16Packet {
             }
             payload = &payload[..payload.len() - padding];
         }
-        if !payload.len().is_multiple_of(2) {
+        if payload.len() % 2 != 0 {
             return Err(VoiceDatagramError::RtpOddPayload);
         }
         let samples = payload
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|bytes| i16::from_be_bytes(*bytes))
+            .chunks_exact(2)
+            .map(|bytes| i16::from_be_bytes([bytes[0], bytes[1]]))
             .collect();
         Ok(Self {
             marker: packet[1] & 0x80 != 0,

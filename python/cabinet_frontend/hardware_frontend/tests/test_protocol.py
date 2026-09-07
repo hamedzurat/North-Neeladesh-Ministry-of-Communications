@@ -58,7 +58,7 @@ class ProtocolTests(unittest.TestCase):
                     "tap_2": False,
                 },
                 "directory_digits": [0, 0, 0, 1],
-                "crank_rotation_timestamps": [],
+                    "crank_rotation_timestamps": [0, 0, 0, 0],
                 "tuning": {"coarse": 0, "fine": 0},
                 "debug": {
                     "firmware_version": "test",
@@ -88,7 +88,7 @@ class ProtocolTests(unittest.TestCase):
                     "tap_2": False,
                 },
                 "directory_digits": [0, 0, 0, 1],
-                "crank_rotation_timestamps": [],
+                    "crank_rotation_timestamps": [0, 0, 0, 0],
                 "tuning": {"coarse": 0, "fine": 0},
                 "debug": {
                     "firmware_version": "test",

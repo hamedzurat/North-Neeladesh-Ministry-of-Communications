@@ -18,6 +18,7 @@ class HardwareConfig:
     spi_speed_hz: int = 10_000_000
     encoder_s1: int = 11
     encoder_s2: int = 12
+    ptt_pin: int = 13
     ws2812_count: int = 8
     tm1637_clk: int = 27
     tm1637_dio: int = 17

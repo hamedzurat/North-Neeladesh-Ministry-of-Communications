@@ -12,6 +12,7 @@ from .epaper_dummy import StdoutEpaper
 from .inputs_dummy import StdoutRotary, StdoutTopologyScanner
 from .keyboard import KeyboardControls, NoopControls
 from .line_lamps_dummy import StdoutLineLamps
+from .mcp_controls import McpPttControls
 from .printer_dummy import StdoutPrinter
 from .seven_segment_dummy import StdoutSevenSegment
 
@@ -84,7 +85,9 @@ def build_real_components(config: HardwareConfig) -> ComponentBundle:
         epaper=EpaperDirectoryDisplay(mcp),
         rotary=McpRotaryEncoder(mcp, config.encoder_s1, config.encoder_s2),
         scanner=McpPairDetector(mcp),
-        controls=KeyboardControls() if config.keyboard_controls else NoopControls(),
+        controls=KeyboardControls()
+        if config.keyboard_controls
+        else McpPttControls(mcp, config.ptt_pin),
         printer=StdoutPrinter(sys.stdout),
         audio=StdoutAudio(sys.stdout),
         extra_closers=[i2c],

@@ -113,11 +113,11 @@ def validate_input_message(message: dict[str, Any]) -> None:
     timestamps = input_state["crank_rotation_timestamps"]
     if (
         not isinstance(timestamps, list)
-        or len(timestamps) > 4
+        or len(timestamps) != 4
         or any(not isinstance(value, int) or value < 0 for value in timestamps)
     ):
         raise ProtocolValidationError(
-            "crank_rotation_timestamps must contain at most four timestamps"
+            "crank_rotation_timestamps must contain four timestamps"
         )
     if timestamps != sorted(timestamps):
         raise ProtocolValidationError("crank_rotation_timestamps must be chronological")
