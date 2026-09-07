@@ -706,6 +706,10 @@ impl CompiledStoryGraph {
         self.nodes.get(node_id)
     }
 
+    pub fn nodes(&self) -> impl Iterator<Item = &StoryNode> {
+        self.nodes.values()
+    }
+
     pub fn subscribers(&self) -> &[Subscriber] {
         &self.content.subscribers
     }

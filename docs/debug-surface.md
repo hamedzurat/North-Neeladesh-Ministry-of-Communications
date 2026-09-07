@@ -20,7 +20,7 @@ Open `http://127.0.0.1:7881`. The backend debug command boundary is `127.0.0.1:7
 
 ## Manual Checkpoints
 
-1. Confirm the dashboard shows Run revision, Shift phase, Calls, all five authored Subscriber States, Story Graph frontier, current Story Beat, counters, voice status, Cabinet Frontend status, exact frontend input/output JSON, retained voice conversations, and failures.
+1. Confirm the dashboard shows Run revision, Shift phase, Calls, all five authored Subscriber States, the full authored Story DAG with current/frontier highlighting, Story Graph frontier, current Story Beat, counters, voice status, Cabinet Frontend status, exact frontend input/output JSON, retained voice conversations, and failures.
 2. Click `Advance Time` and confirm the authoritative elapsed time increases.
 3. Click `Inject Call` and confirm the Call appears in the dashboard and the current authoritative state revision changes.
 4. Enable `Bypass Restrictions`, inject a second Call, and confirm both Calls are visible.

@@ -402,6 +402,15 @@ pub struct DebugStoryState {
     pub current_story_beat: Option<String>,
     pub interference_reduced: bool,
     pub operator_knowledge: Vec<String>,
+    pub graph: Vec<DebugStoryNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugStoryNode {
+    pub id: String,
+    pub kind: String,
+    pub outgoing: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

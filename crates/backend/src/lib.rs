@@ -9,13 +9,13 @@ use std::time::{Duration, Instant};
 use exchange_protocol::{
     BackendDiagnostic, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION, DebugAudio,
     DebugAudioKind, DebugCommand, DebugCounters, DebugFrontendState, DebugRequest, DebugResponse,
-    DebugRunState, DebugSnapshot, DebugStoryState, DebugSubscriberState, DebugVoiceConversation,
-    DebugVoiceState, DirectoryPage, GamePhase, InputMessage, InputState, OutputDebug,
-    PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, RtpL16Packet, ServiceCallPhase,
-    ServiceCallStatus, ServiceErrorCount, ServiceErrorKind, ServiceKind, ShiftPhase, ShiftStatus,
-    StateMessage, StateOutput, TuningState, VOICE_AUDIO_SAMPLE_RATE, VoiceControl,
-    VoiceControlMessage, VoiceInputAudioMessage, VoiceStatus, decode_voice_input_audio,
-    decode_voice_status, encode_voice_control, read_frame, write_frame,
+    DebugRunState, DebugSnapshot, DebugStoryNode, DebugStoryState, DebugSubscriberState,
+    DebugVoiceConversation, DebugVoiceState, DirectoryPage, GamePhase, InputMessage, InputState,
+    OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, RtpL16Packet,
+    ServiceCallPhase, ServiceCallStatus, ServiceErrorCount, ServiceErrorKind, ServiceKind,
+    ShiftPhase, ShiftStatus, StateMessage, StateOutput, TuningState, VOICE_AUDIO_SAMPLE_RATE,
+    VoiceControl, VoiceControlMessage, VoiceInputAudioMessage, VoiceStatus,
+    decode_voice_input_audio, decode_voice_status, encode_voice_control, read_frame, write_frame,
 };
 use exchange_voice_daemon::{
     CommandDialogueGenerator, CommandSpec, CommandSpeechToText, ConversationTurn, KnowledgeRecord,
@@ -36,6 +36,16 @@ const STRESS_PRINTER_ENTRY_COUNT: usize = 48;
 const VOICE_IDS: [&str; 9] = [
     "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee",
 ];
+
+fn story_node_kind_label(kind: &StoryNodeKind) -> String {
+    match kind {
+        StoryNodeKind::RunStart { .. } => "run_start".to_string(),
+        StoryNodeKind::ShiftCall { .. } => "shift_call".to_string(),
+        StoryNodeKind::StoryEvent { .. } => "story_event".to_string(),
+        StoryNodeKind::Conditional { .. } => "conditional".to_string(),
+        StoryNodeKind::Ending { .. } => "ending".to_string(),
+    }
+}
 
 pub struct Backend {
     state: StateOutput,
@@ -360,6 +370,15 @@ impl Backend {
                 current_story_beat,
                 interference_reduced: self.interference_reduced,
                 operator_knowledge: self.operator_knowledge.clone(),
+                graph: self
+                    .story
+                    .nodes()
+                    .map(|node| DebugStoryNode {
+                        id: node.id.clone(),
+                        kind: story_node_kind_label(&node.kind),
+                        outgoing: self.story.outgoing(&node.id).to_vec(),
+                    })
+                    .collect(),
             },
             counters: DebugCounters {
                 completed_routings: self.state.shift.completed_routings,
