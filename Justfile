@@ -1,14 +1,11 @@
 backend address="127.0.0.1:7878" voice_address="127.0.0.1:7879":
-    NN_VOICE_RANDOM_SPEAKER=1 NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.tts" NN_VOICE_TTS_PERSISTENT=1 cargo run -p exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }}
-
-backend-trace address="127.0.0.1:7878" voice_address="127.0.0.1:7879":
-    NN_BACKEND_TRACE=1 NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.tts" NN_VOICE_TTS_PERSISTENT=1 cargo run -p exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }}
+    NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.tts" NN_VOICE_TTS_PERSISTENT=1 cargo run -p exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }}
 
 backend-stress address="127.0.0.1:7878" voice_address="127.0.0.1:7879":
     NN_BACKEND_PRINTER_STRESS=1 NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.tts" NN_VOICE_TTS_PERSISTENT=1 cargo run -p exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }}
 
 backend-debug address="127.0.0.1:7878" voice_address="127.0.0.1:7879" debug_address="127.0.0.1:7880":
-    NN_BACKEND_PRINTER_STRESS=1 NN_BACKEND_TRACE=1 NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.tts" NN_VOICE_TTS_PERSISTENT=1 cargo run -p exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }} --debug-bind {{ debug_address }}
+    NN_BACKEND_PRINTER_STRESS=1 NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.tts" NN_VOICE_TTS_PERSISTENT=1 cargo run --quiet -p exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }} --debug-bind {{ debug_address }}
 
 frontend-check:
     /bin/odin check frontend

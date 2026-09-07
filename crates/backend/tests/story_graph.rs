@@ -8,6 +8,34 @@ fn demo() -> AuthoredContent {
 }
 
 #[test]
+fn four_shift_demo_compiles_with_the_authored_cast_and_terminal_choices() {
+    let graph = AuthoredContent::four_shift_demo().compile().unwrap();
+
+    assert_eq!(graph.subscribers().len(), 5);
+    assert_eq!(
+        graph
+            .subscribers()
+            .iter()
+            .map(|subscriber| subscriber.name.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "Taren Kesh",
+            "Vira Dhal",
+            "Dr. Leya Varan",
+            "Captain Oren Vey",
+            "Neri Tal"
+        ]
+    );
+    assert_eq!(graph.node("shift_1_call").is_some(), true);
+    assert_eq!(graph.node("shift_2_call").is_some(), true);
+    assert_eq!(graph.node("shift_3_call").is_some(), true);
+    assert_eq!(
+        graph.outgoing("final_choice"),
+        ["final_taren_call", "final_oren_call", "ending_civil_war",]
+    );
+}
+
+#[test]
 fn authored_demo_compiles_into_an_inspectable_story_graph() {
     let graph = demo().compile().unwrap();
 

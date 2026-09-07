@@ -96,6 +96,51 @@ fn input_debug_is_not_copied_into_backend_output() {
             .windows("test-firmware".len())
             .any(|window| window == b"test-firmware")
     );
+    let frontend = backend.debug_snapshot().frontend;
+    assert!(
+        frontend
+            .last_input_json
+            .as_deref()
+            .is_some_and(|json| json.contains("test-firmware"))
+    );
+    assert!(
+        frontend
+            .last_output_json
+            .as_deref()
+            .is_some_and(|json| json.contains("state_revision"))
+    );
+}
+
+#[test]
+fn rejected_input_is_retained_in_debug_evidence() {
+    let mut backend = Backend::new();
+    let mut request = input(1, 0, [0, 0, 0, 1]);
+    request.protocol_version = PROTOCOL_VERSION + 1;
+
+    let response = backend.apply_input_message(request);
+
+    assert!(!response.accepted);
+    assert_eq!(
+        response.error.as_ref().unwrap().code,
+        "unsupported_protocol_version"
+    );
+    let frontend = backend.debug_snapshot().frontend;
+    assert!(
+        frontend
+            .last_input_json
+            .as_deref()
+            .is_some_and(|json| json.contains("test-firmware"))
+    );
+    assert!(
+        frontend
+            .last_output_json
+            .as_deref()
+            .is_some_and(|json| json.contains("unsupported_protocol_version"))
+    );
+    assert_eq!(
+        backend.debug_snapshot().recent_errors.last().unwrap().code,
+        "frontend_unsupported_protocol_version"
+    );
 }
 
 #[test]
@@ -377,6 +422,37 @@ fn voice_udp_status_and_audio_do_not_create_a_story_transition() {
 }
 
 #[test]
+fn voice_capture_failure_is_retained_as_conversation_evidence() {
+    let mut backend = Backend::new();
+    let ready = VoiceStatusMessage {
+        protocol_version: VOICE_PROTOCOL_VERSION,
+        session_id: 8,
+        turn_id: 4,
+        state_revision: 0,
+        status: VoiceStatus::Ready,
+        transcript: None,
+        response_text: None,
+        error: None,
+    };
+    assert!(backend.apply_voice_datagram(&encode_voice_status(&ready).unwrap()));
+
+    let failed = VoiceStatusMessage {
+        status: VoiceStatus::Failed,
+        error: Some(ProtocolError {
+            code: "capture_empty".to_string(),
+            message: "microphone returned no samples".to_string(),
+        }),
+        ..ready
+    };
+    assert!(backend.apply_voice_datagram(&encode_voice_status(&failed).unwrap()));
+
+    let conversation = &backend.debug_snapshot().voice.conversations[0];
+    assert_eq!(conversation.status, Some(VoiceStatus::Failed));
+    assert_eq!(conversation.error.as_ref().unwrap().code, "capture_empty");
+    assert_eq!(conversation.captured_samples, 0);
+}
+
+#[test]
 fn accepted_ptt_edges_are_forwarded_to_the_registered_voice_daemon() {
     let mut backend = Backend::new();
     let ready = VoiceStatusMessage {
@@ -406,6 +482,12 @@ fn accepted_ptt_edges_are_forwarded_to_the_registered_voice_daemon() {
     let release_control = backend.take_voice_control().unwrap().0;
     assert_eq!(release_control.control, VoiceControl::ReleasePtt);
     assert_eq!(release_control.voice_id, start_control.voice_id);
+
+    let mut next_start = input(3, 2, [0, 0, 0, 1]);
+    next_start.input.held_controls.ptt = true;
+    assert!(backend.apply_input_message(next_start).accepted);
+    let next_start_control = backend.take_voice_control().unwrap().0;
+    assert_eq!(next_start_control.turn_id, start_control.turn_id + 1);
 }
 
 #[test]

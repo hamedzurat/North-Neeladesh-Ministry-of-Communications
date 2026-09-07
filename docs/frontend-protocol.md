@@ -8,7 +8,7 @@ Each message is framed as:
 u32 big-endian payload length | CBOR payload
 ```
 
-The maximum payload is 1 MiB. The protocol version is `1`.
+The maximum payload is 4 MiB. The normal frontend protocol version is `1`; the development debug protocol version is `2`. The larger bound allows the development debug surface to retrieve retained voice audio without changing the normal frontend message shapes.
 
 ## InputMessage
 
@@ -93,13 +93,13 @@ just backend
 just frontend
 ```
 
-Backend variants are `backend-trace`, `backend-stress`, and `backend-debug`. The trace variant sets `NN_BACKEND_TRACE=1`; the debug variant also enables printer stress. The frontend trace command is:
+Backend variants are `backend-stress` and `backend-debug`. The debug variant enables printer stress and exposes the authoritative debug command boundary. Voice failures and retained conversation evidence are available through the debug surface rather than backend console tracing. The frontend trace command is:
 
 ```sh
 just frontend-trace
 ```
 
-It sets `NN_FRONTEND_TRACE=1`. Both traces print the new CBOR shapes. The default backend address is `127.0.0.1:7878`; use `address=127.0.0.1:7979` for backend commands and `backend_address=127.0.0.1:7979` for frontend commands.
+It sets `NN_FRONTEND_TRACE=1`. The default backend address is `127.0.0.1:7878`; use `address=127.0.0.1:7979` for backend commands and `backend_address=127.0.0.1:7979` for frontend commands.
 
 Run the offline TCP/CBOR harness and backend contract tests:
 
@@ -120,13 +120,10 @@ Voice status and audio do not advance the authoritative Routing state. Each back
 
 Manual verification:
 
-1. Run `just backend` in one terminal.
-2. Run `just frontend` in another terminal.
-3. Leave the initial directory selection at `0001`, connect Subscriber 0 to the Operator Jack, and verify the call enters the Operator Session.
-4. Connect Subscriber 1 to the Ring Generator, crank until the backend reports Ringing, then connect Subscriber 0 directly to Subscriber 1 and verify the printer records the Routing.
-5. Connect Subscriber 2 to the Operator while Subscriber 0 is active, verify Subscriber 0 becomes Held, then reconnect Subscriber 0 and verify focus returns.
-6. Route a Subscriber Circuit through a Tap Bridge, hold and release its listen control, and verify `tap_bridge_monitoring` and speaker activity follow the control.
-7. Hold EMS once and release it; verify the authoritative service receipt and completed-service counter. Complete a shift without EMS and verify the typed Service Error and conditional Story Graph path.
-8. Change the Directory Terminal digits and verify the e-paper pages update from the backend.
+1. Run `just backend` in one terminal and `just frontend` in another.
+2. Complete the four authored Shifts: Taren/Vira relief dispatch, Leya/Oren parent-collapse response with tuned interference and EMS, Neri/Vira intercepted Signal with competing Calls and Tap Bridge monitoring, and the final Taren or Oren Routing.
+3. Verify that Directory lookup, Ring Generator cranking, Held Callers, Tap Bridge listen control, EMS completion, printer receipts, and backend-owned Shift transitions appear on the Cabinet.
+4. Repeat the run with a missed Call or omitted EMS Service Call. Verify the typed Service Error and that an authored Ending is still reached.
+5. Change the Directory Terminal digits and verify the e-paper pages update from the backend; use `0002` or `0004` for the final Routing and an unlisted ID for the standoff branch.
 
 For one real voice session, run `uv sync --project python` once during provisioning, configure the offline model assets, run `just voice-preflight`, then run `just backend` and `just voice-daemon`. PTT is controlled by the Cabinet Frontend; the relay stays listening while idle and carries only audio/status traffic. Use `just voice-smoke` for a hardware-free relay test; see `docs/voice-daemon.md` for the model and device configuration.

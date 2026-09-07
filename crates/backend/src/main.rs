@@ -1,6 +1,6 @@
 use std::env;
 use std::io;
-use std::net::{TcpListener, UdpSocket};
+use std::net::{SocketAddr, TcpListener, UdpSocket};
 
 fn main() -> io::Result<()> {
     let bind = argument_value("--bind").unwrap_or_else(|| "127.0.0.1:7878".to_string());
@@ -8,14 +8,27 @@ fn main() -> io::Result<()> {
     let debug_bind = argument_value("--debug-bind");
     let listener = TcpListener::bind(&bind)?;
     let voice_socket = UdpSocket::bind(&voice_bind)?;
-    let debug_listener = debug_bind.as_deref().map(TcpListener::bind).transpose()?;
-    println!("exchange backend listening on {bind}");
-    println!("voice UDP boundary listening on {voice_bind}");
-    if let Some(debug_bind) = &debug_bind {
-        println!("development debug boundary listening on {debug_bind}");
-    }
-    println!("manual check: connect Caller, ring with the Ring Generator, then route directly");
+    let debug_listener = debug_bind
+        .as_deref()
+        .map(bind_loopback_listener)
+        .transpose()?;
     exchange_backend::serve_with_voice_and_debug(listener, Some(voice_socket), debug_listener)
+}
+
+fn bind_loopback_listener(address: &str) -> io::Result<TcpListener> {
+    let address: SocketAddr = address.parse().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid debug bind address {address}: {error}"),
+        )
+    })?;
+    if !address.ip().is_loopback() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "debug command server must bind to a loopback address",
+        ));
+    }
+    TcpListener::bind(address)
 }
 
 fn argument_value(name: &str) -> Option<String> {
@@ -26,4 +39,15 @@ fn argument_value(name: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bind_loopback_listener;
+
+    #[test]
+    fn debug_listener_rejects_non_loopback_addresses() {
+        assert!(bind_loopback_listener("0.0.0.0:0").is_err());
+        assert!(bind_loopback_listener("127.0.0.1:0").is_ok());
+    }
 }

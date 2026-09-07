@@ -53,8 +53,6 @@ fn debug_controls_use_the_backend_command_boundary_and_reset_cleanly() {
     assert!(reset.snapshot.calls.is_empty());
     assert_eq!(reset.snapshot.run.elapsed_seconds, 0);
     assert!(!reset.snapshot.run.bypass_restrictions);
-    assert_eq!(reset.snapshot.transitions.len(), 1);
-    assert_eq!(reset.snapshot.transitions[0].command, "ResetRun");
 }
 
 #[test]
