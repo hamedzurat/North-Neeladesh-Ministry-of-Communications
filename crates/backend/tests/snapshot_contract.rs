@@ -491,6 +491,61 @@ fn accepted_ptt_edges_are_forwarded_to_the_registered_voice_daemon() {
 }
 
 #[test]
+fn voice_selection_follows_subscriber_identity_not_the_line_number() {
+    let ready = VoiceStatusMessage {
+        protocol_version: VOICE_PROTOCOL_VERSION,
+        session_id: 1,
+        turn_id: 1,
+        state_revision: 0,
+        status: VoiceStatus::Ready,
+        transcript: None,
+        response_text: None,
+        error: None,
+    };
+    let peer = "127.0.0.1:45680".parse().unwrap();
+
+    let mut taren_backend = Backend::new();
+    assert!(
+        taren_backend.apply_voice_datagram_from(&encode_voice_status(&ready).unwrap(), Some(peer))
+    );
+    let mut taren = input(1, 0, [0, 0, 0, 1]);
+    taren.input.held_controls.ptt = true;
+    assert!(taren_backend.apply_input_message(taren).accepted);
+    assert_eq!(
+        taren_backend.take_voice_control().unwrap().0.voice_id,
+        "Ryan"
+    );
+
+    let mut vira_backend = Backend::new();
+    assert!(
+        vira_backend.apply_voice_datagram_from(&encode_voice_status(&ready).unwrap(), Some(peer))
+    );
+    assert!(
+        vira_backend
+            .apply_debug_command(exchange_protocol::DebugCommand::SetBypassRestrictions {
+                enabled: true
+            })
+            .accepted
+    );
+    assert!(
+        vira_backend
+            .apply_debug_command(exchange_protocol::DebugCommand::InjectCall {
+                caller_line: 1,
+                callee_line: 0,
+            })
+            .accepted
+    );
+    let revision = vira_backend.debug_snapshot().run.state_revision;
+    let mut vira = input(1, revision, [0, 0, 0, 1]);
+    vira.input.held_controls.ptt = true;
+    assert!(vira_backend.apply_input_message(vira).accepted);
+    assert_eq!(
+        vira_backend.take_voice_control().unwrap().0.voice_id,
+        "Vivian"
+    );
+}
+
+#[test]
 fn remote_voice_input_requires_ordered_bounded_chunks() {
     let mut backend = Backend::new();
     let ready = VoiceStatusMessage {

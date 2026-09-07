@@ -10,8 +10,9 @@ initial_backend_output :: proc() -> State_Output {
 	return State_Output{
 		game_phase = "ready",
 		clock_shift = 1,
- speaker_active = false,
-  tap_bridge_monitoring = -1,
+		speaker_active = false,
+		interference_level = 0,
+		tap_bridge_monitoring = -1,
 		tuning = Tuning{},
 		shift = Shift{number = 1, phase = "ready"},
 	}
@@ -209,6 +210,7 @@ apply_state_message :: proc(app: ^Input_State, value: cbor.Value) -> bool {
 	state.clock_shift = u8_value(map_get_or(clock, "shift"))
 	state.elapsed_seconds = u32_value(map_get_or(clock, "elapsed_seconds"))
 	state.speaker_active = bool_value(map_get_or(output_value, "speaker_active"))
+	state.interference_level = u8_value(map_get_or(output_value, "interference_level"))
 	tuning := map_get_or(output_value, "tuning")
 	state.tuning = Tuning{coarse = u16_value(map_get_or(tuning, "coarse")), fine = u16_value(map_get_or(tuning, "fine"))}
 	state.directory_pages = decode_pages(map_get_or(output_value, "directory_pages"))

@@ -33,9 +33,8 @@ use story::{
 const MAX_FAULTS: usize = 16;
 const MAX_CORDS: usize = 8;
 const STRESS_PRINTER_ENTRY_COUNT: usize = 48;
-const VOICE_IDS: [&str; 9] = [
-    "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee",
-];
+const DEMO_SHIFT_DURATION_SECONDS: u64 = 8 * 60;
+const DEMO_SHIFT_START_SECONDS: u64 = 8 * 60 * 60;
 
 fn story_node_kind_label(kind: &StoryNodeKind) -> String {
     match kind {
@@ -89,9 +88,11 @@ pub struct Backend {
     voice_id: Option<String>,
     run_generation: u64,
     initial_required_service_calls: u32,
-    shift_started_elapsed_seconds: u32,
-    last_ems: bool,
+    shift_started_real_elapsed_seconds: u64,
+    required_service_kind: Option<ServiceKind>,
+    last_service: Option<ServiceKind>,
     service_error_recorded: bool,
+    last_interference_level: u8,
 }
 
 struct VoiceConversationRecord {
@@ -113,14 +114,25 @@ impl Backend {
         let story = AuthoredContent::four_shift_demo()
             .compile()
             .expect("built-in four-Shift authored Story Graph must compile");
-        Self::with_story(story, printer_stress, 0)
+        Self::with_story(story, printer_stress, 0, Some(ServiceKind::Ems))
     }
 
     pub fn new_with_printer_stress(printer_stress: bool) -> Self {
         let story = AuthoredContent::demo()
             .compile()
             .expect("built-in authored Story Graph must compile");
-        Self::with_story(story, printer_stress, 1)
+        Self::with_story(story, printer_stress, 1, Some(ServiceKind::Ems))
+    }
+
+    pub fn new_hardware_demo() -> Self {
+        Self::new_hardware_demo_with_printer_stress(false)
+    }
+
+    pub fn new_hardware_demo_with_printer_stress(printer_stress: bool) -> Self {
+        let story = AuthoredContent::hardware_demo()
+            .compile()
+            .expect("built-in hardware demo Story Graph must compile");
+        Self::with_story(story, printer_stress, 1, Some(ServiceKind::Police))
     }
 
     pub fn new_with_story(content: AuthoredContent) -> Result<Self, GraphCompileError> {
@@ -141,6 +153,7 @@ impl Backend {
             content.compile()?,
             printer_stress,
             initial_required_service_calls,
+            Some(ServiceKind::Ems),
         ))
     }
 
@@ -148,10 +161,15 @@ impl Backend {
         story: CompiledStoryGraph,
         printer_stress: bool,
         initial_required_service_calls: u32,
+        required_service_kind: Option<ServiceKind>,
     ) -> Self {
         let story_node_id = story.start_node_id().to_string();
         Self {
-            state: initial_state(printer_stress, initial_required_service_calls),
+            state: initial_state(
+                printer_stress,
+                initial_required_service_calls,
+                required_service_kind,
+            ),
             story,
             story_node_id,
             state_revision: 0,
@@ -192,9 +210,11 @@ impl Backend {
             voice_id: None,
             run_generation: 0,
             initial_required_service_calls,
-            shift_started_elapsed_seconds: 0,
-            last_ems: false,
+            shift_started_real_elapsed_seconds: 0,
+            required_service_kind,
+            last_service: None,
             service_error_recorded: false,
+            last_interference_level: 0,
         }
     }
 
@@ -242,7 +262,14 @@ impl Backend {
 
     pub fn reset_run(&mut self) {
         let printer_stress = self.state.printer_output.len() == STRESS_PRINTER_ENTRY_COUNT;
-        self.state = initial_state(printer_stress, self.initial_required_service_calls);
+        self.state = initial_state(
+            printer_stress,
+            self.initial_required_service_calls,
+            self.required_service_kind,
+        );
+        if !printer_stress {
+            append_printer(&mut self.state, "RUN RESET // SHIFT READY");
+        }
         self.story_node_id = self.story.start_node_id().to_string();
         self.state_revision = 0;
         self.last_request = None;
@@ -265,7 +292,7 @@ impl Backend {
         self.frontend_transport_connected = false;
         self.frontend_device_faults.clear();
         self.debug_elapsed_seconds = 0;
-        self.shift_started_elapsed_seconds = 0;
+        self.shift_started_real_elapsed_seconds = 0;
         self.debug_godmode = false;
         self.debug_bypass_restrictions = false;
         self.voice_conversations.clear();
@@ -279,8 +306,9 @@ impl Backend {
         self.voice_worker_active = false;
         self.voice_id = None;
         self.run_generation = self.run_generation.wrapping_add(1);
-        self.last_ems = false;
+        self.last_service = None;
         self.service_error_recorded = false;
+        self.last_interference_level = 0;
     }
 
     pub fn apply_input_message(&mut self, message: InputMessage) -> StateMessage {
@@ -369,6 +397,7 @@ impl Backend {
                 frontier: self.story.outgoing(&self.story_node_id).to_vec(),
                 current_story_beat,
                 interference_reduced: self.interference_reduced,
+                interference_level: self.state.interference_level,
                 operator_knowledge: self.operator_knowledge.clone(),
                 graph: self
                     .story
@@ -597,12 +626,15 @@ impl Backend {
         Ok(())
     }
 
-    fn elapsed_seconds(&self) -> u32 {
+    fn real_elapsed_seconds(&self) -> u64 {
         self.clock_started
             .elapsed()
             .as_secs()
             .saturating_add(self.debug_elapsed_seconds)
-            .min(u32::MAX as u64) as u32
+    }
+
+    fn elapsed_seconds(&self) -> u32 {
+        accelerated_clock_seconds(self.real_elapsed_seconds())
     }
 
     fn apply_input_message_inner(&mut self, message: InputMessage) -> StateMessage {
@@ -624,31 +656,57 @@ impl Backend {
         self.state.clock.elapsed_seconds = self.elapsed_seconds();
         self.expire_calls();
         let input = &message.input;
+        let input_service = service_from_controls(&input.held_controls);
         let monitoring_story = self.story_node_id == "shift_3_call"
-            || self.story_node_id.starts_with("intercepted_signal");
-        if self.story_node_id == "shift_2_call" {
-            self.interference_reduced = tuning_reduces_interference(&input.tuning);
-        }
+            || self.story_node_id.starts_with("intercepted_signal")
+            || self.story_node_id.starts_with("hardware_demo");
         let ptt = input.held_controls.ptt;
-        let ems = input.held_controls.ems;
         let crank_rotation_timestamps = input.crank_rotation_timestamps;
-        let mut next_state = self.state.clone();
         let authored_call = if self.state.call.is_none() {
             self.prepare_story_call(input.directory_digits, &input.cord_topology)
         } else {
             self.story_call_for_node(&self.story_node_id, input.directory_digits)
         };
+        if has_diegetic_interference(&self.story_node_id) {
+            self.interference_reduced = tuning_reduces_interference(&input.tuning);
+        }
+        let interference_level = interference_level(&self.story_node_id, &input.tuning);
+        let mut next_state = self.state.clone();
+        next_state.interference_level = interference_level;
+        if interference_level != self.last_interference_level {
+            append_printer(
+                &mut next_state,
+                &format!(
+                    "INTERFERENCE // LEVEL {interference_level}% // {}",
+                    if interference_level == 0 {
+                        "CLEAR"
+                    } else {
+                        "TUNE REQUIRED"
+                    }
+                ),
+            );
+            self.last_interference_level = interference_level;
+        }
         let final_standoff = self.story_node_id == "ending_civil_war";
         let authored_competing_call = operator_caller_line(&input.cord_topology)
             .and_then(|line| self.story.authored_call_for_caller_line(line));
-        let interference_blocks_routing = self.story_node_id == "shift_2_call"
+        let interference_blocks_routing = has_diegetic_interference(&self.story_node_id)
             && !self.interference_reduced
             && self
                 .state
                 .call
                 .as_ref()
                 .is_some_and(|call| direct_routing_topology(input, call));
-        let transition = if interference_blocks_routing {
+        let pre_ring_direct_connection = self.state.call.as_ref().is_some_and(|call| {
+            call.phase == exchange_protocol::CallPhase::OperatorSession
+                && (has_direct_subscriber_circuit(input, call.caller_line)
+                    || has_tap_bridge_circuit(
+                        &input.cord_topology,
+                        &PortId::Subscriber(call.caller_line),
+                        &PortId::Subscriber(call.requested_callee_line),
+                    ))
+        });
+        let transition = if pre_ring_direct_connection || interference_blocks_routing {
             unchanged_call_transition(&self.state)
         } else {
             advance_calls(
@@ -669,6 +727,17 @@ impl Backend {
         next_state.shift = transition.shift;
         if transition.story_outcome == Some(StoryOutcome::Invalid) {
             record_service_error(&mut next_state, ServiceErrorKind::MisroutedCall);
+        }
+        if pre_ring_direct_connection {
+            next_state.debug.messages.push(BackendDiagnostic {
+                code: "ring_generator_required".to_string(),
+                message:
+                    "connect the requested Callee to the Ring Generator and crank before routing"
+                        .to_string(),
+            });
+            if next_state.debug.messages.len() > MAX_FAULTS {
+                next_state.debug.messages.remove(0);
+            }
         }
         apply_service_transition(
             self,
@@ -691,10 +760,21 @@ impl Backend {
                 next_state.shift.active_call_count = 0;
                 next_state.shift.required_service_calls =
                     self.required_service_calls_for_shift(next_state.shift.number);
+                if let Some(service) = self.required_service_kind_for_shift(next_state.shift.number)
+                {
+                    append_printer(
+                        &mut next_state,
+                        &format!(
+                            "SERVICE RULE // {} REQUIRED THIS SHIFT",
+                            service_label(service)
+                        ),
+                    );
+                }
                 next_state.game_phase = GamePhase::Ready;
                 next_state.clock.shift = next_state.shift.number;
-                self.shift_started_elapsed_seconds = self.elapsed_seconds();
+                self.shift_started_real_elapsed_seconds = self.real_elapsed_seconds();
                 self.interference_reduced = false;
+                self.service_error_recorded = false;
             }
         }
         if final_standoff {
@@ -729,6 +809,7 @@ impl Backend {
             game_phase: next_state.game_phase,
             clock: next_state.clock,
             speaker_active,
+            interference_level: next_state.interference_level,
             tuning: input.tuning.clone(),
             directory_pages: directory_pages(input.directory_digits),
             printer_output: next_state.printer_output,
@@ -752,12 +833,12 @@ impl Backend {
         };
         self.last_request = Some(message);
         self.last_response = Some(response.clone());
-        self.last_ems = ems;
+        self.last_service = input_service;
         if ptt != self.last_ptt {
             self.last_ptt = ptt;
             let voice_id = if ptt {
                 let caller_line = self.state.call.as_ref().map_or(0, |call| call.caller_line);
-                let voice_id = select_voice_id(caller_line);
+                let voice_id = self.voice_id_for_line(caller_line);
                 self.voice_request_voice_id = Some(voice_id.clone());
                 voice_id
             } else {
@@ -929,10 +1010,9 @@ impl Backend {
 
     fn expire_calls(&mut self) {
         let shift_elapsed = self
-            .state
-            .clock
-            .elapsed_seconds
-            .saturating_sub(self.shift_started_elapsed_seconds);
+            .real_elapsed_seconds()
+            .saturating_sub(self.shift_started_real_elapsed_seconds)
+            .min(u32::MAX as u64) as u32;
         if shift_elapsed < call_patience_seconds(self.state.shift.number) {
             return;
         }
@@ -995,12 +1075,24 @@ impl Backend {
         }
     }
 
+    fn voice_id_for_line(&self, line: u8) -> String {
+        self.story
+            .subscriber_id_for_line(line)
+            .map_or_else(|| "Ryan".to_string(), select_voice_id)
+    }
+
     fn required_service_calls_for_shift(&self, shift: u8) -> u32 {
         if self.initial_required_service_calls == 0 {
             u32::from(shift >= 2)
         } else {
             self.initial_required_service_calls
         }
+    }
+
+    fn required_service_kind_for_shift(&self, shift: u8) -> Option<ServiceKind> {
+        (self.required_service_calls_for_shift(shift) > 0)
+            .then_some(self.required_service_kind)
+            .flatten()
     }
 
     pub fn apply_voice_datagram(&mut self, datagram: &[u8]) -> bool {
@@ -1261,8 +1353,16 @@ impl Backend {
     }
 }
 
-fn select_voice_id(caller_line: u8) -> String {
-    VOICE_IDS[caller_line as usize % VOICE_IDS.len()].to_string()
+fn select_voice_id(subscriber_id: &str) -> String {
+    match subscriber_id {
+        "taren_kesh" => "Ryan",
+        "vira_dhal" => "Vivian",
+        "leya_varan" => "Serena",
+        "oren_vey" => "Dylan",
+        "neri_tal" => "Eric",
+        _ => "Ryan",
+    }
+    .to_string()
 }
 
 impl Default for Backend {
@@ -1332,9 +1432,11 @@ fn advance_calls(
         calls.push(call);
     }
 
-    if state.service_call.as_ref().is_some_and(|service| {
-        service.service == ServiceKind::Ems && service.phase == ServiceCallPhase::Active
-    }) && input.held_controls.ems
+    if state
+        .service_call
+        .as_ref()
+        .is_some_and(|service| service.phase == ServiceCallPhase::Active)
+        && service_from_controls(&input.held_controls).is_some()
     {
         return CallTransition {
             line_lamps: lamps_for_calls(&calls),
@@ -1438,6 +1540,8 @@ fn advance_calls(
             story_outcome = single.story_outcome;
             story_event_complete = single.story_event_complete;
             routing_receipt = single.routing_receipt;
+        } else if previous_focused_line == Some(call.caller_line) {
+            story_event_complete = single.story_event_complete;
         }
     }
 
@@ -1765,6 +1869,15 @@ fn direct_routing_topology(input: &InputState, call: &exchange_protocol::CallSta
         || has_tap_bridge_circuit(&input.cord_topology, &caller, &callee)
 }
 
+fn has_direct_subscriber_circuit(input: &InputState, caller_line: u8) -> bool {
+    let caller = PortId::Subscriber(caller_line);
+    input.cord_topology.len() == 1
+        && input.cord_topology.iter().any(|cord| {
+            (cord.first == caller && matches!(cord.second, PortId::Subscriber(_)))
+                || (cord.second == caller && matches!(cord.first, PortId::Subscriber(_)))
+        })
+}
+
 fn crank_satisfies_ringing(current: [u64; 4], previous: [u64; 4]) -> bool {
     current[3] > previous[3]
 }
@@ -1792,6 +1905,22 @@ fn tuning_reduces_interference(tuning: &TuningState) -> bool {
     (384..=640).contains(&tuning.coarse) && (384..=640).contains(&tuning.fine)
 }
 
+fn has_diegetic_interference(story_node_id: &str) -> bool {
+    story_node_id == "shift_2_call" || story_node_id == "hardware_demo_call"
+}
+
+fn interference_level(story_node_id: &str, tuning: &TuningState) -> u8 {
+    if !has_diegetic_interference(story_node_id) {
+        return 0;
+    }
+    if tuning_reduces_interference(tuning) {
+        return 0;
+    }
+    let distance =
+        u32::from(tuning.coarse.abs_diff(512)).saturating_add(u32::from(tuning.fine.abs_diff(512)));
+    (distance.saturating_mul(100) / 1024).clamp(10, 100) as u8
+}
+
 fn call_patience_seconds(shift: u8) -> u32 {
     match shift {
         1 => 90,
@@ -1799,6 +1928,16 @@ fn call_patience_seconds(shift: u8) -> u32 {
         3 => 150,
         _ => 90,
     }
+}
+
+fn accelerated_clock_seconds(real_elapsed_seconds: u64) -> u32 {
+    DEMO_SHIFT_START_SECONDS
+        .saturating_add(
+            real_elapsed_seconds
+                .min(DEMO_SHIFT_DURATION_SECONDS)
+                .saturating_mul(60),
+        )
+        .min(u32::MAX as u64) as u32
 }
 
 fn speaker_is_active(input: &InputState, state: &StateOutput) -> bool {
@@ -1812,16 +1951,50 @@ fn speaker_is_active(input: &InputState, state: &StateOutput) -> bool {
     operator_active || held.police || held.ems || held.fire || tap_active
 }
 
+fn service_from_controls(held: &exchange_protocol::HeldControls) -> Option<ServiceKind> {
+    if held.police {
+        Some(ServiceKind::Police)
+    } else if held.ems {
+        Some(ServiceKind::Ems)
+    } else if held.fire {
+        Some(ServiceKind::Fire)
+    } else {
+        None
+    }
+}
+
 fn apply_service_transition(
     backend: &mut Backend,
     state: &mut StateOutput,
     input: &InputState,
     settling: bool,
 ) {
-    if input.held_controls.ems && !backend.last_ems && state.shift.phase == ShiftPhase::Active {
-        if state.shift.completed_service_calls == 0 {
+    let held_service = service_from_controls(&input.held_controls);
+    match state
+        .service_call
+        .as_ref()
+        .map(|call| (call.service, call.phase))
+    {
+        Some((service, ServiceCallPhase::Active)) => {
+            if held_service.is_none() {
+                state.service_call = Some(ServiceCallStatus {
+                    service,
+                    phase: ServiceCallPhase::Completed,
+                });
+                state.shift.completed_service_calls += 1;
+                append_printer(
+                    state,
+                    &format!("SERVICE {} COMPLETED", service_label(service)),
+                );
+            }
+        }
+        _ if held_service.is_some()
+            && backend.last_service != held_service
+            && state.shift.phase == ShiftPhase::Active =>
+        {
+            let service = held_service.expect("service checked above");
             state.service_call = Some(ServiceCallStatus {
-                service: ServiceKind::Ems,
+                service,
                 phase: ServiceCallPhase::Active,
             });
             for call in &mut state.calls {
@@ -1832,18 +2005,7 @@ fn apply_service_transition(
             state.call = None;
             state.line_lamps = lamps_for_calls(&state.calls);
         }
-    } else if !input.held_controls.ems
-        && backend.last_ems
-        && state.service_call.as_ref().is_some_and(|call| {
-            call.service == ServiceKind::Ems && call.phase == ServiceCallPhase::Active
-        })
-    {
-        state.service_call = Some(ServiceCallStatus {
-            service: ServiceKind::Ems,
-            phase: ServiceCallPhase::Completed,
-        });
-        state.shift.completed_service_calls += 1;
-        append_printer(state, "SERVICE EMS COMPLETED");
+        _ => {}
     }
 
     if settling
@@ -1852,7 +2014,20 @@ fn apply_service_transition(
     {
         record_service_error(state, ServiceErrorKind::MissedRequiredServiceCall);
         backend.service_error_recorded = true;
-        append_printer(state, "SERVICE ERROR EMS REQUIRED");
+        let required = backend
+            .required_service_kind_for_shift(state.shift.number)
+            .map_or("SERVICE".to_string(), |service| {
+                service_label(service).to_string()
+            });
+        append_printer(state, &format!("SERVICE ERROR {required} REQUIRED"));
+    }
+}
+
+fn service_label(service: ServiceKind) -> &'static str {
+    match service {
+        ServiceKind::Police => "POLICE",
+        ServiceKind::Ems => "EMS",
+        ServiceKind::Fire => "FIRE",
     }
 }
 
@@ -2003,21 +2178,21 @@ pub fn serve_with_voice_and_debug(
     voice_socket: Option<UdpSocket>,
     debug_listener: Option<TcpListener>,
 ) -> io::Result<()> {
-    let backend = Arc::new(Mutex::new(
-        Backend::new_four_shift_demo_with_printer_stress(printer_stress_enabled()),
-    ));
+    let backend = Arc::new(Mutex::new(Backend::new_hardware_demo_with_printer_stress(
+        printer_stress_enabled(),
+    )));
     let voice_socket = voice_socket.map(Arc::new);
     if let Some(debug_listener) = debug_listener {
         let backend = Arc::clone(&backend);
         let diagnostics_backend = Arc::clone(&backend);
         thread::spawn(move || {
-            if let Err(error) = serve_debug(debug_listener, backend) {
-                if let Ok(mut backend) = diagnostics_backend.lock() {
-                    backend.add_diagnostic(BackendDiagnostic {
-                        code: "debug_surface_failed".to_string(),
-                        message: error.to_string(),
-                    });
-                }
+            if let Err(error) = serve_debug(debug_listener, backend)
+                && let Ok(mut backend) = diagnostics_backend.lock()
+            {
+                backend.add_diagnostic(BackendDiagnostic {
+                    code: "debug_surface_failed".to_string(),
+                    message: error.to_string(),
+                });
             }
         });
     }
@@ -2034,13 +2209,13 @@ pub fn serve_with_voice_and_debug(
         let voice_socket = voice_socket.as_ref().map(Arc::clone);
         let diagnostics_backend = Arc::clone(&backend);
         thread::spawn(move || {
-            if let Err(error) = handle_connection_with_voice(stream, backend, voice_socket) {
-                if let Ok(mut backend) = diagnostics_backend.lock() {
-                    backend.add_diagnostic(BackendDiagnostic {
-                        code: "frontend_connection_failed".to_string(),
-                        message: error.to_string(),
-                    });
-                }
+            if let Err(error) = handle_connection_with_voice(stream, backend, voice_socket)
+                && let Ok(mut backend) = diagnostics_backend.lock()
+            {
+                backend.add_diagnostic(BackendDiagnostic {
+                    code: "frontend_connection_failed".to_string(),
+                    message: error.to_string(),
+                });
             }
         });
     }
@@ -2053,13 +2228,13 @@ pub fn serve_debug(listener: TcpListener, backend: Arc<Mutex<Backend>>) -> io::R
         let backend = Arc::clone(&backend);
         let diagnostics_backend = Arc::clone(&backend);
         thread::spawn(move || {
-            if let Err(error) = handle_debug_connection(stream, backend) {
-                if let Ok(mut backend) = diagnostics_backend.lock() {
-                    backend.add_diagnostic(BackendDiagnostic {
-                        code: "debug_connection_failed".to_string(),
-                        message: error.to_string(),
-                    });
-                }
+            if let Err(error) = handle_debug_connection(stream, backend)
+                && let Ok(mut backend) = diagnostics_backend.lock()
+            {
+                backend.add_diagnostic(BackendDiagnostic {
+                    code: "debug_connection_failed".to_string(),
+                    message: error.to_string(),
+                });
             }
         });
     }
@@ -2599,56 +2774,69 @@ fn demo_response_context(
 ) -> ResponseContext {
     let (subscriber_id, name, personality, goal, premise, direction, relationship) =
         match subscriber_line {
-            1 => (
+            0 => (
                 1,
+                "Taren Kesh",
+                "precise railway dispatcher under pressure",
+                "Keep the railway moving",
+                "Connect me to the Records Office, Subscriber 0002.",
+                "Ask for a four-digit Subscriber ID before routing",
+                "Vira Dhal is a trusted records clerk",
+            ),
+            1 => (
+                2,
                 "Vira Dhal",
                 "careful factory records clerk protecting a fragile supply ledger",
                 "Keep the relief records moving",
-                "A relief train record needs confirmation",
-                "Confirm the record without exposing the ledger",
-                "Taren Dhal is a trusted railway contact",
+                "Connect me to Rail Dispatch, Subscriber 0001.",
+                "Give the Operator the requested public Subscriber ID",
+                "Taren Kesh works the Rail Dispatch desk",
             ),
             2 => (
-                2,
+                3,
                 "Dr. Leya Varan",
                 "direct emergency physician balancing triage and family duty",
                 "Get help to the parent collapse",
-                "A parent has collapsed near the exchange",
-                "Ask for the emergency connection",
+                "Connect me to the Border Post, Subscriber 0004.",
+                "Ask for the emergency connection by Subscriber ID",
                 "Oren Vey controls the border post response",
             ),
             3 => (
-                3,
+                4,
                 "Captain Oren Vey",
                 "disciplined State Protection Directorate captain weighing order against civilians",
                 "Keep the border post under control",
-                "A railway and border dispatch requires a decision",
+                "Connect me to the Records Office, Subscriber 0002.",
                 "State the condition of the corridor plainly",
                 "Vira Dhal holds records the Directorate wants",
             ),
             4 => (
-                4,
+                5,
                 "Neri Tal",
                 "alert railway signal operator who notices patterns before officials do",
                 "Warn the exchange about the intercepted signal",
-                "A signal has been repeated across the railway line",
+                "Connect me to the Records Office, Subscriber 0002.",
                 "Describe the signal without inventing its source",
-                "Taren Kesh works the railway dispatch desk",
+                "Taren Kesh works the Rail Dispatch desk",
             ),
             _ => (
-                0,
+                1,
                 "Taren Kesh",
                 "precise railway dispatcher under pressure",
                 "Keep the railway moving",
-                "A railway dispatch is waiting",
-                "Ask for an ordinary connection",
+                "Connect me to the Records Office, Subscriber 0002.",
+                "Ask for a four-digit Subscriber ID before routing",
                 "Vira Dhal is a trusted records clerk",
             ),
         };
     let mut permitted_knowledge = vec![match subscriber_line {
-        1 => KnowledgeRecord {
+        0 => KnowledgeRecord {
             fact: "Taren Kesh is waiting on a relief train record".to_string(),
             learned_from: "railway_dispatch_call".to_string(),
+        },
+        1 => KnowledgeRecord {
+            fact: "The directory lists the Rail Dispatch Subscriber".to_string(),
+            learned_from: "directory_terminal".to_string(),
         },
         2 => KnowledgeRecord {
             fact: "The exchange can place an EMS Service Call".to_string(),
@@ -2697,18 +2885,27 @@ fn demo_response_context(
     }
 }
 
-fn initial_state(printer_stress: bool, required_service_calls: u32) -> StateOutput {
+fn initial_state(
+    printer_stress: bool,
+    required_service_calls: u32,
+    required_service_kind: Option<ServiceKind>,
+) -> StateOutput {
     StateOutput {
         line_lamps: [false; 16],
         game_phase: GamePhase::Ready,
         clock: ClockState {
             shift: 1,
-            elapsed_seconds: 0,
+            elapsed_seconds: accelerated_clock_seconds(0),
         },
         speaker_active: false,
+        interference_level: 0,
         tuning: TuningState::default(),
         directory_pages: directory_pages([0, 0, 0, 1]),
-        printer_output: initial_printer_output(printer_stress),
+        printer_output: initial_printer_output(
+            printer_stress,
+            required_service_calls,
+            required_service_kind,
+        ),
         call: None,
         calls: Vec::new(),
         service_call: None,
@@ -2732,18 +2929,28 @@ fn initial_state(printer_stress: bool, required_service_calls: u32) -> StateOutp
     }
 }
 
-fn initial_printer_output(printer_stress: bool) -> Vec<PrinterEntry> {
+fn initial_printer_output(
+    printer_stress: bool,
+    required_service_calls: u32,
+    required_service_kind: Option<ServiceKind>,
+) -> Vec<PrinterEntry> {
     if !printer_stress {
-        return vec![
-            PrinterEntry {
-                entry_id: 1,
-                text: "PROVINCIAL EXCHANGE READY".to_string(),
-            },
-            PrinterEntry {
+        let mut entries = vec![PrinterEntry {
+            entry_id: 1,
+            text: "PROVINCIAL EXCHANGE READY // SHIFT CLOCK 08:00-16:00".to_string(),
+        }];
+        if required_service_calls > 0
+            && let Some(service) = required_service_kind
+        {
+            entries.push(PrinterEntry {
                 entry_id: 2,
-                text: "SERVICE RULE // EMS REQUIRED THIS SHIFT".to_string(),
-            },
-        ];
+                text: format!(
+                    "SERVICE RULE // {} REQUIRED THIS SHIFT",
+                    service_label(service)
+                ),
+            });
+        }
+        return entries;
     }
 
     (1..=STRESS_PRINTER_ENTRY_COUNT)
@@ -2759,25 +2966,62 @@ fn directory_pages(digits: [u8; 4]) -> Vec<DirectoryPage> {
         .iter()
         .fold(0_u16, |value, digit| value * 10 + *digit as u16);
     let record = match id {
-        1 => Some(("TAREN KESH", "Railway dispatcher")),
-        2 => Some(("VIRA DHAL", "Factory records clerk")),
-        3 => Some(("DR. LEYA VARAN", "Emergency physician")),
-        4 => Some(("CAPTAIN OREN VEY", "State Protection Directorate")),
-        5 => Some(("NERI TAL", "Railway signal operator")),
+        1 => Some((
+            "TAREN KESH",
+            "RAIL DISPATCH",
+            "Railway dispatcher",
+            "Rail service",
+            "Public dispatch desk",
+        )),
+        2 => Some((
+            "VIRA DHAL",
+            "RECORDS OFFICE",
+            "Factory records clerk",
+            "Relief records",
+            "Public records contact",
+        )),
+        3 => Some((
+            "DR. LEYA VARAN",
+            "KHARAD CLINIC",
+            "Emergency physician",
+            "Emergency medical service",
+            "Clinic duty line",
+        )),
+        4 => Some((
+            "CAPTAIN OREN VEY",
+            "BORDER POST",
+            "State Protection Directorate",
+            "Border security",
+            "Public authority contact",
+        )),
+        5 => Some((
+            "NERI TAL",
+            "SIGNAL BOX",
+            "Railway signal operator",
+            "Rail service",
+            "Signal maintenance desk",
+        )),
         _ => None,
     };
 
     match record {
-        Some((heading, role)) => vec![
+        Some((heading, listing, role, affiliation, note)) => vec![
             DirectoryPage {
                 page_number: 1,
                 heading: heading.to_string(),
-                lines: vec![format!("SUBSCRIBER ID {id:04}"), role.to_string()],
+                lines: vec![
+                    format!("SUBSCRIBER ID {id:04}"),
+                    format!("LINE LISTING // {listing}"),
+                    role.to_string(),
+                ],
             },
             DirectoryPage {
                 page_number: 2,
                 heading: "PROVINCIAL EXCHANGE".to_string(),
-                lines: vec!["ACTIVE LISTING".to_string()],
+                lines: vec![
+                    format!("AFFILIATION // {affiliation}"),
+                    format!("PUBLIC NOTE // {note}"),
+                ],
             },
         ],
         None => vec![DirectoryPage {

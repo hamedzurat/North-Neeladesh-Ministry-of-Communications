@@ -232,6 +232,17 @@ fn third_shift_supports_competing_calls_and_tap_bridge_monitoring() {
         2,
         vec![cord(PortId::Subscriber(4), PortId::Operator)],
     );
+    let mut ringing = message(
+        sequence,
+        sequence - 1,
+        2,
+        vec![
+            cord(PortId::Subscriber(4), PortId::Operator),
+            cord(PortId::Subscriber(1), PortId::RingGenerator),
+        ],
+    );
+    ringing.input.crank_rotation_timestamps = [0, 100, 200, 300];
+    send(&mut backend, &mut sequence, ringing);
     let tap = backend.apply_input_message(message(
         sequence,
         sequence - 1,
@@ -297,6 +308,17 @@ fn shift_two_routing_waits_for_tuned_interference_controls() {
         4,
         vec![cord(PortId::Subscriber(2), PortId::Operator)],
     );
+    let mut ringing = message(
+        sequence,
+        sequence - 1,
+        4,
+        vec![
+            cord(PortId::Subscriber(2), PortId::Operator),
+            cord(PortId::Subscriber(3), PortId::RingGenerator),
+        ],
+    );
+    ringing.input.crank_rotation_timestamps = [0, 100, 200, 300];
+    send(&mut backend, &mut sequence, ringing);
 
     let mut blocked = message(
         sequence,
@@ -308,7 +330,7 @@ fn shift_two_routing_waits_for_tuned_interference_controls() {
     let blocked = backend.apply_input_message(blocked);
     assert_eq!(
         blocked.output.call.as_ref().unwrap().phase,
-        CallPhase::OperatorSession
+        CallPhase::Ringing
     );
     sequence += 1;
 
@@ -348,7 +370,7 @@ fn missed_shift_calls_and_omitted_ems_follow_authored_progression() {
         assert_eq!(backend.story_node_id(), expected_next);
     }
 
-    assert_eq!(backend.debug_snapshot().shift.service_errors, 1);
+    assert_eq!(backend.debug_snapshot().shift.service_errors, 2);
     assert_eq!(backend.debug_snapshot().shift.number, 4);
     let choice = backend.select_story_path(Some("ending_civil_war"));
     assert!(!choice.rejected_proposal);

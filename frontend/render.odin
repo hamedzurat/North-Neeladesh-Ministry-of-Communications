@@ -191,7 +191,8 @@ ref_draw_clock :: proc(app: ^Input_State) {
 	rl.DrawCircleV(ref_point(area.x + 239, area.y + 57), 5, AMBER)
 	rl.DrawCircleV(ref_point(area.x + 239, area.y + 86), 5, AMBER)
 	ref_text(fmt.tprintf("SHIFT %d // %s", app.backend_output.clock_shift, app.backend_output.game_phase), area.x + 286, area.y + 116, 11, MUTED)
-	ref_text(fmt.tprintf("CALLS %d // EMS %d/%d // ERRORS %d", app.backend_output.shift.active_call_count, app.backend_output.shift.completed_service_calls, app.backend_output.shift.required_service_calls, app.backend_output.shift.service_errors), area.x + 286, area.y + 98, 10, MUTED)
+	ref_text(fmt.tprintf("CALLS %d // SERVICES %d/%d // ERRORS %d", app.backend_output.shift.active_call_count, app.backend_output.shift.completed_service_calls, app.backend_output.shift.required_service_calls, app.backend_output.shift.service_errors), area.x + 286, area.y + 98, 10, MUTED)
+	ref_text(fmt.tprintf("INTERFERENCE %d%%", app.backend_output.interference_level), area.x + 286, area.y + 80, 10, app.backend_output.interference_level > 0 ? AMBER : GREEN)
 	if call, ok := app.backend_output.call.?; ok {
 		ref_text(fmt.tprintf("CALL // %s", call.phase), area.x + 14, area.y + 98, 10, BLUE)
 	}
@@ -252,12 +253,12 @@ ref_draw_speaker :: proc(app: ^Input_State, delta: f32) {
 		if active {
 			wave := math.sin_f32(app.speaker_phase + f32(index) * 0.73)
 			if wave < 0 do wave = -wave
-			height = 5 + 0.65 * (8 + wave * 29)
+			height = 5 + 0.65 * (8 + wave * 29) + f32(app.backend_output.interference_level) * 0.08
 		}
 		x := area.x + 18 + f32(index) * 18
 		rl.DrawRectangleRounded(ref_rect(x, area.y + 57 - height, 12, height), 0.3, 3, active ? BLUE : BORDER)
 	}
-	ref_text(active ? "SPEAKER ACTIVE" : "SPEAKER STANDBY", area.x + 14, area.y + 12, 11, MUTED)
+	ref_text(fmt.tprintf("%s // STATIC %d%%", active ? "SPEAKER ACTIVE" : "SPEAKER STANDBY", app.backend_output.interference_level), area.x + 14, area.y + 12, 11, MUTED)
 }
 
 ref_draw_printer :: proc(app: ^Input_State) {

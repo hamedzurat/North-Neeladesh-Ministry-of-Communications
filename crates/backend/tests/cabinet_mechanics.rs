@@ -41,6 +41,18 @@ fn apply(
     response
 }
 
+fn apply_with_crank(
+    backend: &mut Backend,
+    sequence: &mut u64,
+    cords: Vec<CordConnection>,
+) -> exchange_protocol::StateMessage {
+    let mut message = input(*sequence, *sequence - 1, cords, HeldControls::default());
+    message.input.crank_rotation_timestamps = [0, 100, 200, 300];
+    let response = backend.apply_input_message(message);
+    *sequence += 1;
+    response
+}
+
 #[test]
 fn a_held_caller_survives_competing_call_handling_and_can_be_recalled() {
     let mut backend = Backend::new();
@@ -108,6 +120,27 @@ fn tap_bridge_routes_a_circuit_and_only_monitors_while_held() {
         vec![cord(PortId::Subscriber(0), PortId::Operator)],
         HeldControls::default(),
     );
+    apply(
+        &mut backend,
+        &mut sequence,
+        vec![
+            cord(PortId::Subscriber(0), PortId::Operator),
+            cord(PortId::Subscriber(1), PortId::RingGenerator),
+        ],
+        HeldControls::default(),
+    );
+    let ringing = apply_with_crank(
+        &mut backend,
+        &mut sequence,
+        vec![
+            cord(PortId::Subscriber(0), PortId::Operator),
+            cord(PortId::Subscriber(1), PortId::RingGenerator),
+        ],
+    );
+    assert_eq!(
+        ringing.output.call.as_ref().unwrap().phase,
+        CallPhase::Ringing
+    );
 
     let routed = apply(
         &mut backend,
@@ -120,8 +153,10 @@ fn tap_bridge_routes_a_circuit_and_only_monitors_while_held() {
     );
     assert_eq!(routed.output.call.unwrap().phase, CallPhase::Connected);
 
-    let mut listening = HeldControls::default();
-    listening.tap_1 = true;
+    let listening = HeldControls {
+        tap_1: true,
+        ..HeldControls::default()
+    };
     let listening = apply(
         &mut backend,
         &mut sequence,
@@ -148,6 +183,301 @@ fn tap_bridge_routes_a_circuit_and_only_monitors_while_held() {
 }
 
 #[test]
+fn direct_connection_before_ringing_is_rejected_without_a_routing_receipt() {
+    let mut backend = Backend::new();
+    let mut sequence = 1;
+    apply(&mut backend, &mut sequence, vec![], HeldControls::default());
+    apply(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
+        HeldControls::default(),
+    );
+
+    let direct = apply(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
+        HeldControls::default(),
+    );
+
+    assert_eq!(
+        direct.output.call.as_ref().unwrap().phase,
+        CallPhase::OperatorSession
+    );
+    assert_eq!(direct.output.shift.completed_routings, 0);
+    assert!(
+        !direct
+            .output
+            .printer_output
+            .iter()
+            .any(|entry| entry.text.contains("ROUTING"))
+    );
+    assert!(
+        direct
+            .output
+            .debug
+            .messages
+            .iter()
+            .any(|message| message.code == "ring_generator_required")
+    );
+}
+
+#[test]
+fn police_ems_and_fire_controls_share_press_release_service_behavior() {
+    for (service, text) in [
+        (ServiceKind::Police, "POLICE"),
+        (ServiceKind::Ems, "EMS"),
+        (ServiceKind::Fire, "FIRE"),
+    ] {
+        let mut backend = Backend::new();
+        let mut sequence = 1;
+        apply(&mut backend, &mut sequence, vec![], HeldControls::default());
+        apply(
+            &mut backend,
+            &mut sequence,
+            vec![cord(PortId::Subscriber(0), PortId::Operator)],
+            HeldControls::default(),
+        );
+
+        let mut held = HeldControls::default();
+        match service {
+            ServiceKind::Police => held.police = true,
+            ServiceKind::Ems => held.ems = true,
+            ServiceKind::Fire => held.fire = true,
+        }
+        let active = apply(
+            &mut backend,
+            &mut sequence,
+            vec![cord(PortId::Subscriber(0), PortId::Operator)],
+            held,
+        );
+        assert_eq!(
+            active.output.service_call.as_ref().unwrap().service,
+            service
+        );
+        assert_eq!(
+            active.output.service_call.as_ref().unwrap().phase,
+            ServiceCallPhase::Active
+        );
+
+        let completed = apply(&mut backend, &mut sequence, vec![], HeldControls::default());
+        assert_eq!(
+            completed.output.service_call.as_ref().unwrap().service,
+            service
+        );
+        assert_eq!(
+            completed.output.service_call.as_ref().unwrap().phase,
+            ServiceCallPhase::Completed
+        );
+        assert!(
+            completed
+                .output
+                .printer_output
+                .iter()
+                .any(|entry| entry.text == format!("SERVICE {text} COMPLETED"))
+        );
+    }
+}
+
+#[test]
+fn hardware_demo_exposes_directory_interference_police_and_tap_bridge_state() {
+    let mut backend = Backend::new_hardware_demo();
+    let mut sequence = 1;
+    let send_demo = |backend: &mut Backend,
+                     sequence: &mut u64,
+                     cords: Vec<CordConnection>,
+                     held_controls: HeldControls,
+                     tuning: TuningState| {
+        let mut message = input(*sequence, *sequence - 1, cords, held_controls);
+        message.input.directory_digits = [0, 0, 0, 2];
+        message.input.tuning = tuning;
+        let response = backend.apply_input_message(message);
+        *sequence += 1;
+        response
+    };
+
+    let waiting = send_demo(
+        &mut backend,
+        &mut sequence,
+        vec![],
+        HeldControls::default(),
+        TuningState::default(),
+    );
+    assert_eq!(
+        waiting.output.call.as_ref().unwrap().phase,
+        CallPhase::Waiting
+    );
+    assert_eq!(waiting.output.interference_level, 100);
+    assert!(
+        waiting.output.directory_pages[0]
+            .lines
+            .iter()
+            .any(|line| line.contains("LINE LISTING"))
+    );
+
+    let police = HeldControls {
+        police: true,
+        ..HeldControls::default()
+    };
+    let police_active = send_demo(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
+        police,
+        TuningState::default(),
+    );
+    assert_eq!(
+        police_active.output.service_call.as_ref().unwrap().service,
+        ServiceKind::Police
+    );
+    let police_completed = send_demo(
+        &mut backend,
+        &mut sequence,
+        vec![],
+        HeldControls::default(),
+        TuningState::default(),
+    );
+    assert_eq!(police_completed.output.shift.completed_service_calls, 1);
+
+    send_demo(
+        &mut backend,
+        &mut sequence,
+        vec![cord(PortId::Subscriber(0), PortId::Operator)],
+        HeldControls::default(),
+        TuningState::default(),
+    );
+    let ringing = apply_with_crank(
+        &mut backend,
+        &mut sequence,
+        vec![
+            cord(PortId::Subscriber(0), PortId::Operator),
+            cord(PortId::Subscriber(1), PortId::RingGenerator),
+        ],
+    );
+    assert_eq!(
+        ringing.output.call.as_ref().unwrap().phase,
+        CallPhase::Ringing
+    );
+    assert!(ringing.output.line_lamps[1]);
+
+    let tap = send_demo(
+        &mut backend,
+        &mut sequence,
+        vec![
+            cord(PortId::Subscriber(0), PortId::Tap(3)),
+            cord(PortId::Subscriber(1), PortId::Tap(4)),
+        ],
+        HeldControls::default(),
+        TuningState {
+            coarse: 512,
+            fine: 512,
+        },
+    );
+    assert_eq!(
+        tap.output.call.as_ref().unwrap().phase,
+        CallPhase::Connected
+    );
+    assert_eq!(tap.output.interference_level, 0);
+
+    let listening = HeldControls {
+        tap_2: true,
+        ..HeldControls::default()
+    };
+    let listening = send_demo(
+        &mut backend,
+        &mut sequence,
+        vec![
+            cord(PortId::Subscriber(0), PortId::Tap(3)),
+            cord(PortId::Subscriber(1), PortId::Tap(4)),
+        ],
+        listening,
+        TuningState {
+            coarse: 512,
+            fine: 512,
+        },
+    );
+    assert_eq!(listening.output.tap_bridge_monitoring, Some(2));
+    assert!(
+        backend
+            .debug_snapshot()
+            .story
+            .operator_knowledge
+            .iter()
+            .any(|fact| fact.contains("intercepted signal"))
+    );
+
+    let released = send_demo(
+        &mut backend,
+        &mut sequence,
+        vec![
+            cord(PortId::Subscriber(0), PortId::Tap(3)),
+            cord(PortId::Subscriber(1), PortId::Tap(4)),
+        ],
+        HeldControls::default(),
+        TuningState {
+            coarse: 512,
+            fine: 512,
+        },
+    );
+    assert_eq!(released.output.tap_bridge_monitoring, None);
+
+    let completed = send_demo(
+        &mut backend,
+        &mut sequence,
+        vec![
+            cord(PortId::Subscriber(0), PortId::Tap(3)),
+            cord(PortId::Subscriber(1), PortId::Tap(4)),
+        ],
+        HeldControls::default(),
+        TuningState {
+            coarse: 512,
+            fine: 512,
+        },
+    );
+    assert_eq!(
+        completed.output.call.as_ref().unwrap().phase,
+        CallPhase::Completed
+    );
+    let settled = send_demo(
+        &mut backend,
+        &mut sequence,
+        vec![],
+        HeldControls::default(),
+        TuningState {
+            coarse: 512,
+            fine: 512,
+        },
+    );
+    assert_eq!(
+        settled.output.game_phase,
+        exchange_protocol::GamePhase::Ended
+    );
+    assert_eq!(settled.output.shift.service_errors, 0);
+    assert!(
+        settled
+            .output
+            .printer_output
+            .iter()
+            .any(|entry| entry.text.contains("demonstration completed"))
+    );
+
+    backend.reset_run();
+    assert_eq!(backend.debug_snapshot().run.elapsed_seconds, 8 * 60 * 60);
+    assert_eq!(backend.debug_snapshot().story.current_node_id, "run_start");
+}
+
+#[test]
+fn hardware_demo_clock_maps_eight_real_minutes_to_the_shift_display() {
+    let mut backend = Backend::new_hardware_demo();
+    let advanced =
+        backend.apply_debug_command(exchange_protocol::DebugCommand::AdvanceTime { seconds: 480 });
+
+    assert!(advanced.accepted);
+    assert_eq!(advanced.snapshot.run.elapsed_seconds, 16 * 60 * 60);
+}
+
+#[test]
 fn ems_service_calls_are_recorded_and_missing_ems_is_a_typed_error() {
     let mut backend = Backend::new();
     let mut sequence = 1;
@@ -158,8 +488,10 @@ fn ems_service_calls_are_recorded_and_missing_ems_is_a_typed_error() {
         vec![cord(PortId::Subscriber(0), PortId::Operator)],
         HeldControls::default(),
     );
-    let mut ems = HeldControls::default();
-    ems.ems = true;
+    let ems = HeldControls {
+        ems: true,
+        ..HeldControls::default()
+    };
     let placed = apply(
         &mut backend,
         &mut sequence,
@@ -197,11 +529,13 @@ fn ems_service_calls_are_recorded_and_missing_ems_is_a_typed_error() {
         vec![cord(PortId::Subscriber(0), PortId::Operator)],
         HeldControls::default(),
     );
-    apply(
+    apply_with_crank(
         &mut missing,
         &mut missing_sequence,
-        vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
-        HeldControls::default(),
+        vec![
+            cord(PortId::Subscriber(0), PortId::Operator),
+            cord(PortId::Subscriber(1), PortId::RingGenerator),
+        ],
     );
     apply(
         &mut missing,
@@ -209,6 +543,8 @@ fn ems_service_calls_are_recorded_and_missing_ems_is_a_typed_error() {
         vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
         HeldControls::default(),
     );
+    assert_eq!(missing.story_node_id(), "event_success");
+    assert_eq!(missing.debug_snapshot().shift.required_service_calls, 1);
     let settled = apply(
         &mut missing,
         &mut missing_sequence,

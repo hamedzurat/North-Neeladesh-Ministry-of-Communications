@@ -20,7 +20,7 @@ fn debug_snapshot_exposes_authoritative_run_story_and_diagnostics() {
     assert_eq!(start.outgoing, vec!["shift_call"]);
     assert_eq!(snapshot.subscribers.len(), 4);
     assert_eq!(snapshot.subscribers[0].line, Some(0));
-    assert_eq!(snapshot.frontend.transport_connected, false);
+    assert!(!snapshot.frontend.transport_connected);
     assert_eq!(snapshot.recent_errors[0].code, "backend_ready");
 }
 
@@ -59,7 +59,7 @@ fn debug_controls_use_the_backend_command_boundary_and_reset_cleanly() {
     let reset = backend.apply_debug_command(DebugCommand::ResetRun);
     assert!(reset.accepted);
     assert!(reset.snapshot.calls.is_empty());
-    assert_eq!(reset.snapshot.run.elapsed_seconds, 0);
+    assert_eq!(reset.snapshot.run.elapsed_seconds, 8 * 60 * 60);
     assert!(!reset.snapshot.run.bypass_restrictions);
 }
 
