@@ -14,8 +14,9 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream};
 use exchange_protocol::{
     ProtocolError, RtpL16Packet, VOICE_AUDIO_PACKET_SAMPLES, VOICE_AUDIO_SAMPLE_RATE,
-    VOICE_INPUT_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControlMessage, VoiceStatus,
-    VoiceStatusMessage, decode_voice_control, encode_voice_status,
+    VOICE_INPUT_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControlMessage, VoiceInputAudioMessage,
+    VoiceStatus, VoiceStatusMessage, decode_voice_control, encode_voice_input_audio,
+    encode_voice_status,
 };
 use serde::{Deserialize, Serialize};
 
@@ -1208,6 +1209,47 @@ impl UdpVoiceOutput {
             .map_err(|error| VoiceError::new("voice_control_receive_failed", error.to_string()))?;
         decode_voice_control(&datagram[..length])
             .map_err(|error| VoiceError::new("voice_control_decode_failed", error.to_string()))
+    }
+
+    pub fn receive_datagram(&self) -> Result<Vec<u8>, VoiceError> {
+        let mut datagram = vec![0_u8; 65_535];
+        let length = match self.socket.recv(&mut datagram) {
+            Ok(length) => length,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
+                return Err(VoiceError::new(
+                    "voice_datagram_timeout",
+                    "voice relay receive timed out",
+                ));
+            }
+            Err(error) => {
+                return Err(VoiceError::new(
+                    "voice_datagram_receive_failed",
+                    error.to_string(),
+                ));
+            }
+        };
+        datagram.truncate(length);
+        Ok(datagram)
+    }
+
+    pub fn set_receive_timeout(&self, timeout: Duration) -> Result<(), VoiceError> {
+        self.socket
+            .set_read_timeout(Some(timeout))
+            .map_err(|error| VoiceError::new("voice_timeout_setup_failed", error.to_string()))
+    }
+
+    pub fn send_input_audio(&self, message: &VoiceInputAudioMessage) -> Result<(), VoiceError> {
+        let datagram = encode_voice_input_audio(message)
+            .map_err(|error| VoiceError::new("voice_input_encode_failed", error.to_string()))?;
+        self.socket
+            .send(&datagram)
+            .map_err(|error| VoiceError::new("voice_input_send_failed", error.to_string()))?;
+        Ok(())
     }
 }
 

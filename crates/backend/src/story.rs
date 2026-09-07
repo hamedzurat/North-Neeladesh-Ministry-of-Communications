@@ -405,6 +405,21 @@ impl CompiledStoryGraph {
         self.nodes.get(node_id)
     }
 
+    pub fn subscribers(&self) -> &[Subscriber] {
+        &self.content.subscribers
+    }
+
+    pub fn story_event_node_id(&self, event_id: &str) -> Option<&str> {
+        self.nodes.values().find_map(|node| {
+            matches!(
+                &node.kind,
+                StoryNodeKind::StoryEvent { event_id: node_event_id, .. }
+                    if node_event_id == event_id
+            )
+            .then_some(node.id.as_str())
+        })
+    }
+
     pub fn outgoing(&self, node_id: &str) -> &[String] {
         self.outgoing.get(node_id).map_or(&[], Vec::as_slice)
     }
@@ -426,6 +441,13 @@ impl CompiledStoryGraph {
             .line_listings
             .iter()
             .find(|listing| listing.id == listing_id)
+    }
+
+    pub fn content_line_for_subscriber(&self, subscriber_id: &str) -> Option<&LineListing> {
+        self.content
+            .line_listings
+            .iter()
+            .find(|listing| listing.subscriber_ids.iter().any(|id| id == subscriber_id))
     }
 
     pub fn authored_call_for_caller_line(&self, caller_line: u8) -> Option<(u8, u8)> {

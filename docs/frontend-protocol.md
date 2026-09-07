@@ -114,7 +114,7 @@ The Odin frontend probes the backend before creating a window. If the backend la
 
 ## Voice boundary
 
-The separate voice daemon uses the backend's UDP voice socket, normally `127.0.0.1:7879`. Status datagrams begin with tag `0x01` and contain a CBOR `VoiceStatusMessage`. PTT control datagrams begin with tag `0x02` and contain a CBOR `VoiceControlMessage`. Synthesized audio is RTP version 2 with the `L16/24000/1` payload type `96`; samples are signed 16-bit network-order PCM. The daemon announces `ready`, then the backend forwards accepted PTT start and release edges to the daemon.
+The separate voice relay uses the backend's UDP voice socket, normally `127.0.0.1:7879`. Status datagrams begin with tag `0x01` and contain a CBOR `VoiceStatusMessage`. PTT control datagrams begin with tag `0x02` and contain a CBOR `VoiceControlMessage`. Captured relay audio begins with tag `0x03` and contains a bounded CBOR `VoiceInputAudioMessage`; the `complete` flag terminates a sequence of 20 ms PCM chunks. Synthesized audio is RTP version 2 with the `L16/24000/1` payload type `96`; samples are signed 16-bit network-order PCM. The relay announces `ready`, then the backend forwards accepted PTT start and release edges to the relay. The laptop backend runs STT, dialogue/LLM, and Qwen3-TTS; the relay only captures, forwards, plays, and reports recovery status.
 
 Voice status and audio do not advance the authoritative Routing state. Each backend PTT control includes the selected Subscriber voice ID so the daemon does not choose a voice independently. A failed worker produces a backend diagnostic and no Story Event or Routing.
 
@@ -129,4 +129,4 @@ Manual verification:
 7. Hold EMS once and release it; verify the authoritative service receipt and completed-service counter. Complete a shift without EMS and verify the typed Service Error and conditional Story Graph path.
 8. Change the Directory Terminal digits and verify the e-paper pages update from the backend.
 
-For one real local voice session, run `uv sync --project python` once during provisioning, configure the offline model assets, run `just voice-preflight`, then run `just voice-daemon` after starting `just backend`. The daemon accepts `ptt` and `release` on stdin as a manual fallback for testing the same session boundary used by backend PTT controls. Use `just voice-smoke` only for a hardware-free protocol test; see `docs/voice-daemon.md` for the model and device configuration.
+For one real voice session, run `uv sync --project python` once during provisioning, configure the offline model assets, run `just voice-preflight`, then run `just backend` and `just voice-daemon`. PTT is controlled by the Cabinet Frontend; the relay stays listening while idle and carries only audio/status traffic. Use `just voice-smoke` for a hardware-free relay test; see `docs/voice-daemon.md` for the model and device configuration.

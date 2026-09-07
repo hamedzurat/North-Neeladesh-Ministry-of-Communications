@@ -207,8 +207,19 @@ name = "exchange-backend"
 version = "0.1.0"
 dependencies = [
  "exchange-protocol",
+ "exchange-voice-daemon",
  "serde_cbor",
+ "serde_json",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "exchange-debug-surface"
+version = "0.1.0"
+dependencies = [
+ "exchange-protocol",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

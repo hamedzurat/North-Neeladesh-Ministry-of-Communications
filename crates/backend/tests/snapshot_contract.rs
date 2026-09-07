@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use exchange_backend::Backend;
 use exchange_protocol::{
     CordConnection, HeldControls, InputDebug, InputMessage, InputState, PROTOCOL_VERSION, PortId,
-    ProtocolError, RtpL16Packet, TuningState, VOICE_PROTOCOL_VERSION, VoiceControl, VoiceStatus,
-    VoiceStatusMessage, encode_voice_status,
+    ProtocolError, RtpL16Packet, TuningState, VOICE_PROTOCOL_VERSION, VoiceControl,
+    VoiceInputAudioMessage, VoiceStatus, VoiceStatusMessage, encode_voice_input_audio,
+    encode_voice_status,
 };
 
 fn input(sequence: u64, revision: u64, digits: [u8; 4]) -> InputMessage {
@@ -405,4 +406,61 @@ fn accepted_ptt_edges_are_forwarded_to_the_registered_voice_daemon() {
     let release_control = backend.take_voice_control().unwrap().0;
     assert_eq!(release_control.control, VoiceControl::ReleasePtt);
     assert_eq!(release_control.voice_id, start_control.voice_id);
+}
+
+#[test]
+fn remote_voice_input_requires_ordered_bounded_chunks() {
+    let mut backend = Backend::new();
+    let ready = VoiceStatusMessage {
+        protocol_version: VOICE_PROTOCOL_VERSION,
+        session_id: 9,
+        turn_id: 2,
+        state_revision: 0,
+        status: VoiceStatus::Ready,
+        transcript: None,
+        response_text: None,
+        error: None,
+    };
+    let peer = "127.0.0.1:45679".parse().unwrap();
+    assert!(backend.apply_voice_datagram_from(&encode_voice_status(&ready).unwrap(), Some(peer)));
+
+    let chunk = |chunk_index, complete, samples| {
+        encode_voice_input_audio(&VoiceInputAudioMessage {
+            protocol_version: VOICE_PROTOCOL_VERSION,
+            session_id: 9,
+            turn_id: 2,
+            state_revision: 0,
+            chunk_index,
+            complete,
+            samples,
+        })
+        .unwrap()
+    };
+    assert!(backend.apply_voice_datagram_from(&chunk(0, false, vec![1, 2]), Some(peer)));
+    assert!(!backend.apply_voice_datagram_from(&chunk(2, true, vec![3]), Some(peer)));
+    assert!(backend.apply_voice_datagram_from(&chunk(1, true, vec![3]), Some(peer)));
+}
+
+#[test]
+fn voice_relay_can_reannounce_after_reset_or_a_new_udp_socket() {
+    let mut backend = Backend::new();
+    let ready = VoiceStatusMessage {
+        protocol_version: VOICE_PROTOCOL_VERSION,
+        session_id: 11,
+        turn_id: 1,
+        state_revision: 0,
+        status: VoiceStatus::Ready,
+        transcript: None,
+        response_text: None,
+        error: None,
+    };
+    let first_peer = "127.0.0.1:45680".parse().unwrap();
+    let second_peer = "127.0.0.1:45681".parse().unwrap();
+    assert!(
+        backend.apply_voice_datagram_from(&encode_voice_status(&ready).unwrap(), Some(first_peer))
+    );
+    backend.reset_run();
+    assert!(
+        backend.apply_voice_datagram_from(&encode_voice_status(&ready).unwrap(), Some(second_peer))
+    );
 }
