@@ -170,6 +170,15 @@ wheels = [
 ]
 
 [[package]]
+name = "lgpio"
+version = "0.2.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/33/26ec2e8049eaa2f077bf23a12dc61ca559fbfa7bea0516bf263d657ae275/lgpio-0.2.2.0.tar.gz", hash = "sha256:11372e653b200f76a0b3ef8a23a0735c85ec678a9f8550b9893151ed0f863fff", size = 90087, upload-time = "2024-03-29T21:59:55.901Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3b/1c/becd00f66d2c65feed9a668ff9d91732394cb6baba7bec505d55de0e30c9/lgpio-0.2.2.0-cp312-cp312-manylinux_2_34_aarch64.whl", hash = "sha256:d907db79292c721c605af08187385ddb3b7af09907e1ffca56cf0cd6558ace0a", size = 366058, upload-time = "2024-04-01T22:49:47.615Z" },
+]
+
+[[package]]
 name = "north-neeladesh-cabinet-frontend"
 version = "0.1.0"
 source = { editable = "." }
@@ -178,6 +187,7 @@ dependencies = [
     { name = "adafruit-circuitpython-mcp230xx" },
     { name = "cbor2" },
     { name = "gpiozero" },
+    { name = "lgpio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "pillow" },
     { name = "spidev" },
 ]
@@ -188,6 +198,7 @@ requires-dist = [
     { name = "adafruit-circuitpython-mcp230xx", specifier = ">=2.5" },
     { name = "cbor2", specifier = ">=5.6,<6" },
     { name = "gpiozero", specifier = ">=2" },
+    { name = "lgpio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.2.2" },
     { name = "pillow", specifier = ">=11" },
     { name = "spidev", specifier = ">=3.6" },
 ]

@@ -648,10 +648,10 @@ impl MicrophoneCapture for CommandMicrophone {
                 }
                 let remaining = max_bytes.saturating_sub(bytes.len());
                 bytes.extend_from_slice(&buffer[..length.min(remaining)]);
-                if bytes.len() >= max_bytes
-                    && let Ok(mut child) = child_for_reader.lock()
-                {
-                    terminate_process_group(&mut child);
+                if bytes.len() >= max_bytes {
+                    if let Ok(mut child) = child_for_reader.lock() {
+                        terminate_process_group(&mut child);
+                    }
                 }
             }
             Ok(bytes)
@@ -1137,7 +1137,7 @@ impl TextToSpeech for PersistentQwen3TtsCommand {
             if length == 0 {
                 break;
             }
-            if length > MAX_WORKER_OUTPUT_BYTES || !length.is_multiple_of(2) {
+            if length > MAX_WORKER_OUTPUT_BYTES || length % 2 != 0 {
                 return Err(VoiceError::new(
                     "invalid_pcm",
                     "persistent Qwen3-TTS returned an invalid PCM frame",
@@ -1624,17 +1624,15 @@ fn encode_pcm16(samples: &[i16]) -> Vec<u8> {
 }
 
 fn decode_pcm16(bytes: &[u8]) -> Result<Vec<i16>, VoiceError> {
-    if !bytes.len().is_multiple_of(2) {
+    if bytes.len() % 2 != 0 {
         return Err(VoiceError::new(
             "invalid_pcm",
             "PCM output must contain an even number of bytes",
         ));
     }
     Ok(bytes
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|chunk| i16::from_le_bytes(*chunk))
+        .chunks_exact(2)
+        .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
         .collect())
 }
 
@@ -1815,14 +1813,14 @@ fn run_command_stream(
     });
     let stderr_thread =
         thread::spawn(move || read_bounded(stderr, 16 * 1024, "worker_stderr_failed"));
-    if let Some(mut stdin) = child.stdin.take()
-        && let Err(error) = stdin.write_all(input)
-    {
-        terminate_process_group(&mut child);
-        let _ = child.wait();
-        let _ = stdout_thread.join();
-        let _ = stderr_thread.join();
-        return Err(VoiceError::new("worker_stdin_failed", error.to_string()));
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(error) = stdin.write_all(input) {
+            terminate_process_group(&mut child);
+            let _ = child.wait();
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
+            return Err(VoiceError::new("worker_stdin_failed", error.to_string()));
+        }
     }
     let deadline = Instant::now() + spec.timeout;
     let mut total = 0;

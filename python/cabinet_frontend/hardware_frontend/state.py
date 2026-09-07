@@ -59,6 +59,8 @@ def input_message(
     firmware_version: str,
     device_faults: list[str],
 ) -> dict[str, Any]:
+    timestamps = physical.crank_rotation_timestamps[-4:]
+    timestamps = [0] * (4 - len(timestamps)) + timestamps
     return {
         "protocol_version": 1,
         "input_sequence": sequence,
@@ -67,7 +69,7 @@ def input_message(
             "cord_topology": physical.cord_topology,
             "held_controls": physical.held_controls.to_wire(),
             "directory_digits": physical.directory_digits,
-            "crank_rotation_timestamps": physical.crank_rotation_timestamps[-4:],
+            "crank_rotation_timestamps": timestamps,
             "tuning": physical.tuning,
             "debug": {
                 "firmware_version": firmware_version,

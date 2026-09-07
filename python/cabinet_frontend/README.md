@@ -23,6 +23,8 @@ renders a wrapped e-paper test page, scans MCP pairs, and listens for rotary
 encoder movement. `--real` is intentionally required.
 
 ```sh
+PYTHONPATH=/home/taki/Desktop \
+UV_PROJECT_ENVIRONMENT=/home/taki/venv \
 uv run --directory /home/taki/Desktop/nn-hardware-frontend \
   python -m hardware_frontend.hardware_smoke --real
 ```

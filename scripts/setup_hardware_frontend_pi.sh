@@ -14,12 +14,19 @@ if [[ ! -x "$VENV/bin/python" ]]; then
     exit 1
 fi
 
-if ! command -v uv >/dev/null 2>&1; then
+UV_BIN="${UV_BIN:-}"
+if [[ -z "$UV_BIN" ]] && command -v uv >/dev/null 2>&1; then
+    UV_BIN="$(command -v uv)"
+fi
+if [[ -z "$UV_BIN" ]] && [[ -x "$HOME/.local/bin/uv" ]]; then
+    UV_BIN="$HOME/.local/bin/uv"
+fi
+if [[ -z "$UV_BIN" ]]; then
     printf 'uv is required. Install it from https://docs.astral.sh/uv/getting-started/\n' >&2
     exit 1
 fi
 
-UV_PROJECT_ENVIRONMENT="$VENV" uv sync --project "$APP_ROOT" --locked --no-dev
+UV_PROJECT_ENVIRONMENT="$VENV" "$UV_BIN" sync --project "$APP_ROOT" --locked --no-dev
 
 sudo usermod -a -G gpio,i2c,spi "$APP_USER"
 
