@@ -49,8 +49,9 @@ The player-facing mechanical sequence is:
 
 ## Repository Snapshot
 
-Current `HEAD` is `6065c15` on `master`. The audited commits are:
+Current `HEAD` is `a4859af` on `master`. The audited commits are:
 
+- `a4859af feat: make hardware demo locally runnable`
 - `bc164a1 feat: make hardware demo repeatable`
 - `1505fb2 fix: close hardware demo review gaps`
 - `912cd27 fix: align cabinet demo outputs`
