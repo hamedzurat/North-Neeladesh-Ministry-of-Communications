@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>North Neeladesh Debug Surface</title>
+  <style>
+    :root { color-scheme: dark; --bg:#11151a; --panel:#1c232b; --line:#35404d; --text:#e8edf2; --muted:#94a0ad; --accent:#efb94e; --good:#6bd08b; --bad:#f08282; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:16px; align-items:center; }
+    h1,h2 { margin:0; font-size:16px; letter-spacing:.04em; } h2 { margin-bottom:12px; color:var(--accent); font-size:13px; }
+    #connection { color:var(--muted); } main { padding:20px 24px; max-width:1600px; margin:auto; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:14px; }
+    section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; min-height:120px; }
+    .wide { grid-column:1/-1; } .facts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px 18px; }
+    .label { color:var(--muted); } .value { text-align:right; overflow-wrap:anywhere; } .row { display:flex; justify-content:space-between; gap:14px; padding:3px 0; border-bottom:1px solid #29323c; }
+    button,input { font:inherit; color:var(--text); background:#27313c; border:1px solid #4a5866; border-radius:4px; padding:7px 9px; } button { cursor:pointer; } button:hover { border-color:var(--accent); }
+    .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; } .controls input { width:75px; } .controls input.wide-input { width:150px; }
+    pre { white-space:pre-wrap; overflow:auto; max-height:260px; margin:0; color:#cbd5df; } .good { color:var(--good); } .bad { color:var(--bad); }
+    table { width:100%; border-collapse:collapse; } th,td { text-align:left; border-bottom:1px solid #29323c; padding:5px; } th { color:var(--muted); font-weight:normal; }
+    @media (max-width:600px) { header,main { padding:14px; } .facts { grid-template-columns:1fr; } .value { text-align:left; } .row { flex-direction:column; gap:0; } }
+  </style>
+</head>
+<body>
+  <header><h1>DEVELOPMENT DEBUG SURFACE // AUTHORITATIVE CORE</h1><div id="connection">connecting</div></header>
+  <main>
+    <section class="wide"><h2>CONTROLS</h2><div class="controls">
+      <button onclick="send('reset')">Reset Run</button>
+      <input id="seconds" type="number" min="0" value="30"><button onclick="advance()">Advance Time</button>
+      <input id="caller" type="number" min="0" max="15" value="0"><input id="callee" type="number" min="0" max="15" value="1"><button onclick="injectCall()">Inject Call</button>
+      <input class="wide-input" id="event" placeholder="event id" value="routing_success"><button onclick="forceEvent()">Force Story Event</button>
+      <input class="wide-input" id="path" placeholder="node id"><button onclick="selectPath()">Select Path</button>
+      <button onclick="toggle('godmode')">Godmode</button><button onclick="toggle('bypass_restrictions')">Bypass Restrictions</button>
+      <span id="action-status"></span>
+    </div></section>
+    <div class="grid">
+      <section><h2>RUN / SHIFT</h2><div id="run"></div></section>
+      <section><h2>STORY GRAPH</h2><div id="story"></div></section>
+      <section><h2>COUNTERS</h2><div id="counters"></div></section>
+      <section><h2>VOICE STATUS</h2><div id="voice"></div></section>
+      <section><h2>FRONTEND STATUS</h2><div id="frontend"></div></section>
+      <section><h2>RECENT ERRORS</h2><pre id="errors"></pre></section>
+      <section class="wide"><h2>CALLS</h2><div id="calls"></div></section>
+      <section class="wide"><h2>SUBSCRIBER STATE</h2><div id="subscribers"></div></section>
+      <section class="wide"><h2>RECENT TRANSITIONS</h2><pre id="transitions"></pre></section>
+    </div>
+  </main>
+  <script>
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const rows = object => Object.entries(object).map(([key,value]) => `<div class="row"><span class="label">${esc(key)}</span><span class="value">${esc(Array.isArray(value) ? value.join(', ') || '-' : value)}</span></div>`).join('');
+    async function refresh() {
+      try { const response = await fetch('/api/snapshot'); if (!response.ok) throw new Error(await response.text()); render(await response.json()); document.getElementById('connection').textContent='backend connected'; document.getElementById('connection').className='good'; }
+      catch (error) { document.getElementById('connection').textContent='backend unavailable: '+error; document.getElementById('connection').className='bad'; }
+    }
+    function render(s) {
+      document.getElementById('run').innerHTML=rows({'number':s.run.number,'revision':s.run.state_revision,'elapsed seconds':s.run.elapsed_seconds,'phase':s.run.game_phase,'godmode':s.run.godmode,'bypass':s.run.bypass_restrictions,'shift':s.shift.number,'shift phase':s.shift.phase});
+      document.getElementById('story').innerHTML=rows({'current node':s.story.current_node_id,'current Story Beat':s.story.current_story_beat || '-','frontier':s.story.frontier});
+      document.getElementById('counters').innerHTML=rows(s.counters);
+      document.getElementById('voice').innerHTML=rows({'status':s.voice.status || 'offline','speaker active':s.voice.speaker_active,'session':s.voice.session_id || '-','turn':s.voice.turn_id || '-','transcript':s.voice.transcript || '-','response':s.voice.response_text || '-' });
+      document.getElementById('frontend').innerHTML=rows({'firmware':s.frontend.firmware_version || '-','transport':s.frontend.transport_connected,'faults':s.frontend.device_faults});
+      document.getElementById('errors').textContent=s.recent_errors.length ? s.recent_errors.map(e=>e.code+': '+e.message).join('\n') : 'none';
+      document.getElementById('calls').innerHTML=s.calls.length ? '<table><tr><th>caller</th><th>callee</th><th>phase</th></tr>'+s.calls.map(c=>`<tr><td>${c.caller_line}</td><td>${c.requested_callee_line}</td><td>${esc(c.phase)}</td></tr>`).join('')+'</table>' : 'none';
+      document.getElementById('subscribers').innerHTML=s.subscribers.length ? '<table><tr><th>id</th><th>name</th><th>line</th><th>status</th><th>availability</th><th>pressure</th><th>goal</th><th>flags</th></tr>'+s.subscribers.map(x=>`<tr><td>${esc(x.id)}</td><td>${esc(x.name)}</td><td>${x.line ?? '-'}</td><td>${esc(x.status)}</td><td>${esc(x.availability)}</td><td>${x.pressure}</td><td>${esc(x.current_goal || '-')}</td><td>${esc((x.status_flags || []).join(', ') || '-')}</td></tr>`).join('')+'</table>' : 'none';
+      document.getElementById('transitions').textContent=s.transitions.length ? s.transitions.map(t=>`r${t.revision} ${t.command} -> ${t.result}`).join('\n') : 'none';
+    }
+    async function send(action, extra={}) {
+      const status=document.getElementById('action-status');
+      try {
+        const response=await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...extra})});
+        const result=await response.json();
+        status.textContent=result.accepted === false ? 'rejected: '+(result.error?.message || 'unknown error') : 'accepted';
+        status.className=result.accepted === false ? 'bad' : 'good';
+      } catch (error) { status.textContent='command failed: '+error; status.className='bad'; }
+      await refresh();
+    }
+    function advance(){send('advance_time',{seconds:Number(document.getElementById('seconds').value)||0})}
+    function injectCall(){send('inject_call',{caller_line:Number(document.getElementById('caller').value),callee_line:Number(document.getElementById('callee').value)})}
+    function forceEvent(){send('force_story_event',{id:document.getElementById('event').value})}
+    function selectPath(){send('select_story_path',{id:document.getElementById('path').value})}
+    function toggle(action){const enabled=confirm('Enable '+action+'?');send(action,{enabled})}
+    refresh(); setInterval(refresh,1000);
+  </script>
+</body>
+</html>

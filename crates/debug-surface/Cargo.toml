@@ -1,18 +1,14 @@
 [package]
-name = "exchange-backend"
+name = "exchange-debug-surface"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 exchange-protocol = { path = "../protocol" }
-exchange-voice-daemon = { path = "../voice-daemon" }
-thiserror.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 
 [[bin]]
-name = "exchange-backend"
+name = "exchange-debug-surface"
 path = "src/main.rs"
-
-[dev-dependencies]
-serde_cbor.workspace = true

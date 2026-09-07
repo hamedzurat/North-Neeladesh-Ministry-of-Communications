@@ -8,6 +8,7 @@ pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_FRAME_SIZE: usize = 1_048_576;
 pub const VOICE_PROTOCOL_VERSION: u16 = 2;
 pub const VOICE_INPUT_SAMPLE_RATE: u32 = 16_000;
+pub const VOICE_INPUT_AUDIO_PACKET_SAMPLES: usize = 320;
 pub const VOICE_AUDIO_SAMPLE_RATE: u32 = 24_000;
 pub const VOICE_AUDIO_PAYLOAD_TYPE: u8 = 96;
 pub const VOICE_AUDIO_PACKET_SAMPLES: usize = 480;
@@ -300,6 +301,118 @@ pub struct StateMessage {
     pub output: StateOutput,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DebugCommand {
+    Snapshot,
+    ResetRun,
+    AdvanceTime { seconds: u32 },
+    InjectCall { caller_line: u8, callee_line: u8 },
+    ForceStoryEvent { event_id: String },
+    SelectStoryPath { node_id: String },
+    SetGodmode { enabled: bool },
+    SetBypassRestrictions { enabled: bool },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugRequest {
+    pub protocol_version: u16,
+    pub command: DebugCommand,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugResponse {
+    pub protocol_version: u16,
+    pub accepted: bool,
+    pub error: Option<ProtocolError>,
+    pub snapshot: DebugSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugSnapshot {
+    pub run: DebugRunState,
+    pub shift: ShiftStatus,
+    pub calls: Vec<CallStatus>,
+    pub subscribers: Vec<DebugSubscriberState>,
+    pub story: DebugStoryState,
+    pub counters: DebugCounters,
+    pub transitions: Vec<DebugTransition>,
+    pub voice: DebugVoiceState,
+    pub frontend: DebugFrontendState,
+    pub recent_errors: Vec<BackendDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugRunState {
+    pub number: u32,
+    pub state_revision: u64,
+    pub elapsed_seconds: u32,
+    pub game_phase: GamePhase,
+    pub godmode: bool,
+    pub bypass_restrictions: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugSubscriberState {
+    pub id: String,
+    pub name: String,
+    pub line: Option<u8>,
+    pub status: String,
+    pub availability: String,
+    pub pressure: u32,
+    pub current_goal: Option<String>,
+    pub status_flags: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugStoryState {
+    pub current_node_id: String,
+    pub frontier: Vec<String>,
+    pub current_story_beat: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugCounters {
+    pub completed_routings: u32,
+    pub completed_service_calls: u32,
+    pub required_service_calls: u32,
+    pub service_errors: u32,
+    pub active_call_count: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugTransition {
+    pub revision: u64,
+    pub command: String,
+    pub result: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugVoiceState {
+    pub status: Option<VoiceStatus>,
+    pub speaker_active: bool,
+    pub session_id: Option<u64>,
+    pub turn_id: Option<u64>,
+    pub transcript: Option<String>,
+    pub response_text: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugFrontendState {
+    pub firmware_version: Option<String>,
+    pub transport_connected: bool,
+    pub device_faults: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VoiceStatus {
@@ -373,10 +486,13 @@ pub enum VoiceDatagramError {
     RtpLayout,
     #[error("RTP L16 payload must contain an even number of bytes")]
     RtpOddPayload,
+    #[error("voice input audio chunk is too large")]
+    VoiceInputAudioTooLarge,
 }
 
 pub const VOICE_STATUS_TAG: u8 = 0x01;
 pub const VOICE_CONTROL_TAG: u8 = 0x02;
+pub const VOICE_INPUT_AUDIO_TAG: u8 = 0x03;
 
 pub fn encode_voice_status(message: &VoiceStatusMessage) -> Result<Vec<u8>, serde_cbor::Error> {
     let mut datagram = vec![VOICE_STATUS_TAG];
@@ -408,6 +524,43 @@ pub fn decode_voice_control(datagram: &[u8]) -> Result<VoiceControlMessage, Voic
         return Err(VoiceDatagramError::UnknownTag(datagram[0]));
     }
     serde_cbor::from_slice(&datagram[1..]).map_err(VoiceDatagramError::Cbor)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceInputAudioMessage {
+    pub protocol_version: u16,
+    pub session_id: u64,
+    pub turn_id: u64,
+    pub state_revision: u64,
+    pub chunk_index: u32,
+    pub complete: bool,
+    pub samples: Vec<i16>,
+}
+
+pub fn encode_voice_input_audio(
+    message: &VoiceInputAudioMessage,
+) -> Result<Vec<u8>, serde_cbor::Error> {
+    let mut datagram = vec![VOICE_INPUT_AUDIO_TAG];
+    datagram.extend(serde_cbor::to_vec(message)?);
+    Ok(datagram)
+}
+
+pub fn decode_voice_input_audio(
+    datagram: &[u8],
+) -> Result<VoiceInputAudioMessage, VoiceDatagramError> {
+    if datagram.is_empty() {
+        return Err(VoiceDatagramError::Empty);
+    }
+    if datagram[0] != VOICE_INPUT_AUDIO_TAG {
+        return Err(VoiceDatagramError::UnknownTag(datagram[0]));
+    }
+    let message: VoiceInputAudioMessage =
+        serde_cbor::from_slice(&datagram[1..]).map_err(VoiceDatagramError::Cbor)?;
+    if message.samples.len() > VOICE_INPUT_AUDIO_PACKET_SAMPLES {
+        return Err(VoiceDatagramError::VoiceInputAudioTooLarge);
+    }
+    Ok(message)
 }
 
 impl RtpL16Packet {
@@ -528,8 +681,9 @@ mod tests {
 
     use super::{
         FrameError, MAX_FRAME_SIZE, PortId, RtpL16Packet, VOICE_AUDIO_PAYLOAD_TYPE,
-        VOICE_PROTOCOL_VERSION, VoiceControl, VoiceControlMessage, VoiceStatus, VoiceStatusMessage,
-        decode_voice_control, decode_voice_status, encode_voice_control, encode_voice_status,
+        VOICE_PROTOCOL_VERSION, VoiceControl, VoiceControlMessage, VoiceInputAudioMessage,
+        VoiceStatus, VoiceStatusMessage, decode_voice_control, decode_voice_input_audio,
+        decode_voice_status, encode_voice_control, encode_voice_input_audio, encode_voice_status,
         read_frame, write_frame,
     };
 
@@ -608,6 +762,23 @@ mod tests {
         let encoded = encode_voice_control(&message).unwrap();
         assert_eq!(encoded[0], 2);
         assert_eq!(decode_voice_control(&encoded).unwrap(), message);
+    }
+
+    #[test]
+    fn voice_input_audio_is_chunked_with_an_explicit_completion_flag() {
+        let message = VoiceInputAudioMessage {
+            protocol_version: VOICE_PROTOCOL_VERSION,
+            session_id: 12,
+            turn_id: 3,
+            state_revision: 8,
+            chunk_index: 0,
+            complete: true,
+            samples: vec![-2, 0x1234, i16::MAX],
+        };
+
+        let encoded = encode_voice_input_audio(&message).unwrap();
+        assert_eq!(encoded[0], 3);
+        assert_eq!(decode_voice_input_audio(&encoded).unwrap(), message);
     }
 
     #[test]

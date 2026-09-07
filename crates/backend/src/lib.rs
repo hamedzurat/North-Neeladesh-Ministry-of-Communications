@@ -1,17 +1,25 @@
+use std::collections::VecDeque;
 use std::env;
 use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use exchange_protocol::{
-    BackendDiagnostic, ClockState, CordConnection, DirectoryPage, GamePhase, InputMessage,
+    BackendDiagnostic, ClockState, CordConnection, DebugCommand, DebugCounters, DebugFrontendState,
+    DebugRequest, DebugResponse, DebugRunState, DebugSnapshot, DebugStoryState,
+    DebugSubscriberState, DebugTransition, DebugVoiceState, DirectoryPage, GamePhase, InputMessage,
     InputState, OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError,
     ServiceCallPhase, ServiceCallStatus, ServiceErrorCount, ServiceErrorKind, ServiceKind,
     ShiftPhase, ShiftStatus, StateMessage, StateOutput, TuningState, VoiceControl,
-    VoiceControlMessage, VoiceStatus, decode_voice_status, encode_voice_control, read_frame,
-    write_frame,
+    VoiceControlMessage, VoiceInputAudioMessage, VoiceStatus, decode_voice_input_audio,
+    decode_voice_status, encode_voice_control, read_frame, write_frame,
+};
+use exchange_voice_daemon::{
+    CommandDialogueGenerator, CommandSpec, CommandSpeechToText, ConversationTurn, KnowledgeRecord,
+    MicrophoneCapture, OperatorSession, PersistentQwen3TtsCommand, Qwen3TtsCommand,
+    RelationshipNote, ResponseContext, SubscriberProfile, TextToSpeech, VoiceError, VoiceOutput,
 };
 
 pub mod story;
@@ -24,6 +32,7 @@ use story::{
 const MAX_FAULTS: usize = 16;
 const MAX_CORDS: usize = 8;
 const STRESS_PRINTER_ENTRY_COUNT: usize = 48;
+const MAX_DEBUG_TRANSITIONS: usize = 32;
 const VOICE_IDS: [&str; 9] = [
     "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee",
 ];
@@ -45,6 +54,23 @@ pub struct Backend {
     voice_state_revision: Option<u64>,
     voice_request_voice_id: Option<String>,
     pending_voice_control: Option<VoiceControlMessage>,
+    voice_status: Option<VoiceStatus>,
+    voice_transcript: Option<String>,
+    voice_response_text: Option<String>,
+    frontend_firmware_version: Option<String>,
+    frontend_transport_connected: bool,
+    frontend_device_faults: Vec<String>,
+    debug_elapsed_seconds: u64,
+    debug_godmode: bool,
+    debug_bypass_restrictions: bool,
+    debug_transitions: Vec<DebugTransition>,
+    pending_voice_audio: VecDeque<Vec<u8>>,
+    pending_voice_input: Option<VoiceInputAudioMessage>,
+    pending_voice_input_samples: Vec<i16>,
+    pending_voice_input_next_chunk: u32,
+    voice_worker_active: bool,
+    voice_id: Option<String>,
+    run_generation: u64,
     last_ems: bool,
     service_error_recorded: bool,
 }
@@ -91,6 +117,23 @@ impl Backend {
             voice_state_revision: None,
             voice_request_voice_id: None,
             pending_voice_control: None,
+            voice_status: None,
+            voice_transcript: None,
+            voice_response_text: None,
+            frontend_firmware_version: None,
+            frontend_transport_connected: false,
+            frontend_device_faults: Vec::new(),
+            debug_elapsed_seconds: 0,
+            debug_godmode: false,
+            debug_bypass_restrictions: false,
+            debug_transitions: Vec::new(),
+            pending_voice_audio: VecDeque::new(),
+            pending_voice_input: None,
+            pending_voice_input_samples: Vec::new(),
+            pending_voice_input_next_chunk: 0,
+            voice_worker_active: false,
+            voice_id: None,
+            run_generation: 0,
             last_ems: false,
             service_error_recorded: false,
         }
@@ -140,21 +183,290 @@ impl Backend {
         self.last_crank_rotation_timestamps = [0; 4];
         self.voice_speaker_active = false;
         self.last_ptt = false;
-        self.voice_peer = None;
-        self.voice_session_id = None;
-        self.voice_turn_id = None;
         self.voice_state_revision = None;
         self.voice_request_voice_id = None;
         self.pending_voice_control = None;
+        self.voice_status = self.voice_peer.map(|_| VoiceStatus::Ready);
+        self.voice_transcript = None;
+        self.voice_response_text = None;
+        self.frontend_firmware_version = None;
+        self.frontend_transport_connected = false;
+        self.frontend_device_faults.clear();
+        self.debug_elapsed_seconds = 0;
+        self.debug_godmode = false;
+        self.debug_bypass_restrictions = false;
+        self.debug_transitions.clear();
+        self.pending_voice_audio.clear();
+        self.pending_voice_input = None;
+        self.pending_voice_input_samples.clear();
+        self.pending_voice_input_next_chunk = 0;
+        self.voice_worker_active = false;
+        self.voice_id = None;
+        self.run_generation = self.run_generation.wrapping_add(1);
         self.last_ems = false;
         self.service_error_recorded = false;
     }
 
     pub fn apply_input_message(&mut self, message: InputMessage) -> StateMessage {
         trace_input(&message);
+        let repeated = self.last_request.as_ref() == Some(&message);
+        self.frontend_firmware_version = message.input.debug.firmware_version.clone();
+        self.frontend_transport_connected = message.input.debug.transport_connected;
+        self.frontend_device_faults = message.input.debug.device_faults.clone();
         let response = self.apply_input_message_inner(message);
+        if !repeated {
+            self.record_transition(
+                format!("cabinet input #{}", response.input_sequence),
+                if response.accepted {
+                    "accepted".to_string()
+                } else {
+                    response
+                        .error
+                        .as_ref()
+                        .map_or_else(|| "rejected".to_string(), |error| error.code.clone())
+                },
+            );
+        }
         trace_state(&response);
         response
+    }
+
+    pub fn debug_snapshot(&self) -> DebugSnapshot {
+        let current_story_beat = self
+            .story
+            .node(&self.story_node_id)
+            .and_then(|node| match &node.kind {
+                StoryNodeKind::ShiftCall { beat_id, .. } => Some(beat_id.clone()),
+                _ => None,
+            });
+        let subscribers = self
+            .story
+            .subscribers()
+            .iter()
+            .map(|subscriber| {
+                let line = self
+                    .story
+                    .content_line_for_subscriber(&subscriber.id)
+                    .map(|listing| listing.line);
+                let status = line.map_or_else(
+                    || "authored".to_string(),
+                    |line| {
+                        if self.state.line_lamps[line as usize] {
+                            "off_hook".to_string()
+                        } else {
+                            "on_hook".to_string()
+                        }
+                    },
+                );
+                DebugSubscriberState {
+                    id: subscriber.id.clone(),
+                    name: subscriber.name.clone(),
+                    line,
+                    status,
+                    availability: if line.is_some_and(|line| self.state.line_lamps[line as usize]) {
+                        "off_hook".to_string()
+                    } else {
+                        "on_hook".to_string()
+                    },
+                    pressure: u32::from(
+                        line.is_some_and(|line| self.state.line_lamps[line as usize]),
+                    ),
+                    current_goal: (subscriber.id == "taren_kesh")
+                        .then_some("Reach the requested Callee".to_string())
+                        .filter(|_| current_story_beat.is_some()),
+                    status_flags: Vec::new(),
+                }
+            })
+            .collect();
+        let recent_errors = self.state.debug.messages.clone();
+
+        DebugSnapshot {
+            run: DebugRunState {
+                number: 1,
+                state_revision: self.state_revision,
+                elapsed_seconds: self.elapsed_seconds(),
+                game_phase: self.state.game_phase.clone(),
+                godmode: self.debug_godmode,
+                bypass_restrictions: self.debug_bypass_restrictions,
+            },
+            shift: self.state.shift.clone(),
+            calls: self.state.calls.clone(),
+            subscribers,
+            story: DebugStoryState {
+                current_node_id: self.story_node_id.clone(),
+                frontier: self.story.outgoing(&self.story_node_id).to_vec(),
+                current_story_beat,
+            },
+            counters: DebugCounters {
+                completed_routings: self.state.shift.completed_routings,
+                completed_service_calls: self.state.shift.completed_service_calls,
+                required_service_calls: self.state.shift.required_service_calls,
+                service_errors: self.state.shift.service_errors,
+                active_call_count: self.state.shift.active_call_count,
+            },
+            transitions: self.debug_transitions.clone(),
+            voice: DebugVoiceState {
+                status: self.voice_status,
+                speaker_active: self.state.speaker_active || self.voice_speaker_active,
+                session_id: self.voice_session_id,
+                turn_id: self.voice_turn_id,
+                transcript: self.voice_transcript.clone(),
+                response_text: self.voice_response_text.clone(),
+            },
+            frontend: DebugFrontendState {
+                firmware_version: self.frontend_firmware_version.clone(),
+                transport_connected: self.frontend_transport_connected,
+                device_faults: self.frontend_device_faults.clone(),
+            },
+            recent_errors,
+        }
+    }
+
+    pub fn apply_debug_command(&mut self, command: DebugCommand) -> DebugResponse {
+        let command_name = format!("{command:?}");
+        let is_snapshot = matches!(command, DebugCommand::Snapshot);
+        let result = match command {
+            DebugCommand::Snapshot => Ok(()),
+            DebugCommand::ResetRun => {
+                self.reset_run();
+                Ok(())
+            }
+            DebugCommand::AdvanceTime { seconds } => {
+                self.debug_elapsed_seconds = self
+                    .debug_elapsed_seconds
+                    .saturating_add(u64::from(seconds));
+                self.state.clock.elapsed_seconds = self.elapsed_seconds();
+                self.state_revision += 1;
+                Ok(())
+            }
+            DebugCommand::InjectCall {
+                caller_line,
+                callee_line,
+            } => self.debug_inject_call(caller_line, callee_line),
+            DebugCommand::ForceStoryEvent { event_id } => self.debug_force_story_event(&event_id),
+            DebugCommand::SelectStoryPath { node_id } => self.debug_select_story_path(&node_id),
+            DebugCommand::SetGodmode { enabled } => {
+                self.debug_godmode = enabled;
+                Ok(())
+            }
+            DebugCommand::SetBypassRestrictions { enabled } => {
+                self.debug_bypass_restrictions = enabled;
+                Ok(())
+            }
+        };
+        let (accepted, error, result_text) = match result {
+            Ok(()) => (true, None, "accepted".to_string()),
+            Err(error) => (false, Some(error.clone()), error.code),
+        };
+        if !is_snapshot {
+            self.record_transition(command_name, result_text);
+        }
+        DebugResponse {
+            protocol_version: PROTOCOL_VERSION,
+            accepted,
+            error,
+            snapshot: self.debug_snapshot(),
+        }
+    }
+
+    fn debug_inject_call(&mut self, caller_line: u8, callee_line: u8) -> Result<(), ProtocolError> {
+        if caller_line >= 16 || callee_line >= 16 || caller_line == callee_line {
+            return Err(protocol_error(
+                "invalid_debug_call",
+                "debug Calls must use two different subscriber lines from 0 through 15",
+            ));
+        }
+        if !self.debug_godmode
+            && !self.debug_bypass_restrictions
+            && self.state.shift.active_call_count > 0
+        {
+            return Err(protocol_error(
+                "debug_call_restricted",
+                "enable bypass restrictions before injecting a Call during an active Call",
+            ));
+        }
+        let call = exchange_protocol::CallStatus {
+            caller_line,
+            requested_callee_line: callee_line,
+            phase: exchange_protocol::CallPhase::Waiting,
+        };
+        self.state.calls.push(call.clone());
+        if self.state.call.is_none() {
+            self.state.call = Some(call);
+        }
+        self.state.line_lamps = lamps_for_calls(&self.state.calls);
+        self.state.shift.active_call_count = self
+            .state
+            .calls
+            .iter()
+            .filter(|call| {
+                !matches!(
+                    call.phase,
+                    exchange_protocol::CallPhase::Completed
+                        | exchange_protocol::CallPhase::Missed
+                        | exchange_protocol::CallPhase::Misrouted
+                        | exchange_protocol::CallPhase::Failed
+                )
+            })
+            .count()
+            .min(u8::MAX as usize) as u8;
+        self.state.game_phase = GamePhase::Shift;
+        self.state.shift.phase = ShiftPhase::Active;
+        self.state_revision += 1;
+        Ok(())
+    }
+
+    fn debug_force_story_event(&mut self, event_id: &str) -> Result<(), ProtocolError> {
+        let Some(node_id) = self.story.story_event_node_id(event_id) else {
+            return Err(protocol_error(
+                "unknown_story_event",
+                format!("story event {event_id} is not authored"),
+            ));
+        };
+        self.story_node_id = node_id.to_string();
+        self.state_revision += 1;
+        Ok(())
+    }
+
+    fn debug_select_story_path(&mut self, node_id: &str) -> Result<(), ProtocolError> {
+        if self.debug_godmode || self.debug_bypass_restrictions {
+            if self.story.node(node_id).is_none() {
+                return Err(protocol_error(
+                    "unknown_story_node",
+                    format!("story node {node_id} is not authored"),
+                ));
+            }
+            self.story_node_id = node_id.to_string();
+            self.state_revision += 1;
+            return Ok(());
+        }
+        let selection = self.select_story_path(Some(node_id));
+        if selection.rejected_proposal {
+            return Err(protocol_error(
+                "story_path_rejected",
+                format!("story node {node_id} is not eligible from the current frontier"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn elapsed_seconds(&self) -> u32 {
+        self.clock_started
+            .elapsed()
+            .as_secs()
+            .saturating_add(self.debug_elapsed_seconds)
+            .min(u32::MAX as u64) as u32
+    }
+
+    fn record_transition(&mut self, command: String, result: String) {
+        self.debug_transitions.push(DebugTransition {
+            revision: self.state_revision,
+            command,
+            result,
+        });
+        if self.debug_transitions.len() > MAX_DEBUG_TRANSITIONS {
+            self.debug_transitions.remove(0);
+        }
     }
 
     fn apply_input_message_inner(&mut self, message: InputMessage) -> StateMessage {
@@ -222,8 +534,7 @@ impl Backend {
         }
 
         self.last_crank_rotation_timestamps = crank_rotation_timestamps;
-        next_state.clock.elapsed_seconds =
-            self.clock_started.elapsed().as_secs().min(u32::MAX as u64) as u32;
+        next_state.clock.elapsed_seconds = self.elapsed_seconds();
         self.state_revision += 1;
         let speaker_active = speaker_is_active(input, &next_state) || self.voice_speaker_active;
         self.state = StateOutput {
@@ -267,6 +578,9 @@ impl Backend {
                     .take()
                     .unwrap_or_else(|| "Ryan".to_string())
             };
+            if ptt {
+                self.voice_id = Some(voice_id.clone());
+            }
             self.pending_voice_control = Some(VoiceControlMessage {
                 protocol_version: exchange_protocol::VOICE_PROTOCOL_VERSION,
                 session_id: 1,
@@ -389,29 +703,46 @@ impl Backend {
     }
 
     pub fn apply_voice_datagram_from(&mut self, datagram: &[u8], peer: Option<SocketAddr>) -> bool {
+        if let Ok(message) = decode_voice_input_audio(datagram) {
+            if message.protocol_version != exchange_protocol::VOICE_PROTOCOL_VERSION
+                || self.voice_session_id != Some(message.session_id)
+                || self.voice_turn_id != Some(message.turn_id)
+                || self.voice_worker_active
+                || self
+                    .voice_state_revision
+                    .is_some_and(|revision| message.state_revision < revision)
+                || (peer.is_some() && self.voice_peer != peer)
+            {
+                return false;
+            }
+            if message.chunk_index == 0 {
+                self.pending_voice_input_samples.clear();
+                self.pending_voice_input_next_chunk = 0;
+            }
+            if message.chunk_index != self.pending_voice_input_next_chunk {
+                return false;
+            }
+            self.pending_voice_input_samples
+                .extend_from_slice(&message.samples);
+            if self.pending_voice_input_samples.len()
+                > exchange_protocol::VOICE_INPUT_SAMPLE_RATE as usize * 15
+            {
+                self.pending_voice_input_samples.clear();
+                self.pending_voice_input_next_chunk = 0;
+                return false;
+            }
+            self.pending_voice_input_next_chunk =
+                self.pending_voice_input_next_chunk.saturating_add(1);
+            if message.complete {
+                let mut complete_message = message;
+                complete_message.samples = std::mem::take(&mut self.pending_voice_input_samples);
+                self.pending_voice_input = Some(complete_message);
+                self.pending_voice_input_next_chunk = 0;
+            }
+            return true;
+        }
         if let Ok(message) = decode_voice_status(datagram) {
             if message.protocol_version != exchange_protocol::VOICE_PROTOCOL_VERSION {
-                return false;
-            }
-            if let Some(expected_peer) = self.voice_peer
-                && let Some(peer) = peer
-                && expected_peer != peer
-            {
-                return false;
-            }
-            if let Some(expected_session_id) = self.voice_session_id
-                && expected_session_id != message.session_id
-            {
-                return false;
-            }
-            if let Some(expected_turn_id) = self.voice_turn_id
-                && expected_turn_id != message.turn_id
-            {
-                return false;
-            }
-            if let Some(previous_revision) = self.voice_state_revision
-                && message.state_revision < previous_revision
-            {
                 return false;
             }
             if message.status == VoiceStatus::Ready {
@@ -420,26 +751,48 @@ impl Backend {
                 }
                 self.voice_session_id = Some(message.session_id);
                 self.voice_turn_id = Some(message.turn_id);
-            } else if self.voice_session_id.is_none() {
-                return false;
+                self.voice_state_revision = Some(message.state_revision);
+            } else {
+                if let Some(expected_peer) = self.voice_peer
+                    && let Some(peer) = peer
+                    && expected_peer != peer
+                {
+                    return false;
+                }
+                if let Some(expected_session_id) = self.voice_session_id
+                    && expected_session_id != message.session_id
+                {
+                    return false;
+                }
+                if let Some(expected_turn_id) = self.voice_turn_id
+                    && expected_turn_id != message.turn_id
+                {
+                    return false;
+                }
+                if let Some(previous_revision) = self.voice_state_revision
+                    && message.state_revision < previous_revision
+                {
+                    return false;
+                }
+                if self.voice_session_id.is_none() {
+                    return false;
+                }
+                self.voice_state_revision = Some(
+                    self.voice_state_revision
+                        .unwrap_or(message.state_revision)
+                        .max(message.state_revision),
+                );
             }
-            self.voice_state_revision = Some(
-                self.voice_state_revision
-                    .unwrap_or(message.state_revision)
-                    .max(message.state_revision),
-            );
+            self.voice_status = Some(message.status);
             self.voice_speaker_active = matches!(message.status, VoiceStatus::Playing);
             if message.status == VoiceStatus::Failed {
-                self.state.debug.messages.push(BackendDiagnostic {
+                self.add_diagnostic(BackendDiagnostic {
                     code: "voice_failed".to_string(),
                     message: message.error.map_or_else(
                         || "voice daemon failed without details".to_string(),
                         |error| format!("{}: {}", error.code, error.message),
                     ),
                 });
-                if self.state.debug.messages.len() > MAX_FAULTS {
-                    self.state.debug.messages.remove(0);
-                }
             }
             return true;
         }
@@ -453,6 +806,42 @@ impl Backend {
     pub fn take_voice_control(&mut self) -> Option<(VoiceControlMessage, SocketAddr)> {
         let peer = self.voice_peer?;
         Some((self.pending_voice_control.take()?, peer))
+    }
+
+    fn take_voice_datagrams(&mut self) -> Vec<Vec<u8>> {
+        self.pending_voice_audio.drain(..).collect()
+    }
+
+    fn queue_voice_datagram(&mut self, datagram: Vec<u8>) {
+        self.pending_voice_audio.push_back(datagram);
+    }
+
+    fn take_voice_input(&mut self) -> Option<(VoiceInputAudioMessage, String, u64)> {
+        if self.voice_worker_active {
+            return None;
+        }
+        let input = self.pending_voice_input.take()?;
+        self.voice_worker_active = true;
+        Some((
+            input,
+            self.voice_id.clone().unwrap_or_else(|| "Ryan".to_string()),
+            self.run_generation,
+        ))
+    }
+
+    fn finish_voice_worker(&mut self) {
+        self.voice_worker_active = false;
+    }
+
+    fn mark_frontend_disconnected(&mut self) {
+        self.frontend_transport_connected = false;
+    }
+
+    fn add_diagnostic(&mut self, diagnostic: BackendDiagnostic) {
+        self.state.debug.messages.push(diagnostic);
+        if self.state.debug.messages.len() > MAX_FAULTS {
+            self.state.debug.messages.remove(0);
+        }
     }
 }
 
@@ -1146,14 +1535,30 @@ fn has_exact_cords(cords: &[CordConnection], expected: &[(&PortId, &PortId)]) ->
 }
 
 pub fn serve(listener: TcpListener) -> io::Result<()> {
-    serve_with_voice(listener, None)
+    serve_with_voice_and_debug(listener, None, None)
 }
 
 pub fn serve_with_voice(listener: TcpListener, voice_socket: Option<UdpSocket>) -> io::Result<()> {
+    serve_with_voice_and_debug(listener, voice_socket, None)
+}
+
+pub fn serve_with_voice_and_debug(
+    listener: TcpListener,
+    voice_socket: Option<UdpSocket>,
+    debug_listener: Option<TcpListener>,
+) -> io::Result<()> {
     let backend = Arc::new(Mutex::new(Backend::new_with_printer_stress(
         printer_stress_enabled(),
     )));
     let voice_socket = voice_socket.map(Arc::new);
+    if let Some(debug_listener) = debug_listener {
+        let backend = Arc::clone(&backend);
+        thread::spawn(move || {
+            if let Err(error) = serve_debug(debug_listener, backend) {
+                eprintln!("debug surface ended: {error}");
+            }
+        });
+    }
     if let Some(voice_socket) = &voice_socket {
         let backend = Arc::clone(&backend);
         let socket = voice_socket
@@ -1174,14 +1579,100 @@ pub fn serve_with_voice(listener: TcpListener, voice_socket: Option<UdpSocket>) 
     Ok(())
 }
 
+pub fn serve_debug(listener: TcpListener, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
+    for connection in listener.incoming() {
+        let stream = connection?;
+        let backend = Arc::clone(&backend);
+        thread::spawn(move || {
+            if let Err(error) = handle_debug_connection(stream, backend) {
+                eprintln!("debug connection ended: {error}");
+            }
+        });
+    }
+    Ok(())
+}
+
+fn handle_debug_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
+    loop {
+        let request: DebugRequest = match read_frame(&mut stream) {
+            Ok(request) => request,
+            Err(exchange_protocol::FrameError::Io(error))
+                if matches!(
+                    error.kind(),
+                    ErrorKind::UnexpectedEof | ErrorKind::ConnectionReset
+                ) =>
+            {
+                return Ok(());
+            }
+            Err(error) => return Err(io::Error::new(ErrorKind::InvalidData, error)),
+        };
+        let response = {
+            let mut backend = backend
+                .lock()
+                .map_err(|_| io::Error::other("backend state lock poisoned"))?;
+            if request.protocol_version != PROTOCOL_VERSION {
+                DebugResponse {
+                    protocol_version: PROTOCOL_VERSION,
+                    accepted: false,
+                    error: Some(protocol_error(
+                        "unsupported_protocol_version",
+                        format!("expected protocol version {PROTOCOL_VERSION}"),
+                    )),
+                    snapshot: backend.debug_snapshot(),
+                }
+            } else {
+                backend.apply_debug_command(request.command)
+            }
+        };
+        write_frame(&mut stream, &response)
+            .map_err(|error| io::Error::new(ErrorKind::BrokenPipe, error))?;
+    }
+}
+
 pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
+    socket.set_read_timeout(Some(Duration::from_millis(50)))?;
     let mut datagram = [0_u8; 65_535];
     loop {
-        let (length, peer) = socket.recv_from(&mut datagram)?;
-        let mut backend = backend
-            .lock()
-            .map_err(|_| io::Error::other("backend state lock poisoned"))?;
-        backend.apply_voice_datagram_from(&datagram[..length], Some(peer));
+        let mut peer = None;
+        let work = match socket.recv_from(&mut datagram) {
+            Ok((length, received_peer)) => {
+                peer = Some(received_peer);
+                let mut backend = backend
+                    .lock()
+                    .map_err(|_| io::Error::other("backend state lock poisoned"))?;
+                backend.apply_voice_datagram_from(&datagram[..length], Some(received_peer));
+                backend.take_voice_input()
+            }
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                None
+            }
+            Err(error) => return Err(error),
+        };
+        let (outgoing, peer, control) = {
+            let mut backend = backend
+                .lock()
+                .map_err(|_| io::Error::other("backend state lock poisoned"))?;
+            (
+                backend.take_voice_datagrams(),
+                peer.or(backend.voice_peer),
+                backend.take_voice_control(),
+            )
+        };
+        if let Some(peer) = peer {
+            for datagram in outgoing {
+                socket.send_to(&datagram, peer)?;
+            }
+        }
+        if let Some((control, peer)) = control {
+            let datagram = encode_voice_control(&control).map_err(|error| {
+                io::Error::other(format!("voice control encode failed: {error}"))
+            })?;
+            socket.send_to(&datagram, peer)?;
+        }
+        if let Some((input, voice_id, generation)) = work {
+            let backend = Arc::clone(&backend);
+            thread::spawn(move || run_voice_worker(input, voice_id, generation, backend));
+        }
     }
 }
 
@@ -1203,6 +1694,9 @@ fn handle_connection_with_voice(
                     ErrorKind::UnexpectedEof | ErrorKind::ConnectionReset
                 ) =>
             {
+                if let Ok(mut backend) = backend.lock() {
+                    backend.mark_frontend_disconnected();
+                }
                 return Ok(());
             }
             Err(error) => return Err(io::Error::new(ErrorKind::InvalidData, error)),
@@ -1379,6 +1873,224 @@ fn trace_input(message: &InputMessage) {
 fn trace_state(message: &StateMessage) {
     if backend_trace_enabled() {
         eprintln!("[backend -> frontend] {message:?}");
+    }
+}
+
+struct ReceivedCapture {
+    samples: Option<Vec<i16>>,
+    active: bool,
+}
+
+impl ReceivedCapture {
+    fn new(samples: Vec<i16>) -> Self {
+        Self {
+            samples: Some(samples),
+            active: false,
+        }
+    }
+}
+
+impl MicrophoneCapture for ReceivedCapture {
+    fn start(&mut self) -> Result<(), VoiceError> {
+        self.active = true;
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<Vec<i16>, VoiceError> {
+        if !self.active {
+            return Err(VoiceError::new(
+                "capture_not_started",
+                "remote voice capture was not started",
+            ));
+        }
+        self.active = false;
+        Ok(self.samples.take().unwrap_or_default())
+    }
+}
+
+struct BackendVoiceOutput {
+    backend: Arc<Mutex<Backend>>,
+    generation: u64,
+}
+
+impl VoiceOutput for BackendVoiceOutput {
+    fn status(&mut self, message: exchange_protocol::VoiceStatusMessage) -> Result<(), VoiceError> {
+        let relay_message = exchange_protocol::VoiceStatusMessage {
+            transcript: None,
+            response_text: None,
+            ..message.clone()
+        };
+        let datagram = exchange_protocol::encode_voice_status(&relay_message)
+            .map_err(|error| VoiceError::new("voice_status_encode_failed", error.to_string()))?;
+        let mut backend = self.backend.lock().map_err(|_| {
+            VoiceError::new("voice_backend_lock_failed", "backend state lock poisoned")
+        })?;
+        if backend.run_generation != self.generation {
+            return Err(VoiceError::new(
+                "stale_voice_worker",
+                "voice worker belongs to a reset Run",
+            ));
+        }
+        backend.voice_status = Some(message.status);
+        if message.transcript.is_some() {
+            backend.voice_transcript = message.transcript.clone();
+        }
+        if message.response_text.is_some() {
+            backend.voice_response_text = message.response_text.clone();
+        }
+        backend.voice_speaker_active = matches!(message.status, VoiceStatus::Playing);
+        if message.status == VoiceStatus::Failed {
+            backend.add_diagnostic(BackendDiagnostic {
+                code: "voice_worker_failed".to_string(),
+                message: message.error.map_or_else(
+                    || "voice worker failed without details".to_string(),
+                    |error| format!("{}: {}", error.code, error.message),
+                ),
+            });
+        }
+        backend.queue_voice_datagram(datagram);
+        Ok(())
+    }
+
+    fn audio(&mut self, packet: exchange_protocol::RtpL16Packet) -> Result<(), VoiceError> {
+        let mut backend = self.backend.lock().map_err(|_| {
+            VoiceError::new("voice_backend_lock_failed", "backend state lock poisoned")
+        })?;
+        if backend.run_generation != self.generation {
+            return Err(VoiceError::new(
+                "stale_voice_worker",
+                "voice worker belongs to a reset Run",
+            ));
+        }
+        backend.queue_voice_datagram(packet.encode());
+        Ok(())
+    }
+}
+
+fn run_voice_worker(
+    input: VoiceInputAudioMessage,
+    voice_id: String,
+    generation: u64,
+    backend: Arc<Mutex<Backend>>,
+) {
+    let session_id = input.session_id;
+    let turn_id = input.turn_id;
+    let state_revision = input.state_revision;
+    let output: Box<dyn VoiceOutput> = Box::new(BackendVoiceOutput {
+        backend: Arc::clone(&backend),
+        generation,
+    });
+    let result = run_voice_worker_session(input, voice_id, output);
+    if let Err(error) = result {
+        let mut backend = backend
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if backend.run_generation == generation {
+            if let Ok(datagram) =
+                exchange_protocol::encode_voice_status(&exchange_protocol::VoiceStatusMessage {
+                    protocol_version: exchange_protocol::VOICE_PROTOCOL_VERSION,
+                    session_id,
+                    turn_id,
+                    state_revision,
+                    status: VoiceStatus::Failed,
+                    transcript: None,
+                    response_text: None,
+                    error: Some(ProtocolError {
+                        code: error.code.clone(),
+                        message: error.message.clone(),
+                    }),
+                })
+            {
+                backend.queue_voice_datagram(datagram);
+            }
+            backend.voice_status = Some(VoiceStatus::Failed);
+            backend.voice_speaker_active = false;
+            backend.add_diagnostic(BackendDiagnostic {
+                code: "voice_worker_failed".to_string(),
+                message: format!("{}: {}", error.code, error.message),
+            });
+            backend.voice_worker_active = false;
+        }
+    } else {
+        let mut backend = backend
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if backend.run_generation == generation {
+            backend.finish_voice_worker();
+        }
+    }
+}
+
+fn run_voice_worker_session(
+    input: VoiceInputAudioMessage,
+    voice_id: String,
+    output: Box<dyn VoiceOutput>,
+) -> Result<(), VoiceError> {
+    let stt = CommandSpec::from_words(&env::var("NN_VOICE_STT_COMMAND").map_err(|_| {
+        VoiceError::new(
+            "voice_worker_not_configured",
+            "NN_VOICE_STT_COMMAND is not configured",
+        )
+    })?)?;
+    let dialogue =
+        CommandSpec::from_words(&env::var("NN_VOICE_DIALOGUE_COMMAND").map_err(|_| {
+            VoiceError::new(
+                "voice_worker_not_configured",
+                "NN_VOICE_DIALOGUE_COMMAND is not configured",
+            )
+        })?)?;
+    let tts = CommandSpec::from_words(&env::var("NN_VOICE_TTS_COMMAND").map_err(|_| {
+        VoiceError::new(
+            "voice_worker_not_configured",
+            "NN_VOICE_TTS_COMMAND is not configured",
+        )
+    })?)?;
+    let tts: Box<dyn TextToSpeech> = if env::var_os("NN_VOICE_TTS_PERSISTENT").is_some() {
+        Box::new(PersistentQwen3TtsCommand::new(tts)?)
+    } else {
+        Box::new(Qwen3TtsCommand::new(tts))
+    };
+    let mut session = OperatorSession::new(
+        input.session_id,
+        input.state_revision,
+        demo_response_context(voice_id),
+        Box::new(ReceivedCapture::new(input.samples)),
+        Box::new(CommandSpeechToText::new(stt)),
+        Box::new(CommandDialogueGenerator::new(dialogue)),
+        tts,
+        output,
+    )?;
+    session.start_ptt()?;
+    session.release_ptt().map(|_| ())
+}
+
+fn demo_response_context(voice_id: String) -> ResponseContext {
+    ResponseContext {
+        profile: SubscriberProfile {
+            subscriber_id: 0,
+            name: "Taren Kesh".to_string(),
+            voice_id,
+            personality: "precise railway dispatcher under pressure".to_string(),
+            baseline_goals: vec!["Keep the railway moving".to_string()],
+            initial_perspective: "The exchange is under observation".to_string(),
+            relationships: vec![RelationshipNote {
+                subject: "Vira Dhal".to_string(),
+                note: "A trusted records clerk".to_string(),
+            }],
+            permitted_actions: vec!["request_routing".to_string()],
+        },
+        subscriber_goal: "Reach the requested Callee".to_string(),
+        call_premise: "A railway dispatch is waiting".to_string(),
+        story_beat_direction: "Ask for an ordinary connection".to_string(),
+        permitted_knowledge: vec![KnowledgeRecord {
+            fact: "The directory lists Vira Dhal".to_string(),
+            learned_from: "directory_terminal".to_string(),
+        }],
+        beliefs: Vec::new(),
+        relationship_notes: Vec::new(),
+        memories: Vec::new(),
+        recent_conversation: Vec::<ConversationTurn>::new(),
+        current_input: None,
     }
 }
 

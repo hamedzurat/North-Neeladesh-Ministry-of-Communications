@@ -1,18 +1,20 @@
 # Voice Daemon
 
-The voice daemon is a separate local process. It owns one bounded Operator Session:
+The voice daemon is a separate Cabinet-side transport and recovery process. The laptop backend owns the bounded Operator Session:
 
 ```text
-PTT start -> microphone capture -> PTT release -> local STT
-           -> bounded Response Context -> local dialogue
-           -> Qwen3-TTS 1.7B -> RTP/L16 audio and status over UDP
+PTT start -> daemon microphone capture -> PTT release -> PCM over UDP
+           -> laptop STT -> bounded Response Context -> laptop dialogue
+           -> laptop Qwen3-TTS 1.7B -> RTP/L16 audio over UDP -> daemon speaker
 ```
 
 The daemon never advances Routing or Story Graph state. The backend remains the sole authority. A worker failure emits `failed` status and a diagnostic; it does not create a Story Event or Routing.
 
 ## Worker contracts
 
-`just voice-daemon` uses the checked-in real worker adapters by default. Audio capture and playback use the Rust `cpal` audio library; STT and dialogue invoke the pacman-installed whisper.cpp and llama.cpp runtimes. The Python workers run from the `python/` uv project; `--no-sync` prevents the daemon from installing packages or downloading a model at runtime. Install the runtimes with `sudo pacman -S llama-cpp ggml-cuda whisper-cpp`, provision the model assets with `just voice-setup`, then run `just voice-preflight` before the first session.
+`just voice-daemon` runs relay-only mode. It does not load STT, dialogue, or Qwen3-TTS and it does not decide a Routing or Story Graph transition. `just backend` configures those workers on the laptop. The relay reports capture/playback failures as typed voice status messages and stays alive so the backend can recover or retry the session.
+
+The backend uses the checked-in real worker adapters. Audio capture and playback on the relay use the Rust `cpal` audio library; the backend STT and dialogue invoke the pacman-installed whisper.cpp and llama.cpp runtimes. The Python workers run from the `python/` uv project; `--no-sync` prevents the backend from installing packages or downloading a model at runtime. Install the runtimes with `sudo pacman -S llama-cpp ggml-cuda whisper-cpp`, provision the model assets with `just voice-setup`, then run `just voice-preflight` before the first session.
 
 The smoke workers remain available for protocol-only CI and hardware-free development:
 
@@ -45,7 +47,7 @@ used. Until authored Subscriber profiles are wired into the backend, development
 select a supported speaker randomly for each request so the voice catalogue can be
 tested. `just backend` sets `NN_VOICE_RANDOM_SPEAKER=1`; set it to `0` to pin `Ryan`.
 
-`python/voice_workers/` contains the real model adapters. They are launched as `python -m voice_workers.<worker>` inside the uv environment. The backend includes the selected Qwen3-TTS CustomVoice `voice_id` in each PTT control message; the daemon applies it to the active Subscriber before capture. The real daemon sends each synthesized PCM packet both to the backend RTP/L16 boundary and to the local `cpal` output stream. Their required stdin/stdout contracts are:
+`python/voice_workers/` contains the real model adapters. They are launched by the laptop backend as `python -m voice_workers.<worker>` inside the uv environment. The backend includes the selected Qwen3-TTS CustomVoice `voice_id` in each PTT control message. The relay sends captured PCM to the backend and plays the backend's RTP/L16 output locally. Their required stdin/stdout contracts are:
 
 - the default Rust capture path records from the system audio input, converts it to bounded signed 16-bit mono PCM at 16 kHz, and resamples when the device uses another native rate;
 - `voice_workers.stt`: writes the supplied PCM to a temporary WAV, invokes local whisper.cpp `base.en`, and writes one final UTF-8 transcript.
@@ -58,15 +60,15 @@ Each provider command has a bounded 30-second deadline. The Rust adapter bounds 
 
 ## Manual test
 
-1. Start the backend: `just backend`.
-2. Run `just voice-preflight`, then start the real daemon with `just voice-daemon`.
+1. Run `just voice-preflight`, then start the backend with `just backend`.
+2. Start the relay with `just voice-daemon` on the laptop or Raspberry Pi.
 3. Start Odin with `just frontend` and connect Subscriber 0 to the Operator Jack.
 4. Hold the PTT control in Odin. The backend forwards `StartPtt`; the daemon captures microphone audio and reports `listening`.
-5. Release PTT. The daemon reports `transcribing`, `generating_response`, `synthesizing`, `playing`, and `completed`, while sending RTP/L16 audio to the backend UDP boundary.
-6. Confirm the transcript and response in the daemon output, `speaker_active` in the next backend snapshot, and no Routing receipt was created by voice processing.
+5. Release PTT. The backend reports `transcribing`, `generating_response`, `synthesizing`, `playing`, and `completed`; the relay sends captured PCM to the backend and plays returned RTP/L16 audio.
+6. Confirm the transcript and response in the development debug surface, `speaker_active` in the next backend snapshot, and no Routing receipt was created by voice processing. The relay log should only show connection, recovery, and audio failure summaries.
 
-With no microphone connected, use `just voice-demo` instead of `just voice-daemon`. It uses the synthetic capture and transcript only, but runs the real local Qwen3 dialogue and TTS workers and plays the result through the local audio library. This verifies frontend PTT, backend control forwarding, dialogue generation, streamed sentence playback, and audio output without pretending that a microphone exists.
+With no microphone connected, use `just voice-demo` instead of `just voice-daemon`. It uses the synthetic capture as a relay input; the backend still runs the real local STT, Qwen3 dialogue, and Qwen3-TTS workers and the relay plays returned audio. This verifies frontend PTT, backend control forwarding, worker recovery, and audio output without putting model ownership on the relay.
 
-For an isolated protocol test, type `ptt` and `release` on its stdin while using `just voice-smoke`. Once a microphone is connected, switch back to `just voice-daemon`; the capture path will use the system default input device.
+For an isolated protocol test, run `just voice-smoke` against a running backend. Once a microphone is connected, switch back to `just voice-daemon`; the capture path will use the system default input device.
 
 The backend UDP port can be changed with `--voice-bind`; pass the matching address as the first positional argument to `just voice-daemon`, for example `just voice-daemon 127.0.0.1:8879`.
