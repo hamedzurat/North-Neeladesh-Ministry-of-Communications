@@ -39,6 +39,9 @@ class Spy:
     def set_active(self, value: object) -> None:
         self.calls.append(("audio", value))
 
+    def set_interference(self, value: object) -> None:
+        self.calls.append(("interference", value))
+
     def close(self) -> None:
         return None
 
@@ -59,6 +62,8 @@ class HardwareFrontendIntegrationTests(unittest.TestCase):
                 "game_phase": "ready",
                 "clock": {"shift": 1, "elapsed_seconds": 65},
                 "speaker_active": False,
+                "interference_level": 0,
+                "tap_bridge_audio_active": False,
                 "tuning": {"coarse": 0, "fine": 0},
                 "directory_pages": [],
                 "printer_output": [],

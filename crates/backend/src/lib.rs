@@ -90,7 +90,7 @@ pub struct Backend {
     initial_required_service_calls: u32,
     shift_started_real_elapsed_seconds: u64,
     required_service_kind: Option<ServiceKind>,
-    last_service: Option<ServiceKind>,
+    last_held_service: Option<ServiceKind>,
     service_error_recorded: bool,
     last_interference_level: u8,
     directory_lookup_id: Option<u16>,
@@ -214,7 +214,7 @@ impl Backend {
             initial_required_service_calls,
             shift_started_real_elapsed_seconds: 0,
             required_service_kind,
-            last_service: None,
+            last_held_service: None,
             service_error_recorded: false,
             last_interference_level: 0,
             directory_lookup_id: None,
@@ -310,7 +310,7 @@ impl Backend {
         self.voice_worker_active = false;
         self.voice_id = None;
         self.run_generation = self.run_generation.wrapping_add(1);
-        self.last_service = None;
+        self.last_held_service = None;
         self.service_error_recorded = false;
         self.last_interference_level = 0;
         self.directory_lookup_id = None;
@@ -847,7 +847,7 @@ impl Backend {
         };
         self.last_request = Some(message);
         self.last_response = Some(response.clone());
-        self.last_service = input_service;
+        self.last_held_service = input_service;
         if ptt != self.last_ptt {
             self.last_ptt = ptt;
             let voice_id = if ptt {
@@ -2003,12 +2003,20 @@ fn apply_service_transition(
             }
         }
         _ if held_service.is_some()
-            && backend.last_service != held_service
+            && backend.last_held_service != held_service
             && state.shift.phase == ShiftPhase::Active =>
         {
             let service = held_service.expect("service checked above");
-            if backend.required_service_kind_for_shift(state.shift.number)
-                == Some(ServiceKind::Police)
+            let required_service = backend.required_service_kind_for_shift(state.shift.number);
+            if required_service == Some(ServiceKind::Police) && service != ServiceKind::Police {
+                state.debug.messages.push(BackendDiagnostic {
+                    code: "police_service_required".to_string(),
+                    message: "the hardware demo requires the Police Service Call".to_string(),
+                });
+                if state.debug.messages.len() > MAX_FAULTS {
+                    state.debug.messages.remove(0);
+                }
+            } else if required_service == Some(ServiceKind::Police)
                 && backend.directory_lookup_id != Some(2)
             {
                 state.debug.messages.push(BackendDiagnostic {

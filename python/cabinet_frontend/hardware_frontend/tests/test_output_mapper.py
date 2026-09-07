@@ -24,6 +24,9 @@ class Spy:
     def set_active(self, value: object) -> None:
         self.calls.append(("audio", value))
 
+    def set_interference(self, value: object) -> None:
+        self.calls.append(("interference", value))
+
     def close(self) -> None:
         return None
 
@@ -38,6 +41,8 @@ class OutputMapperTests(unittest.TestCase):
             "directory_pages": [{"page_number": 1, "heading": "A", "lines": ["B"]}],
             "printer_output": [{"entry_id": 7, "text": "ROUTING 0 -> 1"}],
             "speaker_active": True,
+            "interference_level": 25,
+            "tap_bridge_audio_active": False,
         }
 
         mapper.apply(output)
@@ -47,7 +52,7 @@ class OutputMapperTests(unittest.TestCase):
         self.assertEqual(components[1].calls, [("seven_segment", "0801")])
         self.assertEqual(components[2].calls, [("epaper", output["directory_pages"], 0)])
         self.assertEqual(components[3].calls, [("printer", "ROUTING 0 -> 1")])
-        self.assertEqual(components[4].calls, [("audio", True)])
+        self.assertEqual(components[4].calls, [("interference", 25), ("audio", True)])
 
     def test_cycles_directory_pages_after_interval(self) -> None:
         components = [Spy() for _ in range(5)]
