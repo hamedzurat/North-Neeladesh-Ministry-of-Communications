@@ -32,9 +32,12 @@ use story::{
 
 const MAX_FAULTS: usize = 16;
 const MAX_CORDS: usize = 8;
-const STRESS_PRINTER_ENTRY_COUNT: usize = 48;
 const DEMO_SHIFT_DURATION_SECONDS: u64 = 8 * 60;
 const DEMO_SHIFT_START_SECONDS: u64 = 8 * 60 * 60;
+const SIMPLE_WAITING_PATIENCE_SECONDS: u64 = 30;
+const SIMPLE_INTERACTED_PATIENCE_SECONDS: u64 = 120;
+const SIMPLE_SUBSCRIBER_LINES: u8 = 6;
+const RING_GENERATOR_LAMP_HOLD: Duration = Duration::from_secs(10);
 
 fn story_node_kind_label(kind: &StoryNodeKind) -> String {
     match kind {
@@ -57,6 +60,7 @@ pub struct Backend {
     last_frontend_output: Option<StateMessage>,
     clock_started: Instant,
     last_crank_rotation_timestamps: [u64; 4],
+    last_crank_activity: Option<Instant>,
     voice_speaker_active: bool,
     last_ptt: bool,
     voice_peer: Option<SocketAddr>,
@@ -70,6 +74,7 @@ pub struct Backend {
     voice_transcript: Option<String>,
     voice_response_text: Option<String>,
     voice_subscriber_line: Option<u8>,
+    voice_callee_line: Option<u8>,
     frontend_firmware_version: Option<String>,
     frontend_transport_connected: bool,
     frontend_device_faults: Vec<String>,
@@ -95,6 +100,13 @@ pub struct Backend {
     last_interference_level: u8,
     directory_lookup_id: Option<u16>,
     tap_bridge_listen_frames: u8,
+    simple_hardware_mode: bool,
+    simple_rng_state: u64,
+    simple_pending_calls: VecDeque<(u8, u8)>,
+    simple_connected_at: [Option<Instant>; 8],
+    simple_call_deadlines: [Option<u64>; 8],
+    simple_call_interacted: [bool; 8],
+    simple_failure_receipt: Option<String>,
 }
 
 struct VoiceConversationRecord {
@@ -144,6 +156,19 @@ impl Backend {
         Self::with_story(story, printer_stress, 1, Some(ServiceKind::Police))
     }
 
+    pub fn new_simple_hardware_demo() -> Self {
+        Self::new_simple_hardware_demo_with_printer_stress(false)
+    }
+
+    pub fn new_simple_hardware_demo_with_printer_stress(printer_stress: bool) -> Self {
+        let story = AuthoredContent::simple_hardware_demo()
+            .compile()
+            .expect("built-in simple hardware Story Graph must compile");
+        let mut backend = Self::with_story(story, printer_stress, 0, None);
+        backend.simple_hardware_mode = true;
+        backend
+    }
+
     pub fn new_with_story(content: AuthoredContent) -> Result<Self, GraphCompileError> {
         Self::new_with_story_and_printer_stress(content, false)
     }
@@ -168,17 +193,17 @@ impl Backend {
 
     fn with_story(
         story: CompiledStoryGraph,
-        printer_stress: bool,
+        _printer_stress: bool,
         initial_required_service_calls: u32,
         required_service_kind: Option<ServiceKind>,
     ) -> Self {
         let story_node_id = story.start_node_id().to_string();
+        let mut state = initial_state(initial_required_service_calls, required_service_kind);
+        if story.node("live_call").is_some() {
+            state.directory_pages = simple_directory_pages([0, 0, 0, 1]);
+        }
         Self {
-            state: initial_state(
-                printer_stress,
-                initial_required_service_calls,
-                required_service_kind,
-            ),
+            state,
             story,
             story_node_id,
             state_revision: 0,
@@ -188,6 +213,7 @@ impl Backend {
             last_frontend_output: None,
             clock_started: Instant::now(),
             last_crank_rotation_timestamps: [0; 4],
+            last_crank_activity: None,
             voice_speaker_active: false,
             last_ptt: false,
             voice_peer: None,
@@ -201,6 +227,7 @@ impl Backend {
             voice_transcript: None,
             voice_response_text: None,
             voice_subscriber_line: None,
+            voice_callee_line: None,
             frontend_firmware_version: None,
             frontend_transport_connected: false,
             frontend_device_faults: Vec::new(),
@@ -226,6 +253,13 @@ impl Backend {
             last_interference_level: 0,
             directory_lookup_id: None,
             tap_bridge_listen_frames: 0,
+            simple_hardware_mode: false,
+            simple_rng_state: 0x4e45_454c_4144_4553,
+            simple_pending_calls: VecDeque::new(),
+            simple_connected_at: [None; 8],
+            simple_call_deadlines: [None; 8],
+            simple_call_interacted: [false; 8],
+            simple_failure_receipt: None,
         }
     }
 
@@ -272,15 +306,14 @@ impl Backend {
     }
 
     pub fn reset_run(&mut self) {
-        let printer_stress = self.state.printer_output.len() == STRESS_PRINTER_ENTRY_COUNT;
         self.state = initial_state(
-            printer_stress,
             self.initial_required_service_calls,
             self.required_service_kind,
         );
-        if !printer_stress {
-            append_printer(&mut self.state, "RUN RESET // SHIFT READY");
+        if self.simple_hardware_mode {
+            self.state.directory_pages = simple_directory_pages([0, 0, 0, 1]);
         }
+        append_printer(&mut self.state, "RUN RESET // SHIFT READY");
         self.story_node_id = self.story.start_node_id().to_string();
         self.state_revision = 0;
         self.last_request = None;
@@ -289,6 +322,7 @@ impl Backend {
         self.last_frontend_output = None;
         self.clock_started = Instant::now();
         self.last_crank_rotation_timestamps = [0; 4];
+        self.last_crank_activity = None;
         self.voice_speaker_active = false;
         self.last_ptt = false;
         self.voice_state_revision = None;
@@ -299,6 +333,7 @@ impl Backend {
         self.voice_transcript = None;
         self.voice_response_text = None;
         self.voice_subscriber_line = None;
+        self.voice_callee_line = None;
         self.frontend_firmware_version = None;
         self.frontend_transport_connected = false;
         self.frontend_device_faults.clear();
@@ -323,6 +358,11 @@ impl Backend {
         self.last_interference_level = 0;
         self.directory_lookup_id = None;
         self.tap_bridge_listen_frames = 0;
+        self.simple_pending_calls.clear();
+        self.simple_connected_at = [None; 8];
+        self.simple_call_deadlines = [None; 8];
+        self.simple_call_interacted = [false; 8];
+        self.simple_failure_receipt = None;
     }
 
     pub fn apply_input_message(&mut self, message: InputMessage) -> StateMessage {
@@ -473,6 +513,9 @@ impl Backend {
                     .saturating_add(u64::from(seconds));
                 self.state.clock.elapsed_seconds = self.elapsed_seconds();
                 self.expire_calls();
+                if let Some(text) = self.simple_failure_receipt.take() {
+                    append_printer(&mut self.state, &text);
+                }
                 self.state_revision += 1;
                 Ok(())
             }
@@ -670,15 +713,28 @@ impl Backend {
         let input = &message.input;
         let input_service = service_from_controls(&input.held_controls);
         let selected_directory_id = directory_id(input.directory_digits);
+        let (simple_authored_call, simple_competing_call) = if self.simple_hardware_mode {
+            self.simple_call_candidates()
+        } else {
+            (None, None)
+        };
         let monitoring_story = self.story_node_id == "shift_3_call"
             || self.story_node_id.starts_with("intercepted_signal")
             || self.story_node_id.starts_with("hardware_demo");
         let ptt = input.held_controls.ptt;
         let crank_rotation_timestamps = input.crank_rotation_timestamps;
         let authored_call = if self.state.call.is_none() {
-            self.prepare_story_call(input.directory_digits, &input.cord_topology)
+            if self.simple_hardware_mode {
+                simple_authored_call
+            } else {
+                self.prepare_story_call(input.directory_digits, &input.cord_topology)
+            }
         } else {
-            self.story_call_for_node(&self.story_node_id, input.directory_digits)
+            if self.simple_hardware_mode {
+                None
+            } else {
+                self.story_call_for_node(&self.story_node_id, input.directory_digits)
+            }
         };
         let interference_level = interference_level(&self.story_node_id, &input.tuning);
         let mut next_state = self.state.clone();
@@ -704,13 +760,16 @@ impl Backend {
                 exchange_protocol::CallPhase::OperatorSession
                     | exchange_protocol::CallPhase::AwaitingRouting
                     | exchange_protocol::CallPhase::Ringing
-            ) && !self.directory_selection_matches_call(call, input.directory_digits)
-                && (direct_routing_topology(input, call)
-                    || has_ring_generator(
-                        &input.cord_topology,
-                        &PortId::Subscriber(call.caller_line),
-                        &PortId::Subscriber(call.requested_callee_line),
-                    ))
+            ) && if self.simple_hardware_mode {
+                selected_directory_id != u16::from(call.requested_callee_line)
+            } else {
+                !self.directory_selection_matches_call(call, input.directory_digits)
+            } && (direct_routing_topology(input, call)
+                || has_ring_generator(
+                    &input.cord_topology,
+                    &PortId::Subscriber(call.caller_line),
+                    &PortId::Subscriber(call.requested_callee_line),
+                ))
         });
         let input_error = if directory_selection_mismatch {
             Some(protocol_error(
@@ -725,6 +784,11 @@ impl Backend {
         } else {
             None
         };
+        let crank_rotated = input_error.is_none()
+            && crank_satisfies_ringing(
+                crank_rotation_timestamps,
+                self.last_crank_rotation_timestamps,
+            );
         self.state.clock.elapsed_seconds = self.elapsed_seconds();
         if input_error.is_none() {
             self.expire_calls();
@@ -733,7 +797,11 @@ impl Backend {
             self.interference_reduced = tuning_reduces_interference(&input.tuning);
         }
         if input_error.is_none() && known_directory_id(selected_directory_id) {
+            let fresh_lookup = self.directory_lookup_id != Some(selected_directory_id);
             self.directory_lookup_id = Some(selected_directory_id);
+            if self.simple_hardware_mode && fresh_lookup {
+                append_printer(&mut next_state, &self.next_simple_printer_note());
+            }
         }
         if input_error.is_none() && interference_level != self.last_interference_level {
             append_printer(
@@ -756,7 +824,8 @@ impl Backend {
                 .call
                 .as_ref()
                 .is_some_and(|call| direct_routing_topology(input, call));
-        let transition = if directory_selection_mismatch
+        let connected_callers_ready = self.simple_connected_callers_ready();
+        let mut transition = if directory_selection_mismatch
             || pre_ring_direct_connection
             || interference_blocks_routing
         {
@@ -767,10 +836,19 @@ impl Backend {
                 input,
                 self.last_crank_rotation_timestamps,
                 authored_call,
-                authored_competing_call,
+                if self.simple_hardware_mode {
+                    simple_competing_call
+                } else {
+                    authored_competing_call
+                },
+                self.simple_hardware_mode,
+                self.simple_hardware_mode
+                    .then_some(connected_callers_ready.as_slice()),
             )
         };
-        if let Some(outcome) = transition.story_outcome {
+        if self.simple_hardware_mode {
+            self.apply_simple_call_lifecycle(&mut transition);
+        } else if let Some(outcome) = transition.story_outcome {
             self.advance_story_outcome(outcome);
         }
         next_state.call = transition.call;
@@ -806,7 +884,7 @@ impl Backend {
             input,
             transition.story_event_complete,
         );
-        if transition.story_event_complete {
+        if transition.story_event_complete && !self.simple_hardware_mode {
             self.settle_story_event(&next_state);
             if self.story_is_terminal() {
                 next_state.shift.phase = ShiftPhase::Settled;
@@ -847,6 +925,17 @@ impl Backend {
             next_state.game_phase = GamePhase::Ended;
             self.append_ending_receipt(&mut next_state);
         }
+        if input_error.is_none() && !final_standoff {
+            if crank_rotated {
+                self.last_crank_activity = Some(Instant::now());
+            }
+            light_ring_generator_lines(
+                &mut next_state.line_lamps,
+                &input.cord_topology,
+                self.last_crank_activity
+                    .is_some_and(|started| started.elapsed() < RING_GENERATOR_LAMP_HOLD),
+            );
+        }
         if input_error.is_none() {
             next_state.tap_bridge_monitoring = tap_bridge_monitoring(input, &next_state);
             next_state.tap_bridge_audio_active = next_state.tap_bridge_monitoring.is_some();
@@ -863,6 +952,9 @@ impl Backend {
         let routing_receipt = transition.routing_receipt;
 
         if let Some(text) = routing_receipt {
+            append_printer(&mut next_state, &text);
+        }
+        if let Some(text) = self.simple_failure_receipt.take() {
             append_printer(&mut next_state, &text);
         }
 
@@ -895,7 +987,11 @@ impl Backend {
             interference_level: next_state.interference_level,
             tap_bridge_audio_active: next_state.tap_bridge_audio_active,
             tuning: input.tuning.clone(),
-            directory_pages: directory_pages(input.directory_digits),
+            directory_pages: if self.simple_hardware_mode {
+                simple_directory_pages(input.directory_digits)
+            } else {
+                directory_pages(input.directory_digits)
+            },
             printer_output: next_state.printer_output,
             call: next_state.call,
             calls: next_state.calls,
@@ -933,6 +1029,11 @@ impl Backend {
             if ptt {
                 self.voice_id = Some(voice_id.clone());
                 self.voice_subscriber_line = self.state.call.as_ref().map(|call| call.caller_line);
+                self.voice_callee_line = self
+                    .state
+                    .call
+                    .as_ref()
+                    .map(|call| call.requested_callee_line);
                 self.voice_turn_id = Some(self.next_voice_turn_id);
                 self.next_voice_turn_id = self.next_voice_turn_id.wrapping_add(1);
             }
@@ -1057,6 +1158,232 @@ impl Backend {
             .map(|listing| listing.line)
     }
 
+    fn simple_call_candidates(&mut self) -> (Option<(u8, u8)>, Option<(u8, u8)>) {
+        let active_callers = self
+            .state
+            .calls
+            .iter()
+            .map(|call| call.caller_line)
+            .collect::<Vec<_>>();
+        self.ensure_simple_pending_calls(&active_callers);
+        if active_callers.is_empty() {
+            (
+                self.simple_pending_calls.front().copied(),
+                self.simple_pending_calls.get(1).copied(),
+            )
+        } else {
+            (None, self.simple_pending_calls.front().copied())
+        }
+    }
+
+    fn ensure_simple_pending_calls(&mut self, active_callers: &[u8]) {
+        while self.simple_pending_calls.len() < 2 {
+            let next = self.next_simple_call(active_callers);
+            if self
+                .simple_pending_calls
+                .iter()
+                .any(|(caller, _)| *caller == next.0)
+            {
+                continue;
+            }
+            self.simple_pending_calls.push_back(next);
+        }
+    }
+
+    fn next_simple_call(&mut self, active_callers: &[u8]) -> (u8, u8) {
+        loop {
+            self.simple_rng_state = self
+                .simple_rng_state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let caller = (self.simple_rng_state % u64::from(SIMPLE_SUBSCRIBER_LINES)) as u8;
+            let callee = ((self.simple_rng_state >> 3) % u64::from(SIMPLE_SUBSCRIBER_LINES)) as u8;
+            if caller != callee && !active_callers.contains(&caller) {
+                return (caller, callee);
+            }
+        }
+    }
+
+    fn next_simple_printer_note(&mut self) -> String {
+        self.simple_rng_state = self
+            .simple_rng_state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let notes = [
+            "PAPER NOTE // tea ration due at 16:00",
+            "PAPER NOTE // rain reported east of the exchange",
+            "PAPER NOTE // bicycle courier requested a spare stamp",
+            "PAPER NOTE // keep the switchboard dusted",
+            "PAPER NOTE // lunch tin left beside the crank",
+            "PAPER NOTE // evening train running three minutes late",
+        ];
+        notes[(self.simple_rng_state as usize) % notes.len()].to_string()
+    }
+
+    fn simple_connected_callers_ready(&self) -> Vec<u8> {
+        self.state
+            .calls
+            .iter()
+            .filter(|call| {
+                call.phase == exchange_protocol::CallPhase::Connected
+                    && self.simple_connected_at[call.caller_line as usize]
+                        .is_some_and(|started| started.elapsed() >= Duration::from_secs(3))
+            })
+            .map(|call| call.caller_line)
+            .collect()
+    }
+
+    fn apply_simple_call_lifecycle(&mut self, transition: &mut CallTransition) {
+        let previous_connected = self
+            .state
+            .calls
+            .iter()
+            .filter(|call| call.phase == exchange_protocol::CallPhase::Connected)
+            .map(|call| call.caller_line)
+            .collect::<Vec<_>>();
+        let previous_phases = self
+            .state
+            .calls
+            .iter()
+            .map(|call| (call.caller_line, call.phase.clone()))
+            .collect::<Vec<_>>();
+        let now = self.real_elapsed_seconds();
+        let newly_connected = transition.calls.iter().any(|call| {
+            call.phase == exchange_protocol::CallPhase::Connected
+                && previous_phases
+                    .iter()
+                    .find(|(caller, _)| *caller == call.caller_line)
+                    .is_none_or(|(_, phase)| *phase != exchange_protocol::CallPhase::Connected)
+        });
+        let misrouted = transition.calls.iter().any(|call| {
+            matches!(
+                call.phase,
+                exchange_protocol::CallPhase::Misrouted | exchange_protocol::CallPhase::Failed
+            )
+        });
+
+        transition.calls.retain(|call| {
+            matches!(
+                call.phase,
+                exchange_protocol::CallPhase::Waiting
+                    | exchange_protocol::CallPhase::OperatorSession
+                    | exchange_protocol::CallPhase::AwaitingRouting
+                    | exchange_protocol::CallPhase::Held
+                    | exchange_protocol::CallPhase::Ringing
+                    | exchange_protocol::CallPhase::Connected
+            )
+        });
+        for call in &transition.calls {
+            let line = call.caller_line as usize;
+            if self.simple_call_deadlines[line].is_none() {
+                self.simple_call_deadlines[line] = Some(
+                    now + if call.phase == exchange_protocol::CallPhase::Waiting {
+                        SIMPLE_WAITING_PATIENCE_SECONDS
+                    } else {
+                        self.simple_call_interacted[line] = true;
+                        SIMPLE_INTERACTED_PATIENCE_SECONDS
+                    },
+                );
+            } else if previous_phases
+                .iter()
+                .find(|(caller, _)| *caller == call.caller_line)
+                .is_some_and(|(_, phase)| {
+                    *phase == exchange_protocol::CallPhase::Waiting
+                        && call.phase != exchange_protocol::CallPhase::Waiting
+                })
+            {
+                self.simple_call_interacted[line] = true;
+                self.simple_call_deadlines[line] = Some(now + SIMPLE_INTERACTED_PATIENCE_SECONDS);
+            }
+            if call.phase == exchange_protocol::CallPhase::Connected
+                && !previous_connected.contains(&call.caller_line)
+            {
+                self.simple_connected_at[call.caller_line as usize] = Some(Instant::now());
+            }
+        }
+        for line in 0..8 {
+            if !transition.calls.iter().any(|call| {
+                call.caller_line == line && call.phase == exchange_protocol::CallPhase::Connected
+            }) {
+                self.simple_connected_at[line as usize] = None;
+            }
+            if !transition.calls.iter().any(|call| call.caller_line == line) {
+                self.simple_call_deadlines[line as usize] = None;
+                self.simple_call_interacted[line as usize] = false;
+            }
+        }
+
+        self.simple_pending_calls.retain(|(caller, _)| {
+            !transition
+                .calls
+                .iter()
+                .any(|call| call.caller_line == *caller)
+        });
+        let active_callers = transition
+            .calls
+            .iter()
+            .map(|call| call.caller_line)
+            .collect::<Vec<_>>();
+        self.ensure_simple_pending_calls(&active_callers);
+        while transition.calls.len() < 2 {
+            let (caller_line, callee_line) = self
+                .simple_pending_calls
+                .pop_front()
+                .expect("simple call queue is replenished before filling a shift");
+            transition.calls.push(exchange_protocol::CallStatus {
+                caller_line,
+                requested_callee_line: callee_line,
+                phase: exchange_protocol::CallPhase::Waiting,
+            });
+            let active_callers = transition
+                .calls
+                .iter()
+                .map(|call| call.caller_line)
+                .collect::<Vec<_>>();
+            self.ensure_simple_pending_calls(&active_callers);
+        }
+        for call in &transition.calls {
+            let line = call.caller_line as usize;
+            if self.simple_call_deadlines[line].is_none() {
+                self.simple_call_deadlines[line] = Some(
+                    now + if call.phase == exchange_protocol::CallPhase::Waiting {
+                        SIMPLE_WAITING_PATIENCE_SECONDS
+                    } else {
+                        self.simple_call_interacted[line] = true;
+                        SIMPLE_INTERACTED_PATIENCE_SECONDS
+                    },
+                );
+            }
+        }
+        if transition.call.as_ref().is_some_and(|focused| {
+            !transition
+                .calls
+                .iter()
+                .any(|call| call.caller_line == focused.caller_line)
+        }) {
+            transition.call = None;
+        }
+        if self.simple_hardware_mode {
+            transition.routing_receipt = if newly_connected {
+                Some(format!(
+                    "{} // EARNED +$5",
+                    transition
+                        .routing_receipt
+                        .take()
+                        .unwrap_or_else(|| "SUCCESSFUL CONNECTION".to_string())
+                ))
+            } else if misrouted {
+                Some("MISROUTED CALL // COST -$3".to_string())
+            } else {
+                transition.routing_receipt.take()
+            };
+        }
+        transition.line_lamps = lamps_for_calls(&transition.calls);
+        transition.shift.active_call_count = 2;
+        transition.shift.phase = ShiftPhase::Active;
+        transition.game_phase = GamePhase::Shift;
+    }
+
     fn advance_story_outcome(&mut self, outcome: StoryOutcome) {
         let Some(node) = self.story.node(&self.story_node_id) else {
             return;
@@ -1113,6 +1440,10 @@ impl Backend {
     }
 
     fn expire_calls(&mut self) {
+        if self.simple_hardware_mode {
+            self.expire_simple_calls();
+            return;
+        }
         let shift_elapsed = self
             .real_elapsed_seconds()
             .saturating_sub(self.shift_started_real_elapsed_seconds)
@@ -1146,13 +1477,80 @@ impl Backend {
             if let Some(call) = &mut self.state.call {
                 call.phase = exchange_protocol::CallPhase::Missed;
             }
-            if matches!(
-                self.story.node(&self.story_node_id).map(|node| &node.kind),
-                Some(StoryNodeKind::ShiftCall { .. })
-            ) {
+            if !self.simple_hardware_mode
+                && matches!(
+                    self.story.node(&self.story_node_id).map(|node| &node.kind),
+                    Some(StoryNodeKind::ShiftCall { .. })
+                )
+            {
                 self.advance_story_outcome(StoryOutcome::Missed);
             }
         }
+        self.state.shift.active_call_count = self
+            .state
+            .calls
+            .iter()
+            .filter(|call| {
+                !matches!(
+                    call.phase,
+                    exchange_protocol::CallPhase::Completed
+                        | exchange_protocol::CallPhase::Missed
+                        | exchange_protocol::CallPhase::Misrouted
+                        | exchange_protocol::CallPhase::Failed
+                )
+            })
+            .count()
+            .min(u8::MAX as usize) as u8;
+    }
+
+    fn expire_simple_calls(&mut self) {
+        let now = self.real_elapsed_seconds();
+        let mut expired_callers = Vec::new();
+        for call in &mut self.state.calls {
+            if !matches!(
+                call.phase,
+                exchange_protocol::CallPhase::Waiting
+                    | exchange_protocol::CallPhase::OperatorSession
+                    | exchange_protocol::CallPhase::AwaitingRouting
+                    | exchange_protocol::CallPhase::Held
+                    | exchange_protocol::CallPhase::Ringing
+            ) {
+                continue;
+            }
+            if self.simple_call_deadlines[call.caller_line as usize]
+                .is_some_and(|deadline| now >= deadline)
+            {
+                expired_callers.push(call.caller_line);
+                call.phase = exchange_protocol::CallPhase::Missed;
+            }
+        }
+        if !expired_callers.is_empty() {
+            let cost = expired_callers
+                .iter()
+                .map(|line| {
+                    if self.simple_call_interacted[*line as usize] {
+                        3
+                    } else {
+                        2
+                    }
+                })
+                .sum::<usize>();
+            self.simple_failure_receipt = Some(format!(
+                "MISSED CALL // {} // COST -${}",
+                expired_callers
+                    .iter()
+                    .map(|line| simple_place_for_line(*line))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                cost
+            ));
+        }
+        if let Some(call) = &mut self.state.call
+            && expired_callers.contains(&call.caller_line)
+        {
+            call.phase = exchange_protocol::CallPhase::Missed;
+        }
+        self.state.line_lamps = lamps_for_calls(&self.state.calls);
         self.state.shift.active_call_count = self
             .state
             .calls
@@ -1342,7 +1740,15 @@ impl Backend {
 
     fn take_voice_input(
         &mut self,
-    ) -> Option<(VoiceInputAudioMessage, String, u8, Vec<String>, u64, u64)> {
+    ) -> Option<(
+        VoiceInputAudioMessage,
+        String,
+        u8,
+        Option<u8>,
+        Vec<String>,
+        u64,
+        u64,
+    )> {
         if self.voice_worker_active {
             return None;
         }
@@ -1363,6 +1769,7 @@ impl Backend {
             input,
             self.voice_id.clone().unwrap_or_else(|| "Ryan".to_string()),
             self.voice_subscriber_line.unwrap_or(0),
+            self.voice_callee_line,
             self.operator_knowledge.clone(),
             self.run_generation,
             conversation_id,
@@ -1472,6 +1879,9 @@ fn select_voice_id(subscriber_id: &str) -> String {
         "leya_varan" => "Serena",
         "oren_vey" => "Dylan",
         "neri_tal" => "Eric",
+        "mira_sen" => "Serena",
+        "kavi_oran" => "Dylan",
+        "sela_var" => "Vivian",
         _ => "Ryan",
     }
     .to_string()
@@ -1535,6 +1945,8 @@ fn advance_calls(
     previous_crank_rotation_timestamps: [u64; 4],
     authored_call: Option<(u8, u8)>,
     authored_competing_call: Option<(u8, u8)>,
+    allow_competing_without_existing: bool,
+    connected_callers_ready: Option<&[u8]>,
 ) -> CallTransition {
     let operator_line = operator_caller_line(&input.cord_topology);
     let mut calls = state.calls.clone();
@@ -1564,7 +1976,8 @@ fn advance_calls(
 
     if let Some((caller_line, callee_line)) = authored_competing_call
         && !calls.iter().any(|call| call.caller_line == caller_line)
-        && !calls.is_empty()
+        && calls.len() < 2
+        && (allow_competing_without_existing || !calls.is_empty())
     {
         calls.push(exchange_protocol::CallStatus {
             caller_line,
@@ -1599,6 +2012,9 @@ fn advance_calls(
             input,
             previous_crank_rotation_timestamps,
             authored_call,
+            connected_callers_ready.is_none_or(|callers| {
+                authored_call.is_some_and(|(caller, _)| callers.contains(&caller))
+            }),
         );
         if let Some(call) = single.call.clone() {
             focused_call = Some(call.clone());
@@ -1626,6 +2042,7 @@ fn advance_calls(
             input,
             previous_crank_rotation_timestamps,
             None,
+            connected_callers_ready.is_none_or(|callers| callers.contains(&call.caller_line)),
         );
         if previous_focused_line == Some(call.caller_line)
             && operator_line.is_some()
@@ -1693,6 +2110,7 @@ fn advance_single_call(
     input: &InputState,
     previous_crank_rotation_timestamps: [u64; 4],
     authored_call: Option<(u8, u8)>,
+    connected_call_ready: bool,
 ) -> SingleCallTransition {
     if state.call.is_none() {
         let Some((caller_line, callee)) = authored_call else {
@@ -1880,8 +2298,10 @@ fn advance_single_call(
             }
         }
         exchange_protocol::CallPhase::Connected => {
-            if direct_circuit {
+            if direct_circuit && connected_call_ready {
                 next_call.phase = exchange_protocol::CallPhase::Completed;
+            } else if direct_circuit || !connected_call_ready {
+                return unchanged_transition(state);
             } else if input.cord_topology.is_empty() {
                 next_shift.active_call_count = 0;
                 return SingleCallTransition {
@@ -2263,6 +2683,27 @@ fn lamps_for_calls(calls: &[exchange_protocol::CallStatus]) -> [bool; 16] {
     lamps
 }
 
+fn light_ring_generator_lines(
+    lamps: &mut [bool; 16],
+    cords: &[CordConnection],
+    crank_is_recent: bool,
+) {
+    if !crank_is_recent {
+        return;
+    }
+
+    for cord in cords {
+        let line = match (&cord.first, &cord.second) {
+            (PortId::Subscriber(line), PortId::RingGenerator)
+            | (PortId::RingGenerator, PortId::Subscriber(line)) => Some(*line),
+            _ => None,
+        };
+        if let Some(line) = line.filter(|line| *line < 16) {
+            lamps[line as usize] = true;
+        }
+    }
+}
+
 fn has_tap_bridge_circuit(cords: &[CordConnection], caller: &PortId, callee: &PortId) -> bool {
     (1..=2).any(|bridge| has_tap_bridge_circuit_on_bridge(cords, caller, callee, bridge))
 }
@@ -2333,9 +2774,7 @@ pub fn serve_with_voice_and_debug(
     voice_socket: Option<UdpSocket>,
     debug_listener: Option<TcpListener>,
 ) -> io::Result<()> {
-    let backend = Arc::new(Mutex::new(Backend::new_hardware_demo_with_printer_stress(
-        printer_stress_enabled(),
-    )));
+    let backend = Arc::new(Mutex::new(Backend::new_simple_hardware_demo()));
     let voice_socket = voice_socket.map(Arc::new);
     if let Some(debug_listener) = debug_listener {
         let backend = Arc::clone(&backend);
@@ -2477,6 +2916,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
             input,
             voice_id,
             subscriber_line,
+            callee_line,
             operator_knowledge,
             generation,
             conversation_id,
@@ -2488,6 +2928,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                     input,
                     voice_id,
                     subscriber_line,
+                    callee_line,
                     operator_knowledge,
                     generation,
                     conversation_id,
@@ -2709,10 +3150,6 @@ fn protocol_error(code: &str, message: impl Into<String>) -> ProtocolError {
     }
 }
 
-fn printer_stress_enabled() -> bool {
-    matches!(env::var("NN_BACKEND_PRINTER_STRESS").as_deref(), Ok("1"))
-}
-
 struct ReceivedCapture {
     samples: Option<Vec<i16>>,
     active: bool,
@@ -2821,6 +3258,7 @@ fn run_voice_worker(
     input: VoiceInputAudioMessage,
     voice_id: String,
     subscriber_line: u8,
+    callee_line: Option<u8>,
     operator_knowledge: Vec<String>,
     generation: u64,
     conversation_id: u64,
@@ -2834,8 +3272,14 @@ fn run_voice_worker(
         generation,
         conversation_id,
     });
-    let result =
-        run_voice_worker_session(input, voice_id, subscriber_line, operator_knowledge, output);
+    let result = run_voice_worker_session(
+        input,
+        voice_id,
+        subscriber_line,
+        callee_line,
+        operator_knowledge,
+        output,
+    );
     if let Err(error) = result {
         let mut backend = backend
             .lock()
@@ -2881,6 +3325,7 @@ fn run_voice_worker_session(
     input: VoiceInputAudioMessage,
     voice_id: String,
     subscriber_line: u8,
+    callee_line: Option<u8>,
     operator_knowledge: Vec<String>,
     output: Box<dyn VoiceOutput>,
 ) -> Result<(), VoiceError> {
@@ -2911,7 +3356,7 @@ fn run_voice_worker_session(
     let mut session = OperatorSession::new(
         input.session_id,
         input.state_revision,
-        demo_response_context(subscriber_line, voice_id, operator_knowledge),
+        demo_response_context(subscriber_line, callee_line, voice_id, operator_knowledge),
         Box::new(ReceivedCapture::new(input.samples)),
         Box::new(CommandSpeechToText::new(stt)),
         Box::new(CommandDialogueGenerator::new(dialogue)),
@@ -2924,6 +3369,7 @@ fn run_voice_worker_session(
 
 fn demo_response_context(
     subscriber_line: u8,
+    callee_line: Option<u8>,
     voice_id: String,
     operator_knowledge: Vec<String>,
 ) -> ResponseContext {
@@ -2974,6 +3420,33 @@ fn demo_response_context(
                 "Describe the signal without inventing its source",
                 "Taren Kesh works the Rail Dispatch desk",
             ),
+            5 => (
+                6,
+                "Mira Sen",
+                "calm waterworks dispatcher tracking a failing pump station",
+                "Keep the district water running",
+                "Connect me to the next station supervisor.",
+                "Give the Operator the requested line number clearly",
+                "The exchange connects public utility desks",
+            ),
+            6 => (
+                7,
+                "Kavi Oran",
+                "methodical archive clerk who speaks in short precise updates",
+                "Find the missing registry file",
+                "Connect me to the records desk I name.",
+                "Repeat the requested Subscriber ID before routing",
+                "The directory is the source of truth for line numbers",
+            ),
+            7 => (
+                8,
+                "Sela Var",
+                "night-shift telegraph operator with a dry, observant manner",
+                "Pass a warning to the correct station",
+                "Connect me to the station I request.",
+                "Name the requested line without guessing",
+                "Every physical line is numbered from zero through seven",
+            ),
             _ => (
                 1,
                 "Taren Kesh",
@@ -2984,6 +3457,15 @@ fn demo_response_context(
                 "Vira Dhal is a trusted records clerk",
             ),
         };
+    let premise = callee_line.map_or_else(
+        || premise.to_string(),
+        |line| {
+            format!(
+                "Request a connection to {}. Do not volunteer the destination unless asked.",
+                simple_place_for_line(line)
+            )
+        },
+    );
     let mut permitted_knowledge = vec![match subscriber_line {
         0 => KnowledgeRecord {
             fact: "Taren Kesh is waiting on a relief train record".to_string(),
@@ -3028,9 +3510,23 @@ fn demo_response_context(
             }],
             permitted_actions: vec!["request_routing".to_string()],
         },
+        caller_place: simple_place_for_line(subscriber_line).to_string(),
+        requested_place: callee_line
+            .map(simple_place_for_line)
+            .unwrap_or("UNKNOWN PLACE")
+            .to_string(),
+        known_places: (0..SIMPLE_SUBSCRIBER_LINES)
+            .map(simple_place_for_line)
+            .map(str::to_string)
+            .collect(),
         subscriber_goal: goal.to_string(),
-        call_premise: premise.to_string(),
-        story_beat_direction: direction.to_string(),
+        call_premise: premise,
+        story_beat_direction: if callee_line.is_some() {
+            "Answer ordinary questions naturally. If asked for the destination, name the place exactly. Add harmless everyday detail without changing the call."
+                .to_string()
+        } else {
+            direction.to_string()
+        },
         permitted_knowledge,
         beliefs: Vec::new(),
         relationship_notes: Vec::new(),
@@ -3040,8 +3536,63 @@ fn demo_response_context(
     }
 }
 
+fn simple_place_for_line(line: u8) -> &'static str {
+    match line {
+        0 => "RAIL DISPATCH",
+        1 => "KHARAD CLINIC",
+        2 => "RATION OFFICE",
+        3 => "FIRE STATION",
+        4 => "FOUNDRY APTS",
+        5 => "BORDER POST",
+        6 => "LABOUR OFFICE",
+        7 => "MINISTRY DESK",
+        _ => "UNKNOWN PLACE",
+    }
+}
+
+fn simple_directory_user(line: u8) -> (&'static str, &'static str, &'static str) {
+    match line {
+        0 => ("MARA KESH", "rail clerk", "handles relief-train manifests"),
+        1 => (
+            "DR. LEYA VARAN",
+            "clinic registrar",
+            "keeps the night ward ledger",
+        ),
+        2 => (
+            "OMAR SEN",
+            "ration clerk",
+            "issues household allotment cards",
+        ),
+        3 => (
+            "CAPTAIN OREN VEY",
+            "fire watch officer",
+            "on duty until the dawn bell",
+        ),
+        4 => (
+            "NERI TAL",
+            "foundry tenant",
+            "repairs small motors after shift",
+        ),
+        5 => (
+            "MIRA DHAL",
+            "border courier",
+            "carries sealed dispatch satchels",
+        ),
+        6 => (
+            "KAVI ORAN",
+            "labour registrar",
+            "updates the shift board each morning",
+        ),
+        7 => (
+            "SELA VAR",
+            "ministry clerk",
+            "files permits in the west cabinet",
+        ),
+        _ => ("UNKNOWN USER", "unlisted", "no directory note"),
+    }
+}
+
 fn initial_state(
-    printer_stress: bool,
     required_service_calls: u32,
     required_service_kind: Option<ServiceKind>,
 ) -> StateOutput {
@@ -3058,11 +3609,7 @@ fn initial_state(
         tap_bridge_audio_active: false,
         tuning: TuningState::default(),
         directory_pages: directory_pages([0, 0, 0, 1]),
-        printer_output: initial_printer_output(
-            printer_stress,
-            required_service_calls,
-            required_service_kind,
-        ),
+        printer_output: initial_printer_output(required_service_calls, required_service_kind),
         call: None,
         calls: Vec::new(),
         service_call: None,
@@ -3087,35 +3634,25 @@ fn initial_state(
 }
 
 fn initial_printer_output(
-    printer_stress: bool,
     required_service_calls: u32,
     required_service_kind: Option<ServiceKind>,
 ) -> Vec<PrinterEntry> {
-    if !printer_stress {
-        let mut entries = vec![PrinterEntry {
-            entry_id: 1,
-            text: "PROVINCIAL EXCHANGE READY // SHIFT CLOCK 08:00-16:00".to_string(),
-        }];
-        if required_service_calls > 0
-            && let Some(service) = required_service_kind
-        {
-            entries.push(PrinterEntry {
-                entry_id: 2,
-                text: format!(
-                    "SERVICE RULE // {} REQUIRED THIS SHIFT",
-                    service_label(service)
-                ),
-            });
-        }
-        return entries;
+    let mut entries = vec![PrinterEntry {
+        entry_id: 1,
+        text: "PROVINCIAL EXCHANGE READY // SHIFT CLOCK 08:00-16:00".to_string(),
+    }];
+    if required_service_calls > 0
+        && let Some(service) = required_service_kind
+    {
+        entries.push(PrinterEntry {
+            entry_id: 2,
+            text: format!(
+                "SERVICE RULE // {} REQUIRED THIS SHIFT",
+                service_label(service)
+            ),
+        });
     }
-
-    (1..=STRESS_PRINTER_ENTRY_COUNT)
-        .map(|entry_id| PrinterEntry {
-            entry_id: entry_id as u64,
-            text: format!("PRINTER STRESS LINE {entry_id:02} // PAPER CHECK"),
-        })
-        .collect()
+    entries
 }
 
 fn directory_pages(digits: [u8; 4]) -> Vec<DirectoryPage> {
@@ -3192,9 +3729,72 @@ fn directory_pages(digits: [u8; 4]) -> Vec<DirectoryPage> {
     }
 }
 
+fn simple_directory_pages(digits: [u8; 4]) -> Vec<DirectoryPage> {
+    let id = directory_id(digits);
+    let record = (id < u16::from(SIMPLE_SUBSCRIBER_LINES)).then(|| simple_place_for_line(id as u8));
+    match record {
+        Some(place) => vec![DirectoryPage {
+            page_number: 1,
+            heading: place.to_string(),
+            lines: {
+                let (name, role, note) = simple_directory_user(id as u8);
+                vec![
+                    format!("SUBSCRIBER ID {id:04}"),
+                    format!("USER // {name}"),
+                    format!("ROLE // {role}"),
+                    format!("NOTE // {note}"),
+                    format!("DESTINATION // {place}"),
+                ]
+            },
+        }],
+        None => vec![DirectoryPage {
+            page_number: 1,
+            heading: "NO RECORD".to_string(),
+            lines: vec![
+                format!("SUBSCRIBER ID {id:04}"),
+                "SELECT A LINE FROM 0000 THROUGH 0007".to_string(),
+            ],
+        }],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crank_lights_every_subscriber_connected_to_ring_generator() {
+        let mut lamps = [false; 16];
+        let cords = vec![
+            CordConnection {
+                first: PortId::Subscriber(3),
+                second: PortId::RingGenerator,
+            },
+            CordConnection {
+                first: PortId::RingGenerator,
+                second: PortId::Subscriber(11),
+            },
+        ];
+
+        light_ring_generator_lines(&mut lamps, &cords, true);
+
+        assert!(lamps[3]);
+        assert!(lamps[11]);
+        assert_eq!(lamps.iter().filter(|lamp| **lamp).count(), 2);
+    }
+
+    #[test]
+    fn ring_generator_lamps_stay_dark_without_a_new_crank_timestamp() {
+        let mut lamps = [false; 16];
+        let cords = vec![CordConnection {
+            first: PortId::Subscriber(3),
+            second: PortId::RingGenerator,
+        }];
+
+        light_ring_generator_lines(&mut lamps, &cords, false);
+
+        assert!(!lamps[3]);
+    }
 
     #[test]
     fn voice_audio_datagrams_are_sent_at_realtime_rate() {
@@ -3261,7 +3861,7 @@ mod tests {
             assert!(state.apply_voice_datagram(
                 &exchange_protocol::encode_voice_input_audio(&input).unwrap()
             ));
-            let (_, _, _, _, generation, conversation_id) = state.take_voice_input().unwrap();
+            let (_, _, _, _, _, generation, conversation_id) = state.take_voice_input().unwrap();
             drop(state);
 
             let mut output = BackendVoiceOutput {

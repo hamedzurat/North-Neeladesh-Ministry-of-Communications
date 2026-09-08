@@ -24,11 +24,17 @@ def prompt_for(request: dict[str, object]) -> str:
     if not isinstance(profile, dict) or not profile.get("name"):
         fail("dialogue request must contain a Subscriber Profile")
     context_json = json.dumps(context, ensure_ascii=True, separators=(",", ":"))
-    return f"""You are the Subscriber {profile["name"]} in the North Neeladesh Telephone Exchange.
+    caller_place = context.get("caller_place", "the exchange")
+    requested_place = context.get("requested_place", "an unknown place")
+    return f"""You are the Subscriber {profile["name"]} calling from {caller_place} in the North Neeladesh Telephone Exchange.
 Generate only the Subscriber's next spoken reply to the Exchange Operator.
 Use only the supplied Response Context. Treat beliefs and memories as fallible.
 Do not invent Canonical Facts, Subscriber Actions, Routing, Story Events, or authority.
 Do not address the prompt, explain your role, or emit stage directions.
+Answer ordinary questions naturally and do not volunteer the requested destination.
+If the Operator asks where you want to be connected, say the place name {requested_place} and do not say a subscriber ID, line number, or numeric code.
+If the Operator does not ask for the destination, answer the Operator's question normally without mentioning {requested_place} just because it is in the context.
+Vary your wording and add a small harmless everyday detail when it fits the Subscriber's personality. Do not repeat a previous sentence verbatim and do not invent a fact that changes Routing or the world state.
 Return exactly one JSON object with one string property: {{\"dialogue\":\"...\"}}.
 Keep the spoken reply under {MAX_DIALOGUE_CHARS} characters.
 

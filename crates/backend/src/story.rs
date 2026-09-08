@@ -395,6 +395,83 @@ impl AuthoredContent {
         }
     }
 
+    /// The live cabinet story is intentionally small. The backend supplies the
+    /// random call pairs; this graph only gives the runtime a valid story node
+    /// and keeps the legacy authored demos out of the hardware path.
+    pub fn simple_hardware_demo() -> Self {
+        let subscribers = [
+            ("taren_kesh", "Taren Kesh"),
+            ("vira_dhal", "Vira Dhal"),
+            ("leya_varan", "Dr. Leya Varan"),
+            ("oren_vey", "Captain Oren Vey"),
+            ("neri_tal", "Neri Tal"),
+            ("mira_sen", "Mira Sen"),
+            ("kavi_oran", "Kavi Oran"),
+            ("sela_var", "Sela Var"),
+        ];
+        let subscriber_values = subscribers
+            .into_iter()
+            .map(|(id, name)| Subscriber {
+                id: id.to_string(),
+                name: name.to_string(),
+            })
+            .collect();
+        let line_listings = subscribers
+            .into_iter()
+            .enumerate()
+            .map(|(line, (id, _))| LineListing {
+                id: format!("line_{line}"),
+                line: line as u8,
+                subscriber_ids: vec![id.to_string()],
+            })
+            .collect();
+
+        Self {
+            subscribers: subscriber_values,
+            line_listings,
+            call_premises: vec![CallPremise {
+                id: "random_cabinet_call".to_string(),
+                caller_id: "taren_kesh".to_string(),
+                callee_id: "vira_dhal".to_string(),
+                caller_line_id: "line_0".to_string(),
+                callee_line_id: "line_1".to_string(),
+                directory_ids: (0..8).collect(),
+            }],
+            story_beats: vec![StoryBeat {
+                id: "random_cabinet_beat".to_string(),
+                call_premise_id: "random_cabinet_call".to_string(),
+            }],
+            story_events: vec![authored_event("random_cabinet_success", "live_call_end")],
+            endings: vec![Ending {
+                id: "live_call_ending".to_string(),
+                conclusion: "Live cabinet call completed.".to_string(),
+            }],
+            nodes: vec![
+                StoryNode {
+                    id: "run_start".to_string(),
+                    kind: StoryNodeKind::RunStart {
+                        next_node_id: "live_call".to_string(),
+                    },
+                },
+                shift_call_node(
+                    "live_call",
+                    "random_cabinet_beat",
+                    "random_cabinet_event",
+                    "random_cabinet_event",
+                    "random_cabinet_event",
+                ),
+                event_node("random_cabinet_event", "random_cabinet_success"),
+                StoryNode {
+                    id: "live_call_end".to_string(),
+                    kind: StoryNodeKind::Ending {
+                        ending_id: "live_call_ending".to_string(),
+                    },
+                },
+            ],
+            start_node_id: "run_start".to_string(),
+        }
+    }
+
     pub fn hardware_demo() -> Self {
         let mut content = Self::four_shift_demo();
         content.call_premises = vec![

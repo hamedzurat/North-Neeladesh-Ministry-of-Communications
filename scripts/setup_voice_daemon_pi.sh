@@ -7,6 +7,7 @@ APP_ROOT="${NN_VOICE_ROOT:-/home/$APP_USER/Desktop/nn-voice-daemon}"
 BACKEND_ADDRESS="${NN_VOICE_BACKEND_ADDRESS:-127.0.0.1:7879}"
 CAPTURE_COMMAND="${NN_VOICE_CAPTURE_COMMAND:-}"
 PLAYBACK_COMMAND="${NN_VOICE_PLAYBACK_COMMAND:-}"
+PLAYBACK_GAIN="${NN_VOICE_PLAYBACK_GAIN:-1.0}"
 SERVICE_NAME="north-neeladesh-voice-daemon"
 SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME.service"
 
@@ -31,6 +32,7 @@ WorkingDirectory=$APP_ROOT
 Environment="NN_VOICE_BACKEND_ADDRESS=$BACKEND_ADDRESS"
 Environment="NN_VOICE_CAPTURE_COMMAND=$CAPTURE_COMMAND"
 Environment="NN_VOICE_PLAYBACK_COMMAND=$PLAYBACK_COMMAND"
+Environment="NN_VOICE_PLAYBACK_GAIN=$PLAYBACK_GAIN"
 Environment="XDG_RUNTIME_DIR=/run/user/$APP_UID"
 Environment="PULSE_SERVER=unix:/run/user/$APP_UID/pulse/native"
 ExecStart=$APP_ROOT/target/release/exchange-voice-daemon

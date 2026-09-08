@@ -31,7 +31,7 @@ fn run_relay_connection() -> Result<(), Box<dyn Error>> {
     let udp = UdpVoiceOutput::connect(&backend, 1, 0)?;
     let receiver = udp.try_clone()?;
     receiver.set_receive_timeout(Duration::from_secs(5))?;
-    let capture: Box<dyn MicrophoneCapture> = match env::var("NN_VOICE_CAPTURE_COMMAND") {
+    let mut capture: Box<dyn MicrophoneCapture> = match env::var("NN_VOICE_CAPTURE_COMMAND") {
         Ok(command) if command.trim().is_empty() => {
             Box::new(CpalMicrophone::new(VOICE_INPUT_SAMPLE_RATE as usize * 15)?)
         }
@@ -47,6 +47,7 @@ fn run_relay_connection() -> Result<(), Box<dyn Error>> {
         )?)?),
         Err(_) => Box::new(CpalAudioPlayback::new(Duration::from_secs(30))?),
     };
+    capture.prepare()?;
     let mut relay = RelaySession {
         udp,
         capture,
@@ -179,6 +180,13 @@ impl RelaySession<'_> {
                             samples.len()
                         ));
                         self.send_input_audio(&samples)
+                    }
+                    Err(error) if error.code == "capture_not_started" => {
+                        log_voice_event(format_args!(
+                            "voice capture release ignored session={} turn={} revision={} because capture was not active",
+                            self.session_id, self.turn_id, self.state_revision
+                        ));
+                        self.send_status(VoiceStatus::Ready, None)
                     }
                     Err(error) => {
                         log_voice_event(format_args!(
