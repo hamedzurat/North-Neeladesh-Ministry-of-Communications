@@ -106,6 +106,7 @@ def run_forever(
         frontend = None
         try:
             client = factory()
+            print("CABINET FRONTEND // backend connected", flush=True)
             frontend = create_frontend(config, client)
             while True:
                 frontend.step()
@@ -117,7 +118,7 @@ def run_forever(
                 client.close()
             return
         except (ConnectionError, OSError, RuntimeError, ValueError) as error:
-            print(f"CABINET FRONTEND OFFLINE // {error}")
+            print(f"CABINET FRONTEND OFFLINE // {error}", flush=True)
             if frontend is not None:
                 frontend.close()
             elif client is not None:

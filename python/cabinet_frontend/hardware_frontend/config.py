@@ -5,7 +5,11 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-DEFAULT_PIN_TO_PORT = {pin: f"subscriber_{pin}" for pin in range(8)}
+DEFAULT_PIN_TO_PORT = {
+    **{pin: f"subscriber_{pin}" for pin in range(6)},
+    6: "operator",
+    7: "ring_generator",
+}
 
 
 @dataclass(frozen=True)
@@ -29,7 +33,8 @@ class HardwareConfig:
     pair_scan_interval: float = 2.0
     epaper_page_interval: float = 8.0
     keyboard_controls: bool = False
-    crank_detents_per_rotation: int = 16
+    crank_detents_per_rotation: int = 4
+    ptt_debounce_ms: int = 80
 
     @classmethod
     def from_environment(cls) -> HardwareConfig:
@@ -45,4 +50,15 @@ class HardwareConfig:
         if mode not in {"dummy", "real"}:
             raise ValueError("NN_HARDWARE_MODE must be dummy or real")
         keyboard_controls = os.environ.get("NN_KEYBOARD_CONTROLS", "0") == "1"
-        return cls(backend_address=(host, port), mode=mode, keyboard_controls=keyboard_controls)
+        try:
+            ptt_debounce_ms = int(os.environ.get("NN_PTT_DEBOUNCE_MS", "80"))
+        except ValueError as error:
+            raise ValueError("NN_PTT_DEBOUNCE_MS must be an integer") from error
+        if ptt_debounce_ms < 0:
+            raise ValueError("NN_PTT_DEBOUNCE_MS must be non-negative")
+        return cls(
+            backend_address=(host, port),
+            mode=mode,
+            keyboard_controls=keyboard_controls,
+            ptt_debounce_ms=ptt_debounce_ms,
+        )

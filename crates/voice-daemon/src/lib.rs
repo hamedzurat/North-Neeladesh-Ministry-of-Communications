@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::env;
 use std::io::{self, BufReader, Read, Write};
 use std::net::UdpSocket;
 #[cfg(unix)]
@@ -112,6 +113,9 @@ pub struct MemoryRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ResponseContext {
     pub profile: SubscriberProfile,
+    pub caller_place: String,
+    pub requested_place: String,
+    pub known_places: Vec<String>,
     pub subscriber_goal: String,
     pub call_premise: String,
     pub story_beat_direction: String,
@@ -152,6 +156,8 @@ impl ResponseContext {
 fn approximate_tokens(context: &ResponseContext) -> usize {
     let mut chars = context.profile.name.len()
         + context.profile.voice_id.len()
+        + context.caller_place.len()
+        + context.requested_place.len()
         + context.profile.personality.len()
         + context.subscriber_goal.len()
         + context.call_premise.len()
@@ -160,6 +166,7 @@ fn approximate_tokens(context: &ResponseContext) -> usize {
         chars += goal.len();
     }
     chars += context.profile.initial_perspective.len();
+    chars += context.known_places.iter().map(String::len).sum::<usize>();
     for relationship in &context.profile.relationships {
         chars += relationship.subject.len() + relationship.note.len();
     }
@@ -188,6 +195,10 @@ fn approximate_tokens(context: &ResponseContext) -> usize {
 }
 
 pub trait MicrophoneCapture {
+    fn prepare(&mut self) -> Result<(), VoiceError> {
+        Ok(())
+    }
+
     fn start(&mut self) -> Result<(), VoiceError>;
     fn finish(&mut self) -> Result<Vec<i16>, VoiceError>;
 }
@@ -253,6 +264,60 @@ pub struct OperatorSession {
     tts: Box<dyn TextToSpeech>,
     output: Box<dyn VoiceOutput>,
     phase: SessionPhase,
+}
+
+fn operator_asked_for_destination(transcript: &str) -> bool {
+    let transcript = transcript.to_ascii_lowercase();
+    [
+        "where",
+        "connect",
+        "connection",
+        "reach",
+        "send me",
+        "put me through",
+        "talk to",
+        "speak to",
+        "route",
+    ]
+    .iter()
+    .any(|phrase| transcript.contains(phrase))
+}
+
+fn replace_place_mentions(text: &str, place: &str, replacement: &str) -> String {
+    let lower_text = text.to_ascii_lowercase();
+    let lower_place = place.to_ascii_lowercase();
+    let mut result = String::with_capacity(text.len());
+    let mut offset = 0;
+    while let Some(relative_start) = lower_text[offset..].find(&lower_place) {
+        let start = offset + relative_start;
+        result.push_str(&text[offset..start]);
+        result.push_str(replacement);
+        offset = start + place.len();
+    }
+    result.push_str(&text[offset..]);
+    result
+}
+
+fn guard_destination_dialogue(
+    mut dialogue: String,
+    context: &ResponseContext,
+    transcript: &str,
+) -> String {
+    let destination_was_requested = operator_asked_for_destination(transcript);
+    if destination_was_requested {
+        for place in &context.known_places {
+            if place != &context.requested_place {
+                dialogue = replace_place_mentions(&dialogue, place, &context.requested_place);
+            }
+        }
+    } else {
+        dialogue = replace_place_mentions(
+            &dialogue,
+            &context.requested_place,
+            "the matter I called about",
+        );
+    }
+    dialogue
 }
 
 impl OperatorSession {
@@ -404,7 +469,8 @@ impl OperatorSession {
             }
             Err(error) => return self.fail(error),
         };
-        if response.dialogue.chars().count() > MAX_DIALOGUE_CHARS {
+        let dialogue = guard_destination_dialogue(response.dialogue, &context, &transcript);
+        if dialogue.chars().count() > MAX_DIALOGUE_CHARS {
             return self.fail(VoiceError::new(
                 "dialogue_too_long",
                 "subscriber dialogue exceeds the bounded turn limit",
@@ -413,43 +479,41 @@ impl OperatorSession {
         self.emit(
             VoiceStatus::Synthesizing,
             Some(&transcript),
-            Some(&response.dialogue),
+            Some(&dialogue),
             None,
         )?;
         self.emit(
             VoiceStatus::Playing,
             Some(&transcript),
-            Some(&response.dialogue),
+            Some(&dialogue),
             None,
         )?;
         let session_id = self.session_id;
         let output = &mut self.output;
         let mut packet_index = 0_usize;
         let mut sample_offset = 0_usize;
-        let result = self.tts.synthesize_stream(
-            &context.profile.voice_id,
-            &response.dialogue,
-            &mut |samples| {
-                if worker_cancellation_requested() {
-                    return Err(VoiceError::new(
-                        "worker_cancelled",
-                        "voice playback was cancelled",
-                    ));
-                }
-                for chunk in samples.chunks(VOICE_AUDIO_PACKET_SAMPLES) {
-                    output.audio(RtpL16Packet {
-                        marker: packet_index == 0,
-                        sequence: packet_index as u16,
-                        timestamp: sample_offset as u32,
-                        ssrc: session_id as u32,
-                        samples: chunk.to_vec(),
-                    })?;
-                    packet_index += 1;
-                    sample_offset += chunk.len();
-                }
-                Ok(())
-            },
-        );
+        let result =
+            self.tts
+                .synthesize_stream(&context.profile.voice_id, &dialogue, &mut |samples| {
+                    if worker_cancellation_requested() {
+                        return Err(VoiceError::new(
+                            "worker_cancelled",
+                            "voice playback was cancelled",
+                        ));
+                    }
+                    for chunk in samples.chunks(VOICE_AUDIO_PACKET_SAMPLES) {
+                        output.audio(RtpL16Packet {
+                            marker: packet_index == 0,
+                            sequence: packet_index as u16,
+                            timestamp: sample_offset as u32,
+                            ssrc: session_id as u32,
+                            samples: chunk.to_vec(),
+                        })?;
+                        packet_index += 1;
+                        sample_offset += chunk.len();
+                    }
+                    Ok(())
+                });
         let samples = match result {
             Ok(samples) if samples > 0 => samples,
             Ok(_) => {
@@ -476,7 +540,7 @@ impl OperatorSession {
             },
             ConversationTurn {
                 speaker: "subscriber".to_string(),
-                text: response.dialogue.clone(),
+                text: dialogue.clone(),
             },
         ]);
         self.context.current_input = None;
@@ -486,11 +550,11 @@ impl OperatorSession {
         self.emit(
             VoiceStatus::Completed,
             Some(&transcript),
-            Some(&response.dialogue),
+            Some(&dialogue),
             None,
         )?;
         self.phase = SessionPhase::Completed;
-        Ok(response)
+        Ok(SubscriberResponse { dialogue })
     }
 
     fn emit(
@@ -590,8 +654,10 @@ pub struct CommandMicrophone {
     spec: CommandSpec,
     max_samples: usize,
     child: Option<Arc<Mutex<Child>>>,
-    reader: Option<JoinHandle<Result<Vec<u8>, VoiceError>>>,
+    reader: Option<JoinHandle<Result<(), VoiceError>>>,
     diagnostics: Option<JoinHandle<Result<Vec<u8>, VoiceError>>>,
+    samples: Arc<Mutex<Vec<u8>>>,
+    active: Arc<AtomicBool>,
 }
 
 impl CommandMicrophone {
@@ -606,18 +672,82 @@ impl CommandMicrophone {
             child: None,
             reader: None,
             diagnostics: None,
+            samples: Arc::new(Mutex::new(Vec::new())),
+            active: Arc::new(AtomicBool::new(false)),
         }
     }
 }
 
 impl MicrophoneCapture for CommandMicrophone {
-    fn start(&mut self) -> Result<(), VoiceError> {
+    fn prepare(&mut self) -> Result<(), VoiceError> {
         if self.child.is_some() {
+            return Ok(());
+        }
+        self.spawn_process()
+    }
+
+    fn start(&mut self) -> Result<(), VoiceError> {
+        if self.active.swap(true, Ordering::AcqRel) {
             return Err(VoiceError::new(
                 "capture_already_started",
                 "microphone is already capturing",
             ));
         }
+        self.samples
+            .lock()
+            .map_err(|_| VoiceError::new("capture_buffer_failed", "capture buffer was poisoned"))?
+            .clear();
+        if let Err(error) = self.prepare() {
+            self.active.store(false, Ordering::Release);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<Vec<i16>, VoiceError> {
+        if !self.active.swap(false, Ordering::AcqRel) {
+            return Err(VoiceError::new(
+                "capture_not_started",
+                "microphone was not started",
+            ));
+        }
+        thread::sleep(Duration::from_millis(20));
+        let status = self
+            .child
+            .as_ref()
+            .ok_or_else(|| VoiceError::new("capture_not_started", "microphone was not prepared"))?
+            .lock()
+            .map_err(|_| {
+                VoiceError::new("capture_wait_failed", "capture process lock was poisoned")
+            })?
+            .try_wait()
+            .map_err(|error| VoiceError::new("capture_wait_failed", error.to_string()))?;
+        let bytes = self
+            .samples
+            .lock()
+            .map_err(|_| VoiceError::new("capture_buffer_failed", "capture buffer was poisoned"))?
+            .clone();
+        let samples = decode_pcm16(&bytes)?;
+        if samples.len() > self.max_samples {
+            return Err(VoiceError::new(
+                "capture_too_long",
+                format!("capture exceeded {} samples", self.max_samples),
+            ));
+        }
+        if let Some(status) = status {
+            if !status.success() {
+                return Err(VoiceError::new(
+                    "capture_failed",
+                    format!("capture failed: capture exited with {status}"),
+                ));
+            }
+        }
+        Ok(samples)
+    }
+}
+
+impl CommandMicrophone {
+    fn spawn_process(&mut self) -> Result<(), VoiceError> {
         let mut command = Command::new(&self.spec.program);
         command
             .args(&self.spec.args)
@@ -634,10 +764,10 @@ impl MicrophoneCapture for CommandMicrophone {
             VoiceError::new("capture_stderr_failed", "capture stderr was unavailable")
         })?;
         let child = Arc::new(Mutex::new(child));
-        let child_for_reader = Arc::clone(&child);
+        let samples = Arc::clone(&self.samples);
+        let active = Arc::clone(&self.active);
         let max_bytes = self.max_samples.saturating_add(1).saturating_mul(2);
         let reader = thread::spawn(move || {
-            let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
             let mut buffer = [0_u8; 8 * 1024];
             loop {
                 let length = stdout
@@ -646,15 +776,21 @@ impl MicrophoneCapture for CommandMicrophone {
                 if length == 0 {
                     break;
                 }
-                let remaining = max_bytes.saturating_sub(bytes.len());
-                bytes.extend_from_slice(&buffer[..length.min(remaining)]);
-                if bytes.len() >= max_bytes {
-                    if let Ok(mut child) = child_for_reader.lock() {
-                        terminate_process_group(&mut child);
+                if active.load(Ordering::Acquire) {
+                    let mut samples = samples.lock().map_err(|_| {
+                        VoiceError::new("capture_buffer_failed", "capture buffer was poisoned")
+                    })?;
+                    let remaining = max_bytes.saturating_sub(samples.len());
+                    samples.extend_from_slice(&buffer[..length.min(remaining)]);
+                    if samples.len() >= max_bytes {
+                        return Err(VoiceError::new(
+                            "capture_too_long",
+                            "capture exceeded the maximum sample bound",
+                        ));
                     }
                 }
             }
-            Ok(bytes)
+            Ok(())
         });
         let diagnostics =
             thread::spawn(move || read_bounded(stderr, 16 * 1024, "capture_stderr_failed"));
@@ -663,69 +799,23 @@ impl MicrophoneCapture for CommandMicrophone {
         self.diagnostics = Some(diagnostics);
         Ok(())
     }
+}
 
-    fn finish(&mut self) -> Result<Vec<i16>, VoiceError> {
-        let Some(child) = self.child.take() else {
-            return Err(VoiceError::new(
-                "capture_not_started",
-                "microphone was not started",
-            ));
-        };
-        let mut child = child.lock().map_err(|_| {
-            VoiceError::new("capture_wait_failed", "capture process lock was poisoned")
-        })?;
-        let (status, stopped_for_release) = match child
-            .try_wait()
-            .map_err(|error| VoiceError::new("capture_wait_failed", error.to_string()))?
-        {
-            Some(status) => (status, false),
-            None => {
+impl Drop for CommandMicrophone {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
+        if let Some(child) = self.child.take() {
+            if let Ok(mut child) = child.lock() {
                 terminate_process_group(&mut child);
-                let status = child
-                    .wait()
-                    .map_err(|error| VoiceError::new("capture_wait_failed", error.to_string()))?;
-                (status, true)
+                let _ = child.wait();
             }
-        };
-        drop(child);
-        let bytes = self
-            .reader
-            .take()
-            .ok_or_else(|| {
-                VoiceError::new("capture_reader_failed", "capture reader was unavailable")
-            })?
-            .join()
-            .map_err(|_| VoiceError::new("capture_reader_failed", "capture reader panicked"))??;
-        let diagnostics = self
-            .diagnostics
-            .take()
-            .ok_or_else(|| {
-                VoiceError::new(
-                    "capture_stderr_failed",
-                    "capture stderr reader was unavailable",
-                )
-            })?
-            .join()
-            .map_err(|_| {
-                VoiceError::new("capture_stderr_failed", "capture stderr reader panicked")
-            })??;
-        let samples = decode_pcm16(&bytes)?;
-        if samples.len() > self.max_samples {
-            return Err(VoiceError::new(
-                "capture_too_long",
-                format!("capture exceeded {} samples", self.max_samples),
-            ));
         }
-        if !status.success() && (!stopped_for_release || samples.is_empty()) {
-            return Err(VoiceError::new(
-                "capture_failed",
-                format!(
-                    "capture exited with {status}: {}",
-                    diagnostic_text(&diagnostics)
-                ),
-            ));
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
         }
-        Ok(samples)
+        if let Some(diagnostics) = self.diagnostics.take() {
+            let _ = diagnostics.join();
+        }
     }
 }
 
@@ -1285,6 +1375,7 @@ pub struct CommandAudioPlayback {
     child: Child,
     input: Option<ChildStdin>,
     timeout: Duration,
+    gain: f32,
 }
 
 pub struct CpalAudioPlayback {
@@ -1481,8 +1572,35 @@ fn resample_f32(samples: &[f32], input_rate: u32, output_rate: u32) -> Vec<f32> 
         .collect()
 }
 
+fn amplify_pcm(samples: &[i16], gain: f32) -> Vec<i16> {
+    samples
+        .iter()
+        .map(|sample| {
+            (*sample as f32 * gain)
+                .round()
+                .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+        })
+        .collect()
+}
+
 impl CommandAudioPlayback {
     pub fn new(spec: CommandSpec) -> Result<Self, VoiceError> {
+        let gain = env::var("NN_VOICE_PLAYBACK_GAIN")
+            .map(|value| {
+                value.parse::<f32>().map_err(|_| {
+                    VoiceError::new(
+                        "invalid_playback_gain",
+                        "NN_VOICE_PLAYBACK_GAIN must be a positive number",
+                    )
+                })
+            })
+            .unwrap_or(Ok(1.0))?;
+        if !gain.is_finite() || gain <= 0.0 {
+            return Err(VoiceError::new(
+                "invalid_playback_gain",
+                "NN_VOICE_PLAYBACK_GAIN must be a positive number",
+            ));
+        }
         let mut command = Command::new(&spec.program);
         command
             .args(&spec.args)
@@ -1503,6 +1621,7 @@ impl CommandAudioPlayback {
             child,
             input: Some(input),
             timeout: spec.timeout,
+            gain,
         })
     }
 
@@ -1519,7 +1638,7 @@ impl CommandAudioPlayback {
                 "audio playback is already finished",
             )
         })?;
-        let bytes: Vec<u8> = samples
+        let bytes: Vec<u8> = amplify_pcm(samples, self.gain)
             .iter()
             .flat_map(|sample| sample.to_le_bytes())
             .collect();
@@ -1995,6 +2114,9 @@ mod tests {
                 }],
                 permitted_actions: vec!["request_routing".to_string()],
             },
+            caller_place: "RAIL DISPATCH".to_string(),
+            requested_place: "KHARAD CLINIC".to_string(),
+            known_places: vec!["RAIL DISPATCH".to_string(), "KHARAD CLINIC".to_string()],
             subscriber_goal: "Reach the requested Callee".to_string(),
             call_premise: "A railway dispatch is waiting".to_string(),
             story_beat_direction: "Ask for an ordinary connection".to_string(),
@@ -2331,5 +2453,13 @@ mod tests {
 
         playback.write(&[1, -2]).unwrap();
         playback.finish().unwrap();
+    }
+
+    #[test]
+    fn playback_gain_amplifies_and_clips_pcm() {
+        assert_eq!(
+            amplify_pcm(&[10_000, -10_000, 20_000], 2.0),
+            vec![20_000, -20_000, 32_767]
+        );
     }
 }

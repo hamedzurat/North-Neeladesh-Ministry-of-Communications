@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from hardware_frontend.config import HardwareConfig
 from hardware_frontend.input_mapper import PhysicalInputSource
 
 
@@ -36,6 +37,22 @@ class FailingRotary:
 
 
 class InputMapperTests(unittest.TestCase):
+    def test_default_mcp_ports_reserve_operator_and_ring_pins(self) -> None:
+        config = HardwareConfig()
+
+        self.assertEqual(
+            config.pin_to_port,
+            {
+                0: "subscriber_0",
+                1: "subscriber_1",
+                2: "subscriber_2",
+                3: "subscriber_3",
+                4: "subscriber_4",
+                5: "subscriber_5",
+                6: "operator",
+                7: "ring_generator",
+            },
+        )
     def test_maps_pairs_and_records_completed_rotations(self) -> None:
         source = PhysicalInputSource(
             Rotary([1, 0]),
@@ -73,6 +90,21 @@ class InputMapperTests(unittest.TestCase):
     def test_sixteen_encoder_detents_emit_one_crank_rotation(self) -> None:
         source = PhysicalInputSource(
             Rotary([1] * 16),
+            Scanner([]),
+            {},
+            (0, 0, 0, 1),
+            clock_ms=iter([1600]).__next__,
+            crank_detents_per_rotation=16,
+        )
+
+        for index in range(16):
+            snapshot = source.poll(now=float(index))
+
+        self.assertEqual(snapshot.crank_rotation_timestamps, [1600])
+
+    def test_sixteen_encoder_detents_emit_one_crank_rotation_in_reverse(self) -> None:
+        source = PhysicalInputSource(
+            Rotary([-1] * 16),
             Scanner([]),
             {},
             (0, 0, 0, 1),

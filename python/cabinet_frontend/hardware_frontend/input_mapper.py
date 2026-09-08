@@ -63,12 +63,20 @@ class PhysicalInputSource:
         now = time.monotonic() if now is None else now
         self.faults.clear()
         try:
-            if self.rotary.read():
+            event = self.rotary.read()
+            if event:
+                print(f"ROTARY ENCODER // event={event}", flush=True)
+            if event:
                 self.crank_detents += 1
                 if self.crank_detents >= self.crank_detents_per_rotation:
                     self.crank_detents -= self.crank_detents_per_rotation
-                    self.rotation_timestamps.append(self.clock_ms())
+                    timestamp = self.clock_ms()
+                    self.rotation_timestamps.append(timestamp)
                     self.rotation_timestamps = self.rotation_timestamps[-4:]
+                    print(
+                        f"ROTARY ENCODER // crank_rotation_timestamp={timestamp}",
+                        flush=True,
+                    )
         except Exception as error:  # noqa: BLE001 - hardware libraries vary their error types
             self.faults.append(f"rotary: {type(error).__name__}: {error}")
         if now >= self.next_scan_at:

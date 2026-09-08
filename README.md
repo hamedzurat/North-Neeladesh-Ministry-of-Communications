@@ -58,8 +58,7 @@ This is the authoritative game backend. It listens on:
 - Voice protocol: `127.0.0.1:7879`
 - Debug command protocol: `127.0.0.1:7880`
 
-`backend-debug` also enables printer stress so reset and receipt behavior is
-easy to see. Do not run another backend on these ports.
+Do not run another backend on these ports.
 
 ### Terminal 2: debug dashboard
 
@@ -156,8 +155,9 @@ The action buttons are:
 - `TAP BRIDGE 1 LISTEN`
 - `TAP BRIDGE 2 LISTEN`
 
-The initial Directory value is `0001`. The current hardware story uses
-Directory `0002` for its first two Calls and `0004` for its third Call.
+The initial Directory value is `0001`. The live hardware story uses subscriber
+lines `0` through `5`, keeps two Calls active, and chooses new caller/callee
+pairs randomly after each completed Call.
 
 ## Manual GUI Test
 
@@ -166,70 +166,22 @@ restarting processes. If the run gets into an unexpected state, click
 `Reset run`, wait for the dashboard to show `run_start`, and clear any cords in
 Odin before continuing.
 
-### 1. Verify the initial Call
+### Live hardware call loop
 
-1. Wait for the first Caller lamp, `RAIL DISPATCH`, to light.
-2. Change the Directory display from `0001` to `0002` by clicking `+` on the
-   fourth digit once.
-3. Drag `RAIL DISPATCH` to `OPERATOR`.
-4. Hold `PTT / OPERATOR` briefly. The speaker indicator should become active.
-5. Before ringing, drag `RAIL DISPATCH` directly to `KHARAD CLINIC`.
-6. Check the Odin diagnostic and dashboard for `ring_generator_required`.
-7. Remove the rejected direct cord. The attempted direct connection replaces
-   the Operator cord in the GUI; the Call remains pending.
+1. Wait for two caller lamps between lines `0` and `7` to light.
+2. Connect either caller to `OPERATOR` and hold `PTT / OPERATOR`. The caller
+   names the destination; set the Directory display to that destination line
+   (`0000` through `0005`).
+3. Leave the caller on `OPERATOR`, connect the requested callee to `RING
+   GENERATOR`, and crank until the callee lamp lights.
+4. Disconnect the Ring Generator, connect the caller directly to the callee, and
+   leave both lamps lit for three seconds.
+5. The completed call is replaced automatically. Repeat with either active
+   caller.
 
-This verifies that the GUI sends a valid topology, Directory digits, and held
-controls, and that the backend returns its state rather than the GUI inventing
-it.
-
-### 2. Verify ringing and direct Routing
-
-1. Drag `KHARAD CLINIC` to `RING GENERATOR`.
-2. Scroll over the crank until the Callee lamp flashes.
-3. Remove the `RING GENERATOR` cord.
-4. Drag `RAIL DISPATCH` directly to `KHARAD CLINIC`.
-5. Wait for the Call to become connected, then remove the direct cord.
-6. Hold `POLICE` when the Police Service state appears, then release it after
-   the state and receipt update.
-
-The first Call is Taren Kesh on `RAIL DISPATCH` to Vira Dhal on
-`KHARAD CLINIC`. A direct or Tap connection before ringing must not route the
-Call; it should remain pending and the backend should show a
-`ring_generator_required` diagnostic. After the correct route is cleared, the
-Police Service state and printer receipt should appear.
-
-### 3. Verify interference and tuning
-
-The next authored Call is Neri Tal to Vira Dhal and requires Directory `0002`.
-
-1. Confirm the Caller lamp is `FOUNDRY APTS` and Directory remains `0002`.
-2. Connect the Caller to `OPERATOR`, then remove the Operator cord.
-3. Connect `KHARAD CLINIC` to `RING GENERATOR` and crank until it rings.
-4. Remove the Ring Generator cord.
-5. Set both tuning sliders near the middle, between roughly `384` and `640`.
-6. Connect `FOUNDRY APTS` directly to `KHARAD CLINIC`.
-7. Remove the connected cord after the Call completes.
-8. Hold `EMS` when the EMS Service state appears, then release it after the
-   state and receipt update.
-
-The `INTERFERENCE` value should fall to `0%` when both tuning values are in the
-middle range. Routing before tuning is complete should not succeed.
-
-### 4. Verify Tap Bridge monitoring
-
-The third authored Call is Leya Varan to Oren Vey and requires Directory
-`0004`.
-
-1. Change the Directory to `0004` using the digit controls.
-2. Connect `RATION OFFICE` to `OPERATOR`, then remove the Operator cord.
-3. Connect `FIRE STATION` to `RING GENERATOR` and crank until it rings.
-4. Remove the Ring Generator cord.
-5. Connect the two Call lines to the two jacks of `TAP BRIDGE 1`.
-6. Hold `TAP BRIDGE 1 LISTEN`.
-7. Verify `TAP BRIDGE 1 // DUMMY AUDIO` and active speaker output appear.
-8. Release `TAP BRIDGE 1 LISTEN` and verify monitoring/audio stops.
-9. Hold `FIRE` when the Fire Service state appears, then release it after the
-   state and receipt update.
+The backend rejects direct routing before ringing and rejects Directory values
+outside the requested `0` through `5` line. The physical Cabinet Frontend uses
+the same snapshots and input sequence as the Odin simulator.
 
 ## Arcade Cabinet Client
 
@@ -240,8 +192,7 @@ should run beside Odin. The normal split is:
 - Raspberry Pi Cabinet Frontend: the physical arcade client.
 - Rust backend: one authoritative game process used by either client.
 
-After the Cabinet input adapters are implemented, play the exact same manual
-sequence from the Cabinet controls instead of starting Odin. Do not connect
+Play the same live call loop from the Cabinet controls instead of starting Odin. Do not connect
 Odin and the Cabinet Frontend to the same backend at once; both send ordered
 input snapshots and would compete over topology and state revision.
 
@@ -355,18 +306,15 @@ The following are implemented and covered by automated tests:
 - Directory-gated routing;
 - pre-ring rejection with `ring_generator_required`;
 - Ring Generator plus crank gating;
-- Police, EMS, and Fire service-kind validation;
-- interference and tuning state;
-- two Tap Bridge topologies at the protocol level;
+- two simultaneous random Calls on subscriber lines 0 through 5;
+- caller-to-Operator voice context with the requested callee;
+- three-second connected lamp windows and automatic Call replacement;
 - Odin rendering of backend output;
 - dummy Cabinet output mapping and printer reset reconciliation.
 
-The full authored demo is not yet complete. Competing/Held Caller behavior,
-both authored Tap Bridges, deterministic Tap conversation audio, real Pi
-controls, and physical microphone/printer/audio acceptance remain open. If the
-GUI stops before a final successful Ending, record the last visible Call,
-Directory value, cords, held control, and backend diagnostic; that is useful
-manual acceptance data rather than an expected hidden behavior.
+The legacy authored graph remains available for backend regression tests, but it
+is no longer used by the live hardware server. The live loop has no terminal
+Ending; it continues generating two Calls for the duration of the shift.
 
 ## Related Documentation
 

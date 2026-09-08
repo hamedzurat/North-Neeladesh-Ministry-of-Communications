@@ -87,7 +87,7 @@ def build_real_components(config: HardwareConfig) -> ComponentBundle:
         scanner=McpPairDetector(mcp),
         controls=KeyboardControls()
         if config.keyboard_controls
-        else McpPttControls(mcp, config.ptt_pin),
+        else McpPttControls(mcp, config.ptt_pin, debounce_ms=config.ptt_debounce_ms),
         printer=StdoutPrinter(sys.stdout),
         audio=StdoutAudio(sys.stdout),
         extra_closers=[i2c],

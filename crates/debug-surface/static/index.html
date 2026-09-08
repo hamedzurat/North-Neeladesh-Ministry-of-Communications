@@ -109,9 +109,15 @@
     .conversation-copy .label { color: var(--muted); font-size: 11px; font-weight: 900; text-transform: uppercase; }
     audio { display: block; width: 100%; margin-bottom: 10px; }
     .audio-missing { color: var(--muted); font-size: 12px; }
-    .wire-json { margin-top: 16px; }
+    .wire-json { margin-top: 16px; min-width: 0; }
     .wire-json .label { margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 900; text-transform: uppercase; }
-    .wire-json pre { max-height: 300px; padding: 10px; border: 2px solid var(--ink); background: #1d1d1d; color: #f7edc7; overflow: auto; }
+    .wire-json pre { padding: 10px; border: 2px solid var(--ink); background: #1d1d1d; color: #f7edc7; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .json-key { color: #66e3e8; }
+    .json-string { color: #f7edc7; }
+    .json-number { color: #b9a7ff; }
+    .json-boolean { color: #ff9d76; }
+    .json-null { color: #a7a39a; }
+    .json-invalid { color: #ff8b80; }
     .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
     .wide { grid-column: 1 / -1; }
     .graph-meta { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; color: var(--muted); font-size: 11px; font-weight: 900; text-transform: uppercase; }
@@ -201,6 +207,7 @@
        <section class="panel wide"><div class="panel-title"><h2>Authored story DAG</h2><span id="graph-status" class="muted">waiting for graph</span></div><div class="graph-meta"><span class="graph-key current">current node</span><span class="graph-key frontier">authored frontier</span><span class="graph-key ending">ending</span><span>click a frontier node to request an authored path</span></div><div id="story-graph" class="story-graph"><div class="empty">Waiting for the authoritative Story Graph.</div></div></section>
        <section class="panel"><div class="panel-title"><h2>Cabinet frontend</h2></div><div id="frontend" class="facts"></div></section>
       <section class="panel wide"><div class="panel-title"><h2>Frontend wire state</h2><span class="muted">exact JSON received and sent</span></div><div class="wire-json"><div class="label">last input received from frontend</div><pre id="frontend-input">No frontend input received.</pre></div><div class="wire-json"><div class="label">last output sent to frontend</div><pre id="frontend-output">No backend output sent.</pre></div></section>
+      <section class="panel wide"><div class="panel-title"><h2>Connected wires</h2><span id="topology-status" class="muted">waiting for frontend input</span></div><div id="topology"></div></section>
       <section class="panel wide"><div class="panel-title"><h2>Calls</h2></div><div id="calls"></div></section>
       <section class="panel wide"><div class="panel-title"><h2>Subscribers</h2></div><div id="subscribers"></div></section>
     </div>
@@ -248,8 +255,9 @@
        renderStoryGraph(snapshot.story);
        document.getElementById('counters').innerHTML = rows(snapshot.counters || {});
       document.getElementById('frontend').innerHTML = rows({firmware: snapshot.frontend.firmware_version || '-', transport: snapshot.frontend.transport_connected, faults: snapshot.frontend.device_faults});
-      document.getElementById('frontend-input').textContent = snapshot.frontend.last_input_json || 'No frontend input received.';
-      document.getElementById('frontend-output').textContent = snapshot.frontend.last_output_json || 'No backend output sent.';
+      document.getElementById('frontend-input').innerHTML = highlightJson(snapshot.frontend.last_input_json, 'No frontend input received.');
+      document.getElementById('frontend-output').innerHTML = highlightJson(snapshot.frontend.last_output_json, 'No backend output sent.');
+      renderTopology(snapshot);
       document.getElementById('voice-id').textContent = voice.session_id ? `session ${voice.session_id} / turn ${voice.turn_id} / revision ${snapshot.run.state_revision}` : 'no active session';
       document.getElementById('voice-state').innerHTML = `<div class="eyebrow">STATUS</div><div class="status">${esc(statusText(voice.status))}</div><div class="muted">speaker active: ${esc(voice.speaker_active)}</div>`;
       document.getElementById('voice-transcript').textContent = voice.transcript || '-';
@@ -341,6 +349,40 @@
        status.textContent = `${graph.length} nodes // current ${current} // revision ${latestSnapshot.run.state_revision}`;
      }
 
+     function highlightJson(raw, emptyText) {
+       if (!raw) return escText(emptyText);
+       let formatted = raw;
+       try {
+         JSON.parse(raw);
+       } catch (_) {
+         return `<span class="json-invalid">${escText(raw)}</span>`;
+       }
+       return formatted.replace(/("(?:\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*")(\s*:)?|\b(?:true|false)\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g, (match, string, colon) => {
+         if (string) return `<span class="json-${colon ? 'key' : 'string'}">${escText(string)}</span>${colon || ''}`;
+         const type = match === 'null' ? 'null' : (match === 'true' || match === 'false' ? 'boolean' : 'number');
+         return `<span class="json-${type}">${escText(match)}</span>`;
+       });
+     }
+
+     function escText(value) {
+       return String(value ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+     }
+
+     function renderTopology(snapshot) {
+       const input = parseJson(snapshot.frontend.last_input_json);
+       const topology = snapshot.cord_topology || snapshot.frontend.cord_topology || input?.input?.cord_topology || [];
+       const status = document.getElementById('topology-status');
+       status.textContent = `${topology.length} connected wire${topology.length === 1 ? '' : 's'}`;
+       document.getElementById('topology').innerHTML = topology.length
+         ? table(topology, ['first', 'second'])
+         : '<div class="empty">No connected wires in the latest frontend input.</div>';
+     }
+
+     function parseJson(raw) {
+       if (!raw) return null;
+       try { return JSON.parse(raw); } catch (_) { return null; }
+     }
+
     function conversationCard(conversation) {
       const failed = conversation.status === 'failed' || conversation.error;
       const badgeClass = failed ? 'failed' : (conversation.status || 'pending');
@@ -372,6 +414,7 @@
         status.textContent = 'COMMAND ERROR // ' + error;
         status.className = 'status-line bad';
       }
+
       await refresh();
     }
     function advance() { send('advance_time', {seconds: Number(document.getElementById('seconds').value) || 0}); }

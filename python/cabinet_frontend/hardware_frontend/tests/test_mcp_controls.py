@@ -25,7 +25,7 @@ class Mcp:
 class McpControlsTests(unittest.TestCase):
     def test_pin_13_is_active_low_ptt(self) -> None:
         mcp = Mcp()
-        controls = McpPttControls(mcp, pin=13)
+        controls = McpPttControls(mcp, pin=13, debounce_ms=0)
 
         self.assertEqual(mcp.requested_pin, 13)
         self.assertFalse(controls.poll().ptt)
@@ -35,6 +35,28 @@ class McpControlsTests(unittest.TestCase):
 
         controls.close()
         self.assertIsNone(mcp.pin.pull)
+
+    def test_ptt_requires_a_stable_level_before_changing(self) -> None:
+        mcp = Mcp()
+        clock_values = iter([0.0, 0.01, 0.03, 0.05, 0.06, 0.11, 0.12, 0.16, 0.18])
+        controls = McpPttControls(
+            mcp,
+            debounce_ms=50,
+            clock=clock_values.__next__,
+        )
+
+        self.assertFalse(controls.poll().ptt)
+        mcp.pin.value = False
+        self.assertFalse(controls.poll().ptt)
+        mcp.pin.value = True
+        self.assertFalse(controls.poll().ptt)
+        mcp.pin.value = False
+        self.assertFalse(controls.poll().ptt)
+        self.assertTrue(controls.poll().ptt)
+        mcp.pin.value = True
+        self.assertTrue(controls.poll().ptt)
+        self.assertTrue(controls.poll().ptt)
+        self.assertFalse(controls.poll().ptt)
 
 
 if __name__ == "__main__":

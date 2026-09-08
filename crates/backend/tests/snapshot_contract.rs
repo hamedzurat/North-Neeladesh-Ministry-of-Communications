@@ -144,14 +144,16 @@ fn rejected_input_is_retained_in_debug_evidence() {
 }
 
 #[test]
-fn printer_stress_is_backend_owned_across_inputs() {
+fn printer_output_is_backend_owned_across_inputs() {
     let mut backend = Backend::new_with_printer_stress(true);
     let first = backend.apply_input_message(input(1, 0, [0, 0, 0, 1]));
     assert!(first.accepted);
-    assert_eq!(first.output.printer_output.len(), 48);
-    assert_ne!(
-        first.output.printer_output[0].text,
-        first.output.printer_output[1].text
+    assert!(
+        first
+            .output
+            .printer_output
+            .iter()
+            .all(|entry| !entry.text.contains("PRINTER STRESS LINE"))
     );
 
     let second = backend.apply_input_message(input(2, first.state_revision, [0, 0, 0, 1]));
