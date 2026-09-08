@@ -204,18 +204,23 @@ LAN-reachable address, then configure the Pi to use that host:
 just backend address=0.0.0.0:7878 voice_address=0.0.0.0:7879
 
 # On the Pi, for the Cabinet-side audio transport.
-just voice-daemon backend_address=192.168.1.20:7879
+just voice-daemon backend_address=192.168.1.8:7879
 ```
 
-Replace `192.168.1.20` with the host's LAN address. Deploy and configure the
+Replace `192.168.1.8` with the host's LAN address if it changes. Deploy and configure the
 Cabinet Frontend from [`python/cabinet_frontend/README.md`](python/cabinet_frontend/README.md),
-using `NN_BACKEND_ADDRESS=192.168.1.20:7878`. Start the installed service on
+using `NN_BACKEND_ADDRESS=192.168.1.8:7878`. Start the installed service on
 the Pi:
 
 ```sh
 sudo systemctl start north-neeladesh-hardware-frontend.service
 journalctl -u north-neeladesh-hardware-frontend.service -f
 ```
+
+From the development machine, inspect both services on the Pi at
+`taki@192.168.1.34` with `./scripts/status_pi.sh`. The exact service names are
+`north-neeladesh-hardware-frontend.service` and
+`north-neeladesh-voice-daemon.service`.
 
 The voice daemon is separate from the Cabinet Frontend process. It carries
 microphone PCM to the laptop backend and plays returned synthesized audio on

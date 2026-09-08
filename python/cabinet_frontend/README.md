@@ -37,8 +37,8 @@ it while the systemd frontend service is active.
 From the repository root:
 
 ```sh
-PI_HOST=taki@192.168.1.11 ./scripts/deploy_hardware_frontend.sh
-ssh taki@192.168.1.11 /home/taki/Desktop/nn-hardware-frontend/scripts/setup_hardware_frontend_pi.sh
+PI_HOST=taki@192.168.1.34 ./scripts/deploy_hardware_frontend.sh
+ssh taki@192.168.1.34 /home/taki/Desktop/nn-hardware-frontend/scripts/setup_hardware_frontend_pi.sh
 ```
 
 The setup script installs the locked project and its stable dependencies into
@@ -53,13 +53,22 @@ sudo systemctl start north-neeladesh-hardware-frontend.service
 journalctl -u north-neeladesh-hardware-frontend.service -f
 ```
 
+From the development machine, inspect both services on the Pi:
+
+```sh
+./scripts/status_pi.sh
+```
+
+This connects to `taki@192.168.1.34` over SSH and runs `systemctl` there. Set
+`PI_HOST` to override the SSH target.
+
 The frontend defaults to the authoritative backend at `127.0.0.1:7878`. If the
 backend runs on the arcade host or laptop instead, pass its address during
 setup, for example:
 
 ```sh
-ssh taki@192.168.1.11 \
-  'NN_BACKEND_ADDRESS=192.168.1.20:7878 /home/taki/Desktop/nn-hardware-frontend/scripts/setup_hardware_frontend_pi.sh'
+ssh taki@192.168.1.34 \
+  'NN_BACKEND_ADDRESS=192.168.1.8:7878 /home/taki/Desktop/nn-hardware-frontend/scripts/setup_hardware_frontend_pi.sh'
 ```
 
 ## Current physical mapping

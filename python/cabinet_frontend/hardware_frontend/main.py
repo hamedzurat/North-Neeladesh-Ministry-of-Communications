@@ -51,17 +51,23 @@ class HardwareFrontend:
         return response
 
     def close(self) -> None:
-        self.input_source.close()
-        self.output_mapper.close()
-        for resource in self.extra_closers:
-            close = getattr(resource, "close", None)
-            if close is not None:
-                close()
-            else:
-                deinit = getattr(resource, "deinit", None)
-                if deinit is not None:
-                    deinit()
-        self.client.close()
+        resources = [self.input_source, self.output_mapper, *self.extra_closers, self.client]
+        for resource in resources:
+            try:
+                close = getattr(resource, "close", None)
+                if close is not None:
+                    close()
+                else:
+                    deinit = getattr(resource, "deinit", None)
+                    if deinit is not None:
+                        deinit()
+            except Exception as error:  # noqa: BLE001 - lost hardware must not block restart
+                print(
+                    "CABINET FRONTEND // cleanup failed "
+                    f"component={type(resource).__name__} "
+                    f"error={type(error).__name__}: {error}",
+                    flush=True,
+                )
 
 
 def create_frontend(

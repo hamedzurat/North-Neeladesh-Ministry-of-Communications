@@ -107,10 +107,24 @@ class PhysicalInputSource:
         return cords[:8]
 
     def close(self) -> None:
-        self.rotary.close()
-        self.scanner.close()
+        for name, component in (("rotary", self.rotary), ("pair_detector", self.scanner)):
+            try:
+                component.close()
+            except Exception as error:  # noqa: BLE001 - hardware cleanup must be best effort
+                print(
+                    f"CABINET FRONTEND // cleanup failed component={name} "
+                    f"error={type(error).__name__}: {error}",
+                    flush=True,
+                )
         if self.controls is not None:
-            self.controls.close()
+            try:
+                self.controls.close()
+            except Exception as error:  # noqa: BLE001 - hardware cleanup must be best effort
+                print(
+                    "CABINET FRONTEND // cleanup failed component=controls "
+                    f"error={type(error).__name__}: {error}",
+                    flush=True,
+                )
 
 
 class DummyInputSource:
