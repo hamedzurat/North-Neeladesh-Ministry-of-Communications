@@ -36,6 +36,23 @@ class FailingRotary:
         return None
 
 
+class CloseFailingRotary:
+    def read(self) -> int:
+        return 0
+
+    def close(self) -> None:
+        raise OSError("MCP23017 unavailable")
+
+
+class TrackingScanner(Scanner):
+    def __init__(self) -> None:
+        super().__init__([])
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class InputMapperTests(unittest.TestCase):
     def test_default_mcp_ports_reserve_operator_and_ring_pins(self) -> None:
         config = HardwareConfig()
@@ -131,3 +148,13 @@ class InputMapperTests(unittest.TestCase):
             snapshot.cord_topology, [{"first": "subscriber_0", "second": "subscriber_1"}]
         )
         self.assertEqual(source.faults, ["rotary: OSError: encoder unavailable"])
+
+    def test_cleanup_continues_when_hardware_component_is_unavailable(self) -> None:
+        scanner = TrackingScanner()
+        source = PhysicalInputSource(
+            CloseFailingRotary(), scanner, {}, (0, 0, 0, 1)
+        )
+
+        source.close()
+
+        self.assertTrue(scanner.closed)

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PI_HOST="${PI_HOST:-taki@10.15.13.138}"
+PI_HOST="${PI_HOST:-taki@192.168.1.34}"
 REMOTE_ROOT="${REMOTE_ROOT:-/home/taki/Desktop/nn-hardware-frontend}"
 
 if ! command -v rsync >/dev/null 2>&1; then
