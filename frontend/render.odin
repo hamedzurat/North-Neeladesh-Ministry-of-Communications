@@ -3,7 +3,7 @@ package frontend
 import "core:fmt"
 import "core:math"
 import "core:strings"
-import rl "vendor:raylib"
+import rl "nn_vendor:raylib"
 
 // The reference cabinet is drawn on a fixed logical canvas and letterboxed on
 // smaller or wider windows. Input is authored locally, but every visible value

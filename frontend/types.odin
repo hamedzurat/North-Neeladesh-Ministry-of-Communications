@@ -1,7 +1,7 @@
 package frontend
 
 import "core:net"
-import rl "vendor:raylib"
+import rl "nn_vendor:raylib"
 
 PROTOCOL_VERSION :: 1
 MAX_FRAME_SIZE :: 1_048_576

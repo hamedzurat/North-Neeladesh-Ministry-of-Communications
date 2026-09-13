@@ -1,6 +1,6 @@
 package frontend
 
-import rl "vendor:raylib"
+import rl "nn_vendor:raylib"
 
 main :: proc() {
 	if !probe_backend() do return

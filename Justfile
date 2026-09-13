@@ -7,14 +7,22 @@ backend-stress address="127.0.0.1:7878" voice_address="127.0.0.1:7879":
 backend-debug address="127.0.0.1:7878" voice_address="127.0.0.1:7879" debug_address="127.0.0.1:7880":
     NN_BACKEND_PRINTER_STRESS=1 NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.tts" NN_VOICE_TTS_PERSISTENT=1 cargo run --quiet -p exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }} --debug-bind {{ debug_address }}
 
-frontend-check:
-    /bin/odin check frontend
+frontend-raylib:
+    test -f /usr/lib/libraylib.so || (echo "missing /usr/lib/libraylib.so; install raylib 6.0" >&2 && exit 1)
+    rm -rf target/odin-vendor
+    mkdir -p target/odin-vendor
+    cp -a /usr/lib/odin/vendor/raylib target/odin-vendor/raylib
+    ln -sf /usr/lib/libraylib.so target/odin-vendor/raylib/linux/libraylib.so.600
+    ln -sf /usr/lib/libraylib.so target/odin-vendor/raylib/linux/libraylib.a
+
+frontend-check: frontend-raylib
+    /bin/odin check frontend -collection:nn_vendor=target/odin-vendor
 
 frontend-font:
     python scripts/extract_ttc_face.py /usr/share/fonts/TTF/Iosevka-Regular.ttc target/Iosevka-Regular.ttf
 
 frontend-build: frontend-check frontend-font
-    /bin/odin build frontend -out:target/north-neeladesh-frontend
+    /bin/odin build frontend -collection:nn_vendor=target/odin-vendor -define:RAYLIB_SHARED=true -out:target/north-neeladesh-frontend
 
 frontend backend_address="127.0.0.1:7878": frontend-build
     NN_BACKEND_ADDRESS={{ backend_address }} ./target/north-neeladesh-frontend

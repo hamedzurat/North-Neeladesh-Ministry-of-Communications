@@ -1,6 +1,6 @@
 package frontend
 
-import rl "vendor:raylib"
+import rl "nn_vendor:raylib"
 
 ref_port_from_endpoint :: proc(endpoint: int) -> Port {
 	if endpoint < 16 do return Port{kind = .Subscriber, index = u8(endpoint)}
