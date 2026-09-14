@@ -6,7 +6,7 @@ The switchboard has twelve Subscriber Lines, each connected to a physical place.
 
 The board has one Tap Bridge. Listening to one call means allowing every other call to remain private.
 
-The operator has quick-call access to the police and to emergency medical and fire services. A quick call can save someone, expose someone, send armed authorities into a volatile place, or pull scarce responders away from another emergency.
+The operator has quick-call access to the police and emergency medical services. A quick call can save someone, expose someone, send armed authorities into a volatile place, or pull scarce responders away from another emergency.
 
 The directory terminal lets the operator look up NPC information, check a caller's story, find relationships, and determine whether someone belongs at the place from which they are calling. Directory records describe what the state believes about a person, which may not be true.
 

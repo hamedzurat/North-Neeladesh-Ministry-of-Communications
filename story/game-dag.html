@@ -3,108 +3,370 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>North Neeladesh // Four-Shift Story DAG</title>
+  <title>North Neeladesh // Call DAG</title>
   <style>
-    :root { --paper:#f3efe2; --ink:#151515; --yellow:#ffd21f; --cyan:#66e3e8; --red:#ff665b; --green:#65d995; --blue:#6078ed; --muted:#68645b; --shadow:6px 6px 0 var(--ink); }
+    :root { --paper:#f3efe2; --ink:#151515; --yellow:#ffd21f; --cyan:#66e3e8; --red:#ff665b; --green:#65d995; --blue:#6078ed; --violet:#d8d0ff; --muted:#68645b; --shadow:6px 6px 0 var(--ink); }
     * { box-sizing:border-box; }
     body { margin:0; background:var(--paper); color:var(--ink); font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
     header { padding:28px clamp(18px,5vw,72px); border-bottom:4px solid var(--ink); background:var(--yellow); }
-    main { max-width:1500px; margin:auto; padding:28px clamp(18px,5vw,72px) 70px; }
-    h1,h2,h3,p { margin:0; } h1 { max-width:900px; font-size:clamp(27px,5vw,58px); line-height:.95; letter-spacing:-.08em; } h2 { margin-bottom:14px; font-size:15px; text-transform:uppercase; letter-spacing:.1em; } h3 { font-size:15px; }
-    .eyebrow { margin-bottom:10px; font-size:11px; font-weight:900; letter-spacing:.16em; } .lede { max-width:900px; margin-top:18px; font-size:16px; }
+    main { max-width:1550px; margin:auto; padding:28px clamp(18px,5vw,72px) 70px; }
+    h1,h2,h3,p { margin:0; } h1 { font-size:clamp(28px,5vw,58px); line-height:.95; letter-spacing:-.08em; } h2 { margin-bottom:14px; font-size:15px; letter-spacing:.1em; text-transform:uppercase; } h3 { font-size:16px; }
+    .eyebrow,.label,.tag { font-size:11px; font-weight:900; letter-spacing:.1em; text-transform:uppercase; } .eyebrow { margin-bottom:10px; } .lede { max-width:950px; margin-top:18px; font-size:16px; }
     .panel { margin-bottom:22px; padding:20px; border:3px solid var(--ink); background:#fffdf5; box-shadow:var(--shadow); } .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:22px; } .wide { grid-column:1/-1; }
-    .note { padding:14px; border:2px solid var(--ink); background:var(--cyan); } .warn { background:#ffd6d1; } .muted { color:var(--muted); } .small { font-size:12px; }
-    ul { margin:8px 0 0 20px; padding:0; } li { margin:4px 0; } strong { font-weight:900; }
-    .places { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; } .place { padding:8px; border:2px solid var(--ink); background:var(--paper); }
-    .dag { overflow-x:auto; padding:18px; border:3px solid var(--ink); background:#191919; } .dag-row { display:flex; align-items:stretch; gap:18px; min-width:1280px; margin-bottom:28px; } .dag-row:last-child { margin-bottom:0; }
-    .shift-label { flex:0 0 105px; padding:10px 6px; color:var(--yellow); font-weight:900; writing-mode:vertical-rl; transform:rotate(180deg); text-align:right; }
-    .node { position:relative; flex:0 0 270px; padding:13px; border:3px solid var(--ink); background:#fffdf5; color:var(--ink); box-shadow:4px 4px 0 #000; } .node.core { background:var(--cyan); } .node.side { background:#d8d0ff; } .node.decision { background:var(--yellow); } .node.ending { background:var(--red); }
-    .node:after { content:""; position:absolute; top:50%; right:-21px; width:18px; border-top:3px solid var(--yellow); } .node:last-child:after { display:none; } .tag { display:inline-block; margin-bottom:8px; padding:3px 5px; border:2px solid var(--ink); font-size:10px; font-weight:900; text-transform:uppercase; }
-    .node h3 { margin-bottom:7px; } .node p { margin-top:6px; } .node ul { margin-top:6px; font-size:12px; }
-    .call { margin:16px 0; padding:17px; border:3px solid var(--ink); background:var(--paper); } .call-head { display:flex; justify-content:space-between; gap:15px; flex-wrap:wrap; margin-bottom:12px; } .call-head h3 { font-size:19px; } .line { margin:5px 0; } .label { color:var(--muted); font-size:11px; font-weight:900; text-transform:uppercase; }
-    .call-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; } .box { padding:11px; border:2px solid var(--ink); background:#fffdf5; } .box ul { font-size:13px; }
-    .choice { margin-top:9px; padding:9px; border-left:6px solid var(--blue); background:#e9e8ff; } .choice strong { display:block; } .choice em { color:#39357d; font-style:normal; }
+    .note { padding:14px; border:2px solid var(--ink); background:var(--cyan); } .muted { color:var(--muted); } .small { font-size:12px; }
+    ul { margin:8px 0 0 20px; padding:0; } li { margin:4px 0; } code { padding:2px 4px; background:#e7e0c9; }
     table { width:100%; border-collapse:collapse; } th,td { padding:8px 6px; border-bottom:2px solid var(--ink); text-align:left; vertical-align:top; } th { color:var(--muted); font-size:11px; text-transform:uppercase; }
-    code { padding:2px 4px; background:#e7e0c9; } .footer { margin-top:24px; padding:14px; border:3px solid var(--ink); background:var(--green); font-weight:900; }
-    @media (max-width:800px) { .grid,.call-grid { grid-template-columns:1fr; } .wide { grid-column:auto; } .places { grid-template-columns:1fr 1fr; } }
+    .register { overflow-x:auto; }
+    .dag-wrap { display:none; }
+    .visual-dag { overflow:auto; padding:18px; border:3px solid var(--ink); background:#171717; cursor:grab; user-select:none; touch-action:none; }
+    .visual-dag.dragging { cursor:grabbing; }
+    .visual-dag .mermaid { min-width:1450px; color:var(--ink); }
+    .relationship-graph .mermaid { min-width:1250px; }
+    .relationship-graph .nodeLabel,
+    .relationship-graph .nodeLabel span,
+    .relationship-graph .nodeLabel p { font-size:24px !important; }
+    .relationship-graph .edgeLabel,
+    .relationship-graph .edgeLabel span,
+    .relationship-graph .edgeLabel p { font-size:20px !important; }
+    .relationship-graph .edgeLabel.positive { color:#17854a !important; }
+    .relationship-graph .edgeLabel.negative { color:#c52e25 !important; }
+    .dag { display:grid; grid-template-columns:repeat(4, 310px); gap:26px 34px; min-width:1330px; }
+    .shift { grid-column:1/-1; margin-top:4px; padding:8px 10px; color:var(--yellow); border-bottom:3px solid var(--yellow); font-weight:900; }
+    .node { position:relative; padding:14px; border:3px solid var(--ink); background:#fffdf5; color:var(--ink); box-shadow:4px 4px 0 #000; }
+    .node.core { background:var(--cyan); } .node.side { background:var(--violet); } .node.end { background:var(--red); } .node.good { background:var(--green); }
+    .node h3 { margin:7px 0; } .node p { margin-top:6px; } .node ul { font-size:12px; }
+    .tag { display:inline-block; padding:3px 5px; border:2px solid var(--ink); background:#fffdf5; }
+    .edge-list { margin-top:12px; padding-top:10px; border-top:2px solid var(--ink); font-size:12px; } .edge { margin-top:6px; padding:5px; background:rgba(255,255,255,.65); } .edge strong { display:block; }
+    .call { margin:16px 0; padding:17px; border:3px solid var(--ink); background:var(--paper); } .call-head { display:flex; justify-content:space-between; gap:15px; flex-wrap:wrap; margin-bottom:11px; } .call-head h3 { font-size:19px; } .line { margin:5px 0; } .call-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; } .box { padding:11px; border:2px solid var(--ink); background:#fffdf5; } .choice { margin-top:8px; padding:8px; border-left:6px solid var(--ink); background:#e9e8ff; } .choice strong { display:block; } .choice em { font-style:normal; }
+    .script-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; } .script-card { padding:15px; border:3px solid var(--ink); background:var(--paper); } .script-card h3 { margin:7px 0 10px; } .script-card p { margin-top:7px; } .script-card blockquote { margin:8px 0 0; padding:9px; border-left:6px solid var(--ink); background:#fffdf5; font-style:normal; }
+    .script-card:nth-child(-n+4) { border-top:9px solid var(--cyan); background:#e8fbfc; }
+    .script-card:nth-child(n+5):nth-child(-n+8) { border-top:9px solid var(--yellow); background:#fff8d2; }
+    .script-card:nth-child(n+9):nth-child(-n+12) { border-top:9px solid var(--green); background:#e9faef; }
+    .script-card:nth-child(n+13) { border-top:9px solid var(--blue); background:#eef0ff; }
+    .script-card:nth-child(3), .script-card:nth-child(7), .script-card:nth-child(11), .script-card:nth-child(16) { border-top-color:#8f7be8; background:var(--violet); }
+    .script-card .tag { background:#fffdf5; }
+    .footer { padding:14px; border:3px solid var(--ink); background:var(--green); font-weight:900; }
+    @media (max-width:900px) { .grid,.call-grid { grid-template-columns:1fr; } .wide { grid-column:auto; } }
   </style>
 </head>
 <body>
 <header>
   <div class="eyebrow">NORTH NEELADESH / STORY DESIGN REVIEW</div>
-  <h1>THE LINE BETWEEN<br>WHAT IS SAID AND WHAT HAPPENS</h1>
-  <p class="lede">A four-shift branching call story for the Ministry of Communications. The operator is not a chosen hero. He is a poor switchboard worker with a wife in hospital, a newborn on the way, and access to information that powerful people cannot directly control.</p>
+  <h1>EVERY CALL OPENS A DIFFERENT ROAD</h1>
+  <p class="lede">This is a true call-node DAG. A node is one call. Each outcome is an edge to another call or an ending. The LLM supplies natural language for the named caller; the DAG decides what the caller knows, what the operator can report, and what happens next.</p>
 </header>
 <main>
+  <section class="panel note"><strong>Player state:</strong> cash, food, medicine, wife safety, evidence, faction trust, arrests, evacuation progress, radio control, and army control. A Tap Bridge only adds evidence. Evidence changes the DAG only when the operator later says it to someone and that person acts on it. One call has one audible speaker.</section>
+
   <section class="panel grid">
-    <div><h2>Review assumptions</h2><ul>
-      <li>There is one audible speaker per call. No whispered second voice and no simultaneous dialogue.</li>
-      <li>Every caller reports, asks, or bargains in natural language. The DAG owns consequences; the LLM supplies wording and emotional variation.</li>
-      <li>Information is the main currency. A connected call lets one person learn from another. A tapped call creates evidence in the operator's memory, not an automatic branch.</li>
-      <li>Reporting a fact is an action. The recipient may arrest, protect, evacuate, censor, retaliate, or ignore the report.</li>
-      <li>Paid side work gives the operator food and hospital money, but can cost trust, time, evidence, or another person's safety.</li>
-    </ul></div>
-    <div><h2>State carried by the DAG</h2><ul>
-      <li><code>cash</code>: food, transport, medicine, and hospital access.</li>
-      <li><code>wife_safe</code>: whether the operator's wife remains safe at Neeladesh Central Hospital.</li>
-      <li><code>evidence</code>: facts heard through calls or Tap Bridge.</li>
-      <li><code>trust</code>: faction and family willingness to believe the operator.</li>
-      <li><code>arrests</code>, <code>evacuations</code>, <code>broadcast_control</code>, <code>army_control</code>: visible political consequences.</li>
-      <li><code>death</code>: terminal failure if the operator cannot feed the family, the wife dies, or armed retaliation reaches his home or hospital.</li>
-    </ul></div>
+    <div><h2>World settings</h2><ul><li>North Neeladesh was created three years ago when an ethnic war split Neeladesh. The border and graves are both recent.</li><li>The president has ruled since partition. His government is responsible for killings and mob violence against minorities.</li><li>An unknown attacker shot the president. He is alive in intensive care but cannot rule, confirm an order, or contradict anyone speaking for him.</li><li>The country is a bedside state: the ruling party controls access to the ICU while the army, secret police, opposition, nationalists, autonomy movement, mine owners, and South Neeladesh compete for succession.</li><li>The operator's father became popular during the war and was killed by sympathizers after it ended. The ministry gave the operator a job to support the bereaved family.</li><li>A neighboring member of the persecuted minority was killed by a mob. The operator remembers the neighbor by name, but is not himself a member of that minority.</li><li>The operator is twenty-four, works at the Ministry of Communications, and has a pregnant wife at the hospital.</li><li>He dislikes the nepotism that put him behind the switchboard, but cannot afford to refuse the job.</li><li>The operator is not a faction member. At first the factions do not know his name and treat him as infrastructure. His power comes from deciding who can speak to whom.</li><li>The switchboard has twelve subscriber lines, one Tap Bridge, emergency Police/EMS calls, and a Directory whose records describe what the state believes, not necessarily what is true.</li><li>Side characters and their relationships with the operator matter even when they are not deciding national power.</li></ul></div>
+    <div><h2>Time and tone</h2><ul><li>The game covers four work shifts. Each shift contains four authored call nodes, with side calls mixed into the route.</li><li>Every call has one audible named speaker. Other people's words are reported or quoted by that speaker.</li><li>The LLM supplies natural wording and personality. The DAG supplies facts, permitted knowledge, destinations, actions, and outcomes.</li><li>The story is not a mystery about the operator's father. It is a pressure story about information, survival, and institutions deciding who may speak.</li><li>Money is practical: food, medicine, transport, and hospital access. It is not a morality score.</li></ul></div>
   </section>
 
-  <section class="panel note">
-    <h2>Implementation reading, not a story constraint</h2>
-    <p>The current code was checked to understand the physical interaction: a caller is selected, the operator speaks over PTT, the Directory identifies the requested destination, the operator rings it with the crank, and a connected call can be listened to through the Tap Bridge. The story is allowed to require more. The backend will be changed to carry this DAG's cash, evidence, faction, family, and disclosure state; the existing demo records and demo plot are not being treated as canon.</p>
-  </section>
-
-  <section class="panel"><h2>UI destinations: exact place names</h2><p class="small muted">Every call below requests one of these destination labels. The caller may be lying about why they need the connection, but the destination is always explicit for the player.</p><div class="places">
-    <div class="place">1. Neeladesh Central Hospital</div><div class="place">2. Republic Secretariat</div><div class="place">3. Home Affairs Annex</div><div class="place">4. Nabinagar Cantonment</div><div class="place">5. National Radio Building</div><div class="place">6. South Neeladesh Embassy</div><div class="place">7. Grand Neela Hotel</div><div class="place">8. Ratan Mining Company Office</div><div class="place">9. Ratan Colony</div><div class="place">10. Shapla Apartments</div><div class="place">11. Kheyaghat Market</div><div class="place">12. Nabinagar Central Station</div>
-  </div></section>
-
-  <section class="panel"><h2>DAG overview</h2><div class="dag">
-    <div class="dag-row"><div class="shift-label">SHIFT 1<br>TRUST</div><article class="node core"><span class="tag">S1 core</span><h3>S1-A / The hospital list</h3><p><strong>Caller:</strong> Mina Das</p><p>Requests <strong>Republic Secretariat</strong>.</p><p>Choice establishes whether the operator verifies a hospital visitor list or passes a suspicious request.</p></article><article class="node core"><span class="tag">S1 core</span><h3>S1-B / The missing file</h3><p><strong>Caller:</strong> Elias Korr</p><p>Requests <strong>Home Affairs Annex</strong>.</p><p>He wants a detainee's name checked against a record.</p></article><article class="node side"><span class="tag">S1 side</span><h3>S1-S / A paid supper</h3><p><strong>Caller:</strong> Paro Sen</p><p>Requests <strong>Kheyaghat Market</strong>.</p><p>Money can buy food, but Paro wants a private warning carried with the connection.</p></article></div>
-    <div class="dag-row"><div class="shift-label">SHIFT 2<br>EVIDENCE</div><article class="node core"><span class="tag">S2 core</span><h3>S2-A / The ledger</h3><p><strong>Caller:</strong> Javed Rahman</p><p>Requests <strong>Ratan Mining Company Office</strong>.</p><p>A worker's shipment record can prove that the strike was planned, or that the company forged the shortage.</p></article><article class="node side"><span class="tag">S2 side</span><h3>S2-S / Wife's medicine</h3><p><strong>Caller:</strong> Nurse Anika Roy</p><p>Requests <strong>Neeladesh Central Hospital</strong>.</p><p>The operator can earn money helping a private delivery, but loses time and may expose his wife's ward.</p></article><article class="node decision"><span class="tag">S2 gate</span><h3>Evidence disclosure</h3><p>The operator chooses whether to report a tapped or remembered fact to police, army, workers, autonomy organizers, or nobody.</p></article></div>
-    <div class="dag-row"><div class="shift-label">SHIFT 3<br>RETALIATION</div><article class="node core"><span class="tag">S3 core</span><h3>S3-A / The transmitter</h3><p><strong>Caller:</strong> Dilan Bose</p><p>Requests <strong>National Radio Building</strong>.</p><p>He asks for a connection that can stop a false announcement, or help broadcast one.</p></article><article class="node core"><span class="tag">S3 core</span><h3>S3-B / The evacuation</h3><p><strong>Caller:</strong> Laleh Mir</p><p>Requests <strong>Shapla Apartments</strong>.</p><p>She needs names and a safe route before the True North Brigade reaches the building.</p></article><article class="node side"><span class="tag">S3 side</span><h3>S3-S / The room number</h3><p><strong>Caller:</strong> Tomas Vale</p><p>Requests <strong>Grand Neela Hotel</strong>.</p><p>A journalist offers cash for a room number. Giving it away can expose a source.</p></article></div>
-    <div class="dag-row"><div class="shift-label">SHIFT 4<br>SUCCESSION</div><article class="node core"><span class="tag">S4-A</span><h3>S4-A / The order</h3><p><strong>Caller:</strong> Colonel Arman Vey</p><p>Requests <strong>Nabinagar Cantonment</strong>.</p><p>He asks whether a presidential order is genuine and whether the railway is open.</p></article><article class="node core"><span class="tag">S4-B</span><h3>S4-B / The civilian list</h3><p><strong>Caller:</strong> Advocate Suri Nahal</p><p>Requests <strong>Republic Secretariat</strong>.</p><p>She wants the names of people still alive, missing, and protected.</p></article><article class="node ending"><span class="tag">Endings</span><h3>Five political outcomes</h3><p>Transition, military rule, protected autonomy, nationalist repression, or renewed civil war. The operator and his family can also die before the political outcome.</p></article></div>
-  </div></section>
-
-  <section class="panel"><h2>Shift 1 // Trust is a routing choice</h2>
-    <div class="call"><div class="call-head"><h3>S1-A / Mina Das, Central Hospital records clerk</h3><span class="tag">core call / line: Neeladesh Central Hospital</span></div><p class="line"><span class="label">Requests connection to:</span> <strong>Republic Secretariat</strong></p><p class="line"><span class="label">She says:</span> The Secretariat has requested a list of people who visited the president. Mina says the list contains the operator's wife, though his wife works in a different ward. She asks him to connect her to Deputy Minister Harun so she can correct it before the list becomes an arrest order.</p><div class="call-grid"><div class="box"><span class="label">What this call exchanges</span><ul><li>Fact: the hospital is compiling visitor names.</li><li>Claim: the wife may be falsely placed on the list.</li><li>Question: is the list for medical security or political arrests?</li></ul></div><div class="box"><span class="label">Player actions and DAG effects</span><div class="choice"><strong>Connect normally</strong><em>Mina reaches the Secretariat. If the player later verifies her identity, the wife is removed from the list. If not, the Secretariat marks Mina as a leak.</em></div><div class="choice"><strong>Lookup before connecting</strong><em>Directory confirms Mina is hospital staff. Evidence +1; next Home Affairs call unlocks a truthful correction.</em></div><div class="choice"><strong>Delay or refuse</strong><em>Wife remains on the list. The operator gains no evidence. A later hospital call becomes urgent.</em></div></div></div></div>
-    <div class="call"><div class="call-head"><h3>S1-B / Elias Korr, lawyer at Home Affairs Annex</h3><span class="tag">core call / line: Home Affairs Annex</span></div><p class="line"><span class="label">Requests connection to:</span> <strong>Neeladesh Central Hospital</strong></p><p class="line"><span class="label">He says:</span> His client, Nabin Das, was taken from Shapla Apartments. He asks the hospital to confirm whether Nabin's sister is alive after a police raid. Elias says he has no proof that Nabin was arrested legally. He asks the operator to remember the time of the call.</p><div class="call-grid"><div class="box"><span class="label">Information chain</span><ul><li>Mina can confirm a name if S1-A was connected.</li><li>If the player reports Elias's request to Home Affairs, Nabin is moved.</li><li>If the player reports it to the hospital, the sister can leave safely.</li></ul></div><div class="box"><span class="label">Player actions</span><div class="choice"><strong>Connect to hospital</strong><em>The family receives a medical confirmation. Trust with Elias and hospital staff rises.</em></div><div class="choice"><strong>Connect to Home Affairs instead</strong><em>The call is misdirected. Elias is arrested in the next shift; his evidence disappears.</em></div><div class="choice"><strong>Take a paid message</strong><em>Elias offers cash to carry the detainee's name to a judge. Cash +1, but the operator becomes a witness.</em></div></div></div></div>
-    <div class="call"><div class="call-head"><h3>S1-S / Paro Sen, Kheyaghat Market courier</h3><span class="tag">optional side call / line: Kheyaghat Market</span></div><p class="line"><span class="label">Requests connection to:</span> <strong>Ratan Colony</strong></p><p class="line"><span class="label">He says:</span> A shopkeeper will pay for a warning that police are checking coal shipments. Paro asks the operator to connect him to a named storekeeper but refuses to explain which faction the warning helps. The operator needs supper money.</p><div class="call-grid"><div class="box"><span class="label">Choices</span><ul><li>Connect Paro to Ratan Colony: cash +1; workers move supplies before a search.</li><li>Ask Paro to identify the storekeeper: no cash yet; learns the message is for Red Earth Workers' Congress.</li><li>Report the warning to police: no cash; police raid the wrong shop and Paro disappears.</li><li>Refuse: no political effect; cash stays low.</li></ul></div><div class="box"><span class="label">Survival rule</span><p>If the player refuses all paid work in Shifts 1-2 and spends time on optional verification, <code>cash</code> falls below the food threshold. The wife begins Shift 3 without medicine. This is a possible death path, not a moral score.</p></div></div></div>
-  </section>
-
-  <section class="panel"><h2>Shift 2 // Evidence must be carried somewhere</h2>
-    <div class="call"><div class="call-head"><h3>S2-A / Javed Rahman, Ratan Mining Company accountant</h3><span class="tag">core call / line: Ratan Mining Company Office</span></div><p class="line"><span class="label">Requests connection to:</span> <strong>Nabinagar Central Station</strong></p><p class="line"><span class="label">He says:</span> The company has stopped a coal train and blamed the workers. Javed says the shipment numbers were changed after the strike began. He asks the station dispatcher to hold the train until he can send a corrected ledger.</p><div class="call-grid"><div class="box"><span class="label">Information exchange</span><ul><li>Javed offers a concrete ledger discrepancy.</li><li>The station can confirm whether the train was actually loaded.</li><li>Workers will act on the fact only if someone gives it to them.</li></ul></div><div class="box"><span class="label">Actions</span><div class="choice"><strong>Connect to Nabinagar Central Station</strong><em>The train is held safely. Workers gain time; Mine Owners' Compact loses control of the public story.</em></div><div class="choice"><strong>Connect to Ratan Colony</strong><em>Workers hear the ledger claim but not the proof. If S1-S warned them, they protect Javed; otherwise they call him a company spy.</em></div><div class="choice"><strong>Report Javed to Home Affairs</strong><em>He is arrested. The ledger vanishes, but the police believe the operator is useful.</em></div></div></div></div>
-    <div class="call"><div class="call-head"><h3>S2-S / Nurse Anika Roy, Neeladesh Central Hospital</h3><span class="tag">optional side call / line: Neeladesh Central Hospital</span></div><p class="line"><span class="label">Requests connection to:</span> <strong>Grand Neela Hotel</strong></p><p class="line"><span class="label">She says:</span> A foreign doctor has medicine hidden at the hotel. Anika asks for the hotel pharmacist, not the government. She offers money because the hospital supply room is being watched. She asks whether the operator can keep his wife's ward out of the conversation.</p><div class="call-grid"><div class="box"><span class="label">Actions</span><ul><li>Connect to Grand Neela Hotel: medicine arrives; cash +1; the wife is safer.</li><li>Connect to Republic Secretariat: medicine is seized for the president; wife's ward loses supplies.</li><li>Ask for the pharmacist's name first: learns South Neeladesh is involved; no immediate medicine.</li><li>Refuse: cash stays low; a hospital shortage increases later.</li></ul></div><div class="box"><span class="label">Single-speaker TTS note</span><p>Anika reports every other person's words herself. The hotel pharmacist is never an audible second speaker in this call.</p></div></div></div>
-    <div class="call"><div class="call-head"><h3>S2-T / Tap evidence: Nabinagar Central Station to Ratan Mining Company Office</h3><span class="tag">tap opportunity / one speaker: Mira Halek</span></div><p class="line"><span class="label">Connection requested by:</span> Mira Halek, railway dispatcher. <span class="label">Destination:</span> <strong>Ratan Mining Company Office</strong></p><p class="line"><span class="label">Tap content:</span> Mira reports that a military truck, not a worker train, was loaded at the mine. She names Captain Varo and a departure time. The operator hears this alone through the Tap Bridge.</p><div class="call-grid"><div class="box"><span class="label">Tap rule</span><p>Tapping only creates <code>evidence: military truck at mine</code>. It does not change the DAG. The player must later say the fact to someone.</p></div><div class="box"><span class="label">Later disclosure branches</span><ul><li>Tell Home Affairs: Captain Varo is arrested; army trust -1.</li><li>Tell Ratan Colony: workers block the military shipment; army pressure rises.</li><li>Tell Nabinagar Cantonment: the army destroys the paper trail but protects the operator from police.</li><li>Tell nobody: no immediate effect; the fact can still matter in Shift 4 if remembered.</li></ul></div></div></div>
-  </section>
-
-  <section class="panel"><h2>Shift 3 // A fact can save one person and endanger another</h2>
-    <div class="call"><div class="call-head"><h3>S3-A / Dilan Bose, National Radio technician</h3><span class="tag">core call / line: National Radio Building</span></div><p class="line"><span class="label">Requests connection to:</span> <strong>Nabinagar Cantonment</strong></p><p class="line"><span class="label">He says:</span> The transmitter room has been locked by a state censor. Dilan asks the army to send guards, but says a public announcement is due in twenty minutes. He cannot tell whether the army will protect the station or seize it.</p><div class="call-grid"><div class="box"><span class="label">Actions</span><ul><li>Connect army: transmitter is secured; army_control +1. A truthful broadcast remains possible.</li><li>Connect Republic Secretariat: ruling party controls the announcement; broadcast_control +1 for the party.</li><li>Connect Home Affairs: police raid the technicians; Dilan disappears.</li><li>Delay while using Tap Bridge: hears Dilan report that the false announcement will blame Riverland Autonomy League.</li></ul></div><div class="box"><span class="label">Information consequence</span><p>If the player later tells Laleh Mir the planned accusation, the autonomy evacuation begins early. If he tells police, the police arrest the named organizers instead.</p></div></div></div>
-    <div class="call"><div class="call-head"><h3>S3-B / Laleh Mir, Riverland Autonomy League organizer</h3><span class="tag">core call / line: Shapla Apartments</span></div><p class="line"><span class="label">Requests connection to:</span> <strong>Ratan Colony</strong></p><p class="line"><span class="label">She says:</span> Minority families in Shapla Apartments need vehicles. Laleh asks Ratan Colony for drivers and fuel. She says the operator should not repeat the names of children, because police listen to the line. She wants only a yes or no from the colony.</p><div class="call-grid"><div class="box"><span class="label">Actions</span><ul><li>Connect to Ratan Colony: evacuation capacity rises; workers and autonomy organizers cooperate.</li><li>Connect to Nabinagar Cantonment: army escort may protect the families, or confine them as suspects.</li><li>Connect to Home Affairs: police receive names and arrest autonomy organizers.</li><li>Refuse: evacuation is delayed. If the radio accusation was broadcast, wife_safe and several families can be lost.</li></ul></div><div class="box"><span class="label">Told facts</span><p>Laleh can act on the radio evidence only if the operator reports it in plain language. The DAG does not infer that he shared what he heard.</p></div></div></div>
-    <div class="call"><div class="call-head"><h3>S3-S / Tomas Vale, foreign journalist at Grand Neela Hotel</h3><span class="tag">optional side call / line: Grand Neela Hotel</span></div><p class="line"><span class="label">Requests connection to:</span> <strong>South Neeladesh Embassy</strong></p><p class="line"><span class="label">He says:</span> He will pay for the room number of a People's Transition Council lawyer. He wants to publish proof that South Neeladesh is financing the council. The lawyer may be seeking asylum, not selling the country.</p><div class="call-grid"><div class="box"><span class="label">Actions</span><ul><li>Give the room number: cash +2; the lawyer is exposed and the council fractures.</li><li>Connect Tomas to South Neeladesh Embassy without the room number: no cash; the embassy learns a journalist is investigating.</li><li>Protect the room number: trust +1 with the council; cash remains low.</li><li>Report Tomas to Home Affairs: journalist detained; foreign pressure rises.</li></ul></div><div class="box"><span class="label">Family consequence</span><p>Cash can prevent the hospital from discharging the operator's wife. A political victory with no cash can still become a family loss.</p></div></div></div>
-  </section>
-
-  <section class="panel"><h2>Shift 4 // The operator decides what counts as truth</h2>
-    <div class="call"><div class="call-head"><h3>S4-A / Colonel Arman Vey, National Army Command</h3><span class="tag">core call / line: Nabinagar Cantonment</span></div><p class="line"><span class="label">Requests connection to:</span> <strong>Republic Secretariat</strong></p><p class="line"><span class="label">He says:</span> He holds an order bearing the president's seal. It commands the army to occupy the radio, station, hospital, and Ministry. Arman asks whether the Secretariat has issued a matching order and whether the president can still speak. He asks the operator to choose a destination that proves who controls the state.</p><div class="call-grid"><div class="box"><span class="label">Actions</span><ul><li>Connect Secretariat: if broadcast_control is low, civilian officials contradict the order; if high, the occupation is legitimized.</li><li>Connect National Radio Building: army announces emergency rule; army_control +2.</li><li>Connect Neeladesh Central Hospital: the president's doctors deny the order; the hospital becomes a military target.</li><li>Report the military-truck evidence: Arman arrests Captain Varo and may trust the operator.</li></ul></div><div class="box"><span class="label">Failure condition</span><p>If the operator falsely claims the president can speak, Arman sends soldiers to the hospital. If <code>wife_safe=false</code>, the personal ending triggers before the political ending.</p></div></div></div>
-    <div class="call"><div class="call-head"><h3>S4-B / Advocate Suri Nahal, People's Transition Council</h3><span class="tag">core call / line: Republic Secretariat</span></div><p class="line"><span class="label">Requests connection to:</span> <strong>South Neeladesh Embassy</strong></p><p class="line"><span class="label">She says:</span> The council needs recognition and a safe route for three judges. Suri asks whether the operator has proof of arrests, the radio accusation, or the military shipment. She offers no money. She offers legal protection if the transition succeeds.</p><div class="call-grid"><div class="box"><span class="label">Actions</span><ul><li>Share verified evidence: civilian transition gains legitimacy; South Neeladesh influence rises.</li><li>Share only the radio evidence: autonomy protection improves but the council cannot prove the army's plan.</li><li>Share nothing: council negotiates blind; army or ruling party may take the capital.</li><li>Connect Home Affairs instead: Suri is arrested and the civilian ending is closed.</li></ul></div><div class="box"><span class="label">Truth condition</span><p>Evidence that was never heard or never reported cannot be selected. A caller may ask for a fact, but the player must have obtained it through an earlier connection or tap.</p></div></div></div>
-    <div class="call"><div class="call-head"><h3>S4-S / Kamal Das, the operator's father-in-law at Shapla Apartments</h3><span class="tag">optional side call / line: Shapla Apartments</span></div><p class="line"><span class="label">Requests connection to:</span> <strong>Neeladesh Central Hospital</strong></p><p class="line"><span class="label">He says:</span> The family has food but no safe transport. He asks whether the operator's wife should leave the hospital now or stay behind its guards. He wants a direct answer, not politics.</p><div class="call-grid"><div class="box"><span class="label">Actions</span><ul><li>Connect to hospital and request discharge: wife leaves if an evacuation route exists.</li><li>Connect to Ratan Colony: workers provide a vehicle if their trust is high.</li><li>Connect to Nabinagar Cantonment: military transport arrives, but the family is recorded as a protected political household.</li><li>Ignore or delay: if the hospital is occupied, wife_safe becomes false.</li></ul></div><div class="box"><span class="label">Human ending gate</span><p>This call is not a political puzzle. It checks whether the player protected the person they repeatedly risked everything for.</p></div></div></div>
-  </section>
-
-  <section class="panel"><h2>Ending nodes</h2><table><tr><th>Ending</th><th>Reach conditions</th><th>Conclusion</th></tr>
-    <tr><td><strong>Civilian transition</strong></td><td>Share enough verified evidence with Suri; avoid arresting her; at least one civilian institution remains open.</td><td>The People's Transition Council forms an interim government. South Neeladesh has influence, but the operator's evidence prevents a total puppet government. Family survives if cash and hospital gates were maintained.</td></tr>
-    <tr><td><strong>Managed military rule</strong></td><td>Army control is high; Arman receives a truthful report or the operator helps secure the radio.</td><td>The army prevents immediate pogroms and closes politics. The operator keeps his job under surveillance. His family survives, but the country loses its chance at a free transition.</td></tr>
-    <tr><td><strong>Protected autonomy</strong></td><td>Radio accusation is stopped or countered; Shapla evacuation succeeds; evidence is shared with autonomy organizers without handing over names.</td><td>Regional autonomy is recognized as the price of preventing another war. The national government is weak but minority communities survive.</td></tr>
-    <tr><td><strong>Nationalist repression</strong></td><td>False radio story is broadcast; player reports names to Home Affairs or connects the wrong security destination.</td><td>The True North Brigade receives official cover. Arrests and attacks spread. The operator may survive as a paid informant, but wife_safe is likely false.</td></tr>
-    <tr><td><strong>Renewed civil war</strong></td><td>Core calls are missed, the railway and radio fail together, or the operator gives mutually contradictory orders.</td><td>The army, workers, autonomy groups, and nationalist militants seize different infrastructure. The country fractures along the same lines as the old war.</td></tr>
-    <tr><td><strong>Personal death / family loss</strong></td><td><code>cash</code> remains below survival threshold, hospital evacuation fails, or armed retaliation reaches the family.</td><td>The political DAG stops. The system prints the last call receipt, but no factional ending is awarded. The operator's private life was the first state variable.</td></tr>
+  <section class="panel"><h2>Possible game edges</h2><table><tr><th>Edge</th><th>Operator action</th><th>What it can do</th></tr>
+    <tr><td>Connect requested place</td><td>Look up the destination, ring it, crank, and connect.</td><td>Lets the caller exchange information and usually advances to the next call.</td></tr>
+    <tr><td>Deliberate misroute</td><td>Connect the caller to a different Directory place.</td><td>Arrest, misinformation, a faction gain, or an early ending.</td></tr>
+    <tr><td>Directory verification</td><td>Inspect the record before deciding.</td><td>Confirms identity, exposes a lie, or unlocks a safer edge.</td></tr>
+    <tr><td>Delay</td><td>Keep the caller on the operator line or put the call on hold.</td><td>Creates time for another call, but may cause the caller to expire.</td></tr>
+    <tr><td>Refuse or let expire</td><td>Do not complete the route.</td><td>Missed-call consequences, lost evidence, lost money, or family danger.</td></tr>
+    <tr><td>Tap and remember</td><td>Connect both ends through a Tap Bridge and listen.</td><td>Adds a fact to operator knowledge. It does not branch until the operator later discloses it.</td></tr>
+    <tr><td>Disclose evidence</td><td>Tell a later caller what was heard.</td><td>That caller may arrest, evacuate, protect, broadcast, retaliate, or ignore.</td></tr>
+    <tr><td>Emergency service</td><td>Use Police or EMS while handling a caller.</td><td>Interrupts routing and saves or exposes people. A wrong service can waste the response.</td></tr>
+    <tr><td>Paid favor</td><td>Accept money for priority, access, a warning, or a private message.</td><td>Raises survival resources while changing trust and political exposure.</td></tr>
+    <tr><td>Protect family</td><td>Spend time, money, or a connection on the wife and child.</td><td>Preserves family safety but can close a political opportunity.</td></tr>
   </table></section>
 
-  <section class="panel grid"><div><h2>Side-character pool</h2><p>These callers can be inserted into any shift when the main path has spare time. They are not required to explain the factions.</p><ul><li>Rupa Jain, Grand Neela Hotel switchboard clerk: asks for <strong>National Radio Building</strong> to report a foreign visitor.</li><li>Omar Fenn, Nabinagar Central Station porter: asks for <strong>Kheyaghat Market</strong> to find a missing child.</li><li>Dr. Bimal Saye, Neeladesh Central Hospital surgeon: asks for <strong>Republic Secretariat</strong> to request blood, not political help.</li><li>Hadiya Noor, Ratan Colony schoolteacher: asks for <strong>Shapla Apartments</strong> to locate a displaced family.</li><li>Vikram Sen, Republic Secretariat cleaner: asks for <strong>Grand Neela Hotel</strong> to sell a rumor about a minister.</li><li>Meera Tal, South Neeladesh Embassy translator: asks for <strong>Nabinagar Cantonment</strong> to verify whether a border closure is real.</li></ul></div><div><h2>Questions for the next revision</h2><ul><li>Should the player be able to spend cash directly during a call, or only earn/spend it at shift breaks?</li><li>Should a caller ever lie about their destination, or should only their motive be uncertain?</li><li>Should the wife always be at Central Hospital, or can a successful evacuation move her to another place?</li><li>Which ending should be the intended first-playthrough default: civilian transition, military rule, or an ambiguous compromise?</li></ul></div></section>
-  <div class="footer">REVIEW STATUS // This is a story-design DAG, not engine content. Approve, reject, or mark specific calls and conditions before it is translated into Rust authored nodes or LLM dialogue prompts.</div>
+  <section class="panel register"><h2>Place and faction register</h2><p class="small muted">Each place is a fixed physical line. People may call from more than one of their fixed places, but a person never changes identity to fit the current call.</p><table><tr><th>Place</th><th>What it is</th><th>People there and what they do</th></tr>
+    <tr><td>Neeladesh Central Hospital</td><td>President's ICU, maternity ward, medical supply rooms.</td><td>Mina Das checks visitor records; Anika Roy moves medicine; Dr. Bimal Saye treats the president and reports whether he can speak. Guards restrict access. The operator's wife works and receives care here.</td></tr>
+    <tr><td>Republic Secretariat</td><td>Cabinet offices and the administrative center.</td><td>Suri Nahal seeks recognition; clerks copy orders; party officials issue instructions in the president's name; State Protection informants identify dissent.</td></tr>
+    <tr><td>Home Affairs Annex</td><td>Police records, detainee files, and legal intake.</td><td>Elias Korr searches for detainees; Directorate officers move files and arrest suspects; clerks decide which disappearance becomes an official record.</td></tr>
+    <tr><td>Nabinagar Cantonment</td><td>Army command, soldiers, emergency prisoners, and military dispatch.</td><td>Colonel Arman Vey tests orders; Captain Varo moves sealed freight; officers decide whether the army guards institutions or occupies them.</td></tr>
+    <tr><td>National Radio Building</td><td>Newsrooms, transmitter, censorship desk, and public announcements.</td><td>Dilan Bose maintains the transmitter; censors prepare announcements; party and army representatives compete to control the broadcast.</td></tr>
+    <tr><td>South Neeladesh Embassy</td><td>Diplomatic compound, asylum channel, and foreign back-channel.</td><td>Meera Tal translates; southern agents offer fuel and recognition; council lawyers seek protection; autonomy intermediaries test whether help has a price.</td></tr>
+    <tr><td>Grand Neela Hotel</td><td>Foreign press rooms, visiting politicians, and private meetings.</td><td>Tomas Vale investigates; Rupa Jain runs the switchboard; mine owners, southern agents, and politicians trade money and rumors.</td></tr>
+    <tr><td>Ratan Mining Company Office</td><td>Coal ledgers, shipment orders, and owners' negotiations.</td><td>Javed Rahman keeps the altered ledger; company directors protect exports; inspectors and workers contest what the numbers mean.</td></tr>
+    <tr><td>Ratan Colony</td><td>Miners' homes, union rooms, shops, and community routes.</td><td>Workers organize stoppages; families hide supplies; Paro Sen carries paid warnings; Brigade recruiters look for frightened young men.</td></tr>
+    <tr><td>Shapla Apartments</td><td>Minority families, students, clerks, and autonomy organizers.</td><td>Laleh Mir plans evacuations; Kamal Das protects family; informants collect names; ordinary tenants decide whether to leave or stay.</td></tr>
+    <tr><td>Kheyaghat Market</td><td>Merchants, porters, couriers, and informal trade.</td><td>Paro Sen carries messages for money; traders move food; Workers' Congress couriers and police informants compete over shipments.</td></tr>
+    <tr><td>Nabinagar Central Station</td><td>Passenger, freight, refugee, and troop movement.</td><td>Mira Halek controls dispatch; Omar Fenn moves people on the platform; soldiers, mine workers, and couriers compete for the rail key.</td></tr>
+  </table></section>
+
+  <section class="panel register"><h2>Faction block</h2><table><tr><th>Faction</th><th>Affiliation and position</th><th>What it wants</th></tr>
+    <tr><td>National Reconstruction Party</td><td>The ruling civilian party; controls ministries, state radio, and access to the ICU.</td><td>Survive without admitting the president cannot rule, then keep the state under party control.</td></tr>
+    <tr><td>State Protection Directorate</td><td>Secret police separate from the army; currently protects the party while competing with it.</td><td>Make the next government depend on surveillance, informants, and its detention system.</td></tr>
+    <tr><td>National Army Command</td><td>Victorious national army; rival to the Directorate and hostile to southern interference.</td><td>Install an emergency military government and control communications and transport.</td></tr>
+    <tr><td>Red Earth Workers' Congress</td><td>Mine-based opposition rooted in Ratan Colony and railway labor.</td><td>Remove the ruling party, release prisoners, win labor protections, and hold elections.</td></tr>
+    <tr><td>Riverland Autonomy League</td><td>Minority political movement rooted in Shapla Apartments and the Riverland communities.</td><td>Win regional autonomy, local policing, language schools, and protection from nationalist mobs.</td></tr>
+    <tr><td>True North Brigade</td><td>Domestic terrorist movement aligned with the president's nationalist politics.</td><td>Attack minorities and opposition organizers while provoking retaliation and permanent emergency rule.</td></tr>
+    <tr><td>Government of South Neeladesh</td><td>Foreign government using medicine, fuel, intelligence, money, and recognition as leverage.</td><td>Build a friendly northern government dependent on southern support.</td></tr>
+    <tr><td>People's Transition Council</td><td>Civilian opposition of lawyers, professors, business owners, and former officials; influenced by South Neeladesh.</td><td>Create democratic government while keeping enough outside support to survive.</td></tr>
+    <tr><td>Mine Owners' Compact</td><td>Mining families and companies connected to the office, hotel, party, and army.</td><td>Keep production and exports running, break strikes, lower taxes, and protect property.</td></tr>
+  </table></section>
+
+  <section class="panel"><h2>Faction relationships</h2><div class="visual-dag relationship-graph"><pre class="mermaid">
+flowchart LR
+  NRP["National Reconstruction Party"]
+  SPD["State Protection Directorate"]
+  ARM["National Army Command"]
+  WRC["Red Earth Workers Congress"]
+  RAL["Riverland Autonomy League"]
+  TNB["True North Brigade"]
+  STH["Government of South Neeladesh"]
+  PTC["Peoples Transition Council"]
+  MOC["Mine Owners Compact"]
+  NRP -->|uses| SPD
+  SPD -->|protects for now| NRP
+  NRP -->|secretly uses| TNB
+  TNB -->|supports| NRP
+  WRC -->|cooperates| RAL
+  RAL -->|cooperates| WRC
+  STH -->|funds and influences| PTC
+  PTC -->|accepts support| STH
+  MOC -->|funds while useful| NRP
+  MOC -->|may fund| ARM
+  MOC -->|may switch to| PTC
+  STH -.->|tries to use| RAL
+  NRP -.->|hates| WRC
+  NRP -.->|hates| RAL
+  NRP -.->|hates| PTC
+  SPD -.->|hates| WRC
+  SPD -.->|hates| RAL
+  SPD -.->|rivals| ARM
+  ARM -.->|rivals| SPD
+  ARM -.->|distrusts| TNB
+  ARM -.->|opposes interference| STH
+  WRC -.->|hates| NRP
+  WRC -.->|hates| MOC
+  WRC -.->|distrusts| STH
+  RAL -.->|hates| TNB
+  RAL -.->|hates| SPD
+  RAL -.->|distrusts| STH
+  TNB -.->|hates| RAL
+  TNB -.->|hates| WRC
+  TNB -.->|hates| STH
+  </pre></div></section>
+
+  <section class="panel register"><h2>All persons</h2><table><tr><th>Name</th><th>About them and alliance</th><th>Fixed places</th><th>What they do there</th></tr>
+    <tr><td>Mina Das</td><td>Hospital records clerk. Not a faction member, but frightened of the ruling party.</td><td>Neeladesh Central Hospital; occasionally Republic Secretariat</td><td>Copies visitor lists and tries to correct the operator's wife's name before it becomes an arrest order.</td></tr>
+    <tr><td>Elias Korr</td><td>Defense lawyer aligned with civilian opposition and detainee families.</td><td>Home Affairs Annex; Grand Neela Hotel</td><td>Searches detention records, carries legal messages, and asks whether a missing person is alive.</td></tr>
+    <tr><td>Paro Sen</td><td>Market courier paid by the Red Earth Workers' Congress.</td><td>Kheyaghat Market; Ratan Colony</td><td>Moves warnings, food, and private messages. Offers money when a warning must travel quickly.</td></tr>
+    <tr><td>Anika Roy</td><td>Night nurse loyal to patients, not a political faction.</td><td>Neeladesh Central Hospital; Grand Neela Hotel</td><td>Moves medicine from a hidden hotel supply and keeps the maternity ward supplied.</td></tr>
+    <tr><td>Javed Rahman</td><td>Mining accountant secretly sympathetic to the Workers' Congress.</td><td>Ratan Mining Company Office; Ratan Colony</td><td>Maintains shipment ledgers and tries to expose forged coal numbers.</td></tr>
+    <tr><td>Mira Halek</td><td>Railway dispatcher, independent witness under pressure from army and owners.</td><td>Nabinagar Central Station; Ratan Mining Company Office</td><td>Holds trains, reads manifests, and reports military freight disguised as worker freight.</td></tr>
+    <tr><td>Tomas Vale</td><td>Foreign journalist pursuing proof of southern influence; independent.</td><td>Grand Neela Hotel; South Neeladesh Embassy</td><td>Trades money for room numbers and tries to publish evidence before censorship closes the hotel.</td></tr>
+    <tr><td>Dilan Bose</td><td>Radio technician sympathetic to civilian opposition.</td><td>National Radio Building; Republic Secretariat</td><td>Maintains the transmitter and knows which false announcement is waiting to be broadcast.</td></tr>
+    <tr><td>Laleh Mir</td><td>Riverland Autonomy League organizer protecting minority families.</td><td>Shapla Apartments; Ratan Colony</td><td>Plans evacuation routes, requests drivers, and refuses to give police a list of children.</td></tr>
+    <tr><td>Advocate Suri Nahal</td><td>People's Transition Council lawyer with a southern diplomatic connection.</td><td>Republic Secretariat; South Neeladesh Embassy</td><td>Negotiates recognition, protects witnesses, and decides whether evidence can support a civilian transition.</td></tr>
+    <tr><td>Colonel Arman Vey</td><td>Army colonel who wants order but must choose whether order means military rule.</td><td>Nabinagar Cantonment; Republic Secretariat</td><td>Authenticates presidential orders and decides whether troops occupy the hospital, radio, or station.</td></tr>
+    <tr><td>Kamal Das</td><td>Operator's father-in-law. No faction affiliation; family is his only priority.</td><td>Shapla Apartments; Neeladesh Central Hospital</td><td>Finds food and transport, argues for the wife's safety, and makes the final personal call.</td></tr>
+    <tr><td>Dr. Bimal Saye</td><td>Exhausted surgeon loyal to medical duty.</td><td>Neeladesh Central Hospital; National Radio Building</td><td>Reports that the president is alive but unable to rule or answer for any order.</td></tr>
+    <tr><td>Rupa Jain</td><td>Hotel switchboard clerk, independent and observant.</td><td>Grand Neela Hotel; Republic Secretariat</td><td>Knows who books rooms and can carry a small paid message without understanding the entire conspiracy.</td></tr>
+    <tr><td>Omar Fenn</td><td>Station porter, independent and protective of refugees.</td><td>Nabinagar Central Station; Ratan Colony</td><td>Moves people across the platform and asks whether the rail key belongs to civilians or soldiers.</td></tr>
+    <tr><td>Meera Tal</td><td>Embassy translator affiliated with the Government of South Neeladesh.</td><td>South Neeladesh Embassy; Republic Secretariat</td><td>Translates recognition terms and warns that southern medicine and fuel will create political debt.</td></tr>
+    <tr><td>Captain Varo</td><td>Army logistics officer whose allegiance is uncertain.</td><td>Nabinagar Cantonment; Ratan Mining Company Office</td><td>Signs the military freight manifest and becomes vulnerable if the operator reports the Tap Bridge evidence.</td></tr>
+  </table></section>
+
+  <section class="panel"><h2>True call-node DAG</h2><p class="small muted">Rendered graph: arrows are possible outcomes of the call at the source node. The detailed cards below are the authoritative descriptions of those nodes.</p><div class="visual-dag"><pre class="mermaid">
+flowchart TD
+  C1["C1 S1 Mina Das"]
+  C2["C2 S1 Elias Korr"]
+  C3["C3 S1 Paro Sen side"]
+  C4["C4 S1 Anika Roy"]
+  C5["C5 S2 Javed Rahman"]
+  C6["C6 S2 Mira Halek tap"]
+  C7["C7 S2 Tomas Vale side"]
+  C8["C8 S2 Dilan Bose"]
+  C9["C9 S3 Laleh Mir"]
+  C10["C10 S3 Suri Nahal"]
+  C11["C11 S3 Kamal Das side"]
+  C12["C12 S3 Arman Vey"]
+  C13["C13 S4 Dr Bimal Saye"]
+  C14["C14 S4 Meera Tal"]
+  C15["C15 S4 Omar Fenn"]
+  C16["C16 S4 Kamal Das family"]
+  E1["E1 Family loss"]
+  E2["E2 Arrested lawyer"]
+  E3["E3 Wife dies"]
+  E4["E4 No food or medicine"]
+  E5["E5 Ledger erased"]
+  E6["E6 Corridor closes"]
+  E7["E7 Foreign crackdown"]
+  E8["E8 False broadcast"]
+  E9["E9 Autonomy arrests"]
+  E10["E10 Names exposed"]
+  E11["E11 Suri arrested"]
+  E12["E12 Hospital occupied"]
+  E13["E13 Soldiers reach hospital"]
+  E14["E14 Early army rule"]
+  E15["E15 Nationalist emergency"]
+  E16["E16 Medical failure"]
+  E17["E17 Council arrested"]
+  E18["E18 Civilian transition"]
+  E19["E19 Military rule"]
+  E20["E20 Civil war"]
+  E21["E21 Family survives"]
+  E22["E22 Transition operator lost"]
+  E23["E23 Family loss"]
+  C1 -->|verify| C2
+  C1 -->|connect unchecked| C3
+  C1 -->|refuse| E1
+  C2 -->|hospital| C4
+  C2 -->|misroute| E2
+  C2 -->|paid message| C4
+  C3 -->|connect| C4
+  C3 -->|report to police| C4
+  C3 -->|expire| C4
+  C4 -->|medicine route| C5
+  C4 -->|secretariat| E3
+  C4 -->|refuse, cash survives| C5
+  C4 -->|refuse, cash low| E4
+  C5 -->|station| C6
+  C5 -->|workers| C7
+  C5 -->|report Javed| E5
+  C6 -->|tap evidence| C7
+  C6 -->|no tap| C7
+  C6 -->|expire| E6
+  C7 -->|sell room| C8
+  C7 -->|protect room| C8
+  C7 -->|report journalist| E7
+  C8 -->|army| C9
+  C8 -->|secretariat| C9
+  C8 -->|Home Affairs| E8
+  C8 -->|tap radio| C9
+  C9 -->|workers + evidence| C10
+  C9 -->|army escort| C10
+  C9 -->|Home Affairs| E9
+  C9 -->|expire| C10
+  C10 -->|share evidence| C11
+  C10 -->|share names| E10
+  C10 -->|share nothing| C11
+  C10 -->|misroute| E11
+  C11 -->|hospital| C12
+  C11 -->|worker vehicle| C12
+  C11 -->|army transport| C12
+  C11 -->|delay| E12
+  C12 -->|truth| C13
+  C12 -->|report truck evidence| C13
+  C12 -->|false confirmation| E13
+  C12 -->|radio| E14
+  C13 -->|tell truth| C14
+  C13 -->|preserve lie| E15
+  C13 -->|EMS, wife safe| C14
+  C13 -->|EMS, wife unsafe| E16
+  C13 -->|family first| C16
+  C14 -->|Secretariat| C15
+  C14 -->|Home Affairs| E17
+  C14 -->|refuse| C15
+  C15 -->|civilian corridor| E18
+  C15 -->|army corridor| E19
+  C15 -->|hold line| E20
+  C16 -->|protect family| E21
+  C16 -->|spend last cash| E22
+  C16 -->|ignore| E23
+  classDef ending fill:#ff665b,stroke:#151515,color:#151515;
+  class E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12,E13,E14,E15,E16,E17,E18,E19,E20,E21,E22,E23 ending;
+  </pre></div><div class="dag-wrap"><div class="dag">
+    <div class="shift">SHIFT 1 // THE LIST</div>
+    <article class="node core"><span class="tag">C1 / call</span><h3>Mina Das</h3><p><strong>From:</strong> Neeladesh Central Hospital</p><p><strong>Requests:</strong> Republic Secretariat</p><div class="edge-list"><div class="edge"><strong>Verify in Directory</strong> -> C2. Evidence that the wife's name is on a political visitor list.</div><div class="edge"><strong>Connect without checking</strong> -> C3. The Secretariat gets Mina's list request but doubts her.</div><div class="edge"><strong>Refuse / delay</strong> -> E1. Hospital list becomes an arrest list; early family loss.</div></div></article>
+    <article class="node core"><span class="tag">C2 / call</span><h3>Elias Korr</h3><p><strong>From:</strong> Home Affairs Annex</p><p><strong>Requests:</strong> Neeladesh Central Hospital</p><div class="edge-list"><div class="edge"><strong>Connect hospital</strong> -> C4. Hospital confirms Nabin's sister is alive.</div><div class="edge"><strong>Misroute to Home Affairs</strong> -> E2. Elias is arrested; detainee evidence is erased.</div><div class="edge"><strong>Take paid message</strong> -> C4. Cash +1; operator becomes a legal witness.</div></div></article>
+    <article class="node side"><span class="tag">C3 / side call</span><h3>Paro Sen</h3><p><strong>From:</strong> Kheyaghat Market</p><p><strong>Requests:</strong> Ratan Colony</p><div class="edge-list"><div class="edge"><strong>Connect storekeeper</strong> -> C4. Cash +1; workers hide supplies.</div><div class="edge"><strong>Report warning to police</strong> -> C4. No cash; police pressure rises.</div><div class="edge"><strong>Let expire</strong> -> C4. No cash; food threshold becomes dangerous.</div></div></article>
+    <article class="node core"><span class="tag">C4 / call</span><h3>Anika Roy</h3><p><strong>From:</strong> Neeladesh Central Hospital</p><p><strong>Requests:</strong> Grand Neela Hotel</p><div class="edge-list"><div class="edge"><strong>Connect medicine route</strong> -> C5. Medicine + wife_safe.</div><div class="edge"><strong>Connect Republic Secretariat</strong> -> E3. Medicine is seized for the president; wife dies before Shift 2.</div><div class="edge"><strong>Refuse / expire</strong> -> C5 with cash -1. If cash is already low, -> E4.</div></div></article>
+
+    <div class="shift">SHIFT 2 // THE LEDGER</div>
+    <article class="node core"><span class="tag">C5 / call</span><h3>Javed Rahman</h3><p><strong>From:</strong> Ratan Mining Company Office</p><p><strong>Requests:</strong> Nabinagar Central Station</p><div class="edge-list"><div class="edge"><strong>Connect station</strong> -> C6. Train is held; ledger evidence is available.</div><div class="edge"><strong>Connect Ratan Colony</strong> -> C7. Workers hear the claim without proof.</div><div class="edge"><strong>Report Javed to Home Affairs</strong> -> E5. Javed is arrested; owners control the ledger.</div></div></article>
+    <article class="node core"><span class="tag">C6 / call + tap</span><h3>Mira Halek</h3><p><strong>From:</strong> Nabinagar Central Station</p><p><strong>Requests:</strong> Ratan Mining Company Office</p><div class="edge-list"><div class="edge"><strong>Connect and tap</strong> -> C7. Evidence: military truck loaded at mine.</div><div class="edge"><strong>Connect without tap</strong> -> C7. Train is safe, but no military-truck evidence.</div><div class="edge"><strong>Let expire</strong> -> E6. Military shipment moves; railway corridor closes.</div></div></article>
+    <article class="node side"><span class="tag">C7 / side call</span><h3>Tomas Vale</h3><p><strong>From:</strong> Grand Neela Hotel</p><p><strong>Requests:</strong> South Neeladesh Embassy</p><div class="edge-list"><div class="edge"><strong>Sell the council lawyer's room number</strong> -> C8. Cash +2; civilian opposition fractures.</div><div class="edge"><strong>Protect the room</strong> -> C8. No cash; council trust +1.</div><div class="edge"><strong>Report Tomas to Home Affairs</strong> -> E7. Foreign journalist detained; outside pressure escalates.</div></div></article>
+    <article class="node core"><span class="tag">C8 / call</span><h3>Dilan Bose</h3><p><strong>From:</strong> National Radio Building</p><p><strong>Requests:</strong> Nabinagar Cantonment</p><div class="edge-list"><div class="edge"><strong>Connect army</strong> -> C9. Army guards the transmitter; army_control +1.</div><div class="edge"><strong>Connect Republic Secretariat</strong> -> C9. Party controls the announcement; broadcast_control +1.</div><div class="edge"><strong>Connect Home Affairs</strong> -> E8. Dilan is arrested; false accusation is broadcast.</div><div class="edge"><strong>Tap connected call</strong> -> C9 with radio evidence.</div></div></article>
+
+    <div class="shift">SHIFT 3 // THE NAMES</div>
+    <article class="node core"><span class="tag">C9 / call</span><h3>Laleh Mir</h3><p><strong>From:</strong> Shapla Apartments</p><p><strong>Requests:</strong> Ratan Colony</p><div class="edge-list"><div class="edge"><strong>Connect workers and report radio evidence</strong> -> C10. Evacuation route opens.</div><div class="edge"><strong>Connect Cantonment</strong> -> C10. Army escort possible; family names enter military records.</div><div class="edge"><strong>Connect Home Affairs</strong> -> E9. Autonomy organizers are arrested.</div><div class="edge"><strong>Refuse / expire</strong> -> C10. Evacuation is late; brigade pressure rises.</div></div></article>
+    <article class="node core"><span class="tag">C10 / call</span><h3>Advocate Suri Nahal</h3><p><strong>From:</strong> Republic Secretariat</p><p><strong>Requests:</strong> South Neeladesh Embassy</p><div class="edge-list"><div class="edge"><strong>Share verified ledger and radio evidence</strong> -> C11. Civilian transition becomes viable.</div><div class="edge"><strong>Share names without protection</strong> -> E10. South-backed council gives the names to police.</div><div class="edge"><strong>Share nothing</strong> -> C11. Council negotiates blind; military route remains open.</div><div class="edge"><strong>Misroute to Home Affairs</strong> -> E11. Suri is arrested; civilian ending closes.</div></div></article>
+    <article class="node side"><span class="tag">C11 / side call</span><h3>Kamal Das</h3><p><strong>From:</strong> Shapla Apartments</p><p><strong>Requests:</strong> Neeladesh Central Hospital</p><div class="edge-list"><div class="edge"><strong>Connect hospital discharge</strong> -> C12. Family can leave if an evacuation route exists.</div><div class="edge"><strong>Connect Ratan Colony for a vehicle</strong> -> C12. Workers trust the operator.</div><div class="edge"><strong>Connect Cantonment</strong> -> C12. Family is protected but recorded.</div><div class="edge"><strong>Delay</strong> -> E12. Hospital occupation reaches the wife.</div></div></article>
+    <article class="node core"><span class="tag">C12 / call</span><h3>Colonel Arman Vey</h3><p><strong>From:</strong> Nabinagar Cantonment</p><p><strong>Requests:</strong> Republic Secretariat</p><div class="edge-list"><div class="edge"><strong>Connect Secretariat and tell the truth</strong> -> C13. Civilian and army orders can be compared.</div><div class="edge"><strong>Report military-truck evidence</strong> -> C13. Arman arrests Captain Varo; army trust changes.</div><div class="edge"><strong>Claim the president can confirm the order</strong> -> E13. Soldiers move on the hospital; personal ending.</div><div class="edge"><strong>Connect National Radio Building</strong> -> E14. Army rule is declared early.</div></div></article>
+
+    <div class="shift">SHIFT 4 // THE SUCCESSION</div>
+    <article class="node core"><span class="tag">C13 / call</span><h3>Dr. Bimal Saye</h3><p><strong>From:</strong> Neeladesh Central Hospital</p><p><strong>Requests:</strong> National Radio Building</p><div class="edge-list"><div class="edge"><strong>Connect and report the president cannot rule</strong> -> C14. Public legitimacy breaks away from the ICU.</div><div class="edge"><strong>Connect Secretariat and preserve the lie</strong> -> E15. Nationalist emergency government consolidates.</div><div class="edge"><strong>Call EMS instead</strong> -> C14 if the wife is safe; otherwise -> E16.</div><div class="edge"><strong>Connect family line</strong> -> C16. The final political call is postponed to protect the operator's wife.</div></div></article>
+    <article class="node core"><span class="tag">C14 / call</span><h3>Meera Tal</h3><p><strong>From:</strong> South Neeladesh Embassy</p><p><strong>Requests:</strong> Republic Secretariat</p><div class="edge-list"><div class="edge"><strong>Connect Republic Secretariat</strong> -> C15. Recognition and dependency are negotiated.</div><div class="edge"><strong>Misroute to Home Affairs Annex</strong> -> E17. Party exposes the foreign link and arrests the council.</div><div class="edge"><strong>Refuse</strong> -> C15. Council must proceed without recognition.</div></div></article>
+    <article class="node core"><span class="tag">C15 / call</span><h3>Omar Fenn</h3><p><strong>From:</strong> Nabinagar Central Station</p><p><strong>Requests:</strong> Ratan Colony</p><div class="edge-list"><div class="edge"><strong>Open civilian corridor</strong> -> E18. CIVILIAN TRANSITION ending if evidence was shared.</div><div class="edge"><strong>Open army corridor</strong> -> E19. MANAGED MILITARY RULE ending.</div><div class="edge"><strong>Hold the line</strong> -> E20. RENEWED CIVIL WAR ending.</div></div></article>
+    <article class="node good"><span class="tag">C16 / family check</span><h3>Kamal Das</h3><p><strong>From:</strong> Shapla Apartments</p><p><strong>Requests:</strong> Neeladesh Central Hospital</p><div class="edge-list"><div class="edge"><strong>Protect wife and child</strong> -> E21. POLITICAL SURVIVAL WITH FAMILY ending.</div><div class="edge"><strong>Spend the last cash on the corridor</strong> -> E22. TRANSITION WITHOUT THE OPERATOR ending.</div><div class="edge"><strong>Ignore</strong> -> E23. FAMILY LOSS ending.</div></div></article>
+  </div></div></section>
+
+  <section class="panel"><h2>Detailed call cards</h2><p class="small muted">Each card describes the one-speaker voice turn. Tapping is only possible after the operator has connected the caller and destination through a Tap Bridge. The quoted tap result is what the player hears; it is not automatically shared with anyone.</p><div class="script-grid">
+    <article class="script-card"><span class="tag">C1 / Mina Das</span><h3>The visitor list</h3><p><strong>Call:</strong> From Neeladesh Central Hospital, requests Republic Secretariat. Mina says the hospital is sending visitor names to the Secretariat. She quietly identifies the operator's pregnant wife as a mistaken entry and asks for a correction.</p><blockquote><strong>If tapped:</strong> "I copied the list before they sealed it. Your wife's name is beside the president's visitors. I do not know who added it."</blockquote><p><strong>Operator:</strong> Directory lookup verifies Mina, connect her, or delay/refuse. Verification -> C2; unchecked connection -> C3; refusal -> E1.</p></article>
+    <article class="script-card"><span class="tag">C2 / Elias Korr</span><h3>The missing detainee</h3><p><strong>Call:</strong> From Home Affairs Annex, requests Neeladesh Central Hospital. Elias asks the hospital to confirm that Nabin Das's sister survived a police raid. He says Nabin was taken without a warrant.</p><blockquote><strong>If tapped:</strong> "Do not say Nabin's name to Home Affairs. The clerk there told me the file was moved to the basement after midnight."</blockquote><p><strong>Operator:</strong> Connect hospital -> C4; misroute back to Home Affairs -> E2; accept Elias's paid legal message -> C4 with cash +1.</p></article>
+    <article class="script-card"><span class="tag">C3 / Paro Sen / side</span><h3>The paid warning</h3><p><strong>Call:</strong> From Kheyaghat Market, requests Ratan Colony. Paro offers supper money to warn a storekeeper that police are checking coal shipments. He will not initially name the faction paying him.</p><blockquote><strong>If tapped:</strong> "Tell the storekeeper to move the red sacks before sundown. The workers' people will pay you, not the police."</blockquote><p><strong>Operator:</strong> Connect -> C4 and cash +1; report to police -> C4 with police pressure; let expire -> C4 with no cash.</p></article>
+    <article class="script-card"><span class="tag">C4 / Anika Roy</span><h3>Medicine through the hotel</h3><p><strong>Call:</strong> From Neeladesh Central Hospital, requests Grand Neela Hotel. Anika says a foreign doctor hid medicine in the hotel pharmacy and asks the operator to connect her without mentioning the operator's wife.</p><blockquote><strong>If tapped:</strong> "The medicine is for the maternity ward, but the embassy wants the president's doctors to receive it first. Decide before the night inventory."</blockquote><p><strong>Operator:</strong> Connect hotel -> C5 with medicine and wife safety; connect Secretariat -> E3; refuse -> C5, or E4 if cash is already below the food threshold.</p></article>
+    <article class="script-card"><span class="tag">C5 / Javed Rahman</span><h3>The altered ledger</h3><p><strong>Call:</strong> From Ratan Mining Company Office, requests Nabinagar Central Station. Javed says the company changed coal shipment numbers after the strike began and asks the dispatcher to hold a train.</p><blockquote><strong>If tapped:</strong> "The original number is 412 wagons. The report says 289. The missing 123 are being loaded onto army trucks."</blockquote><p><strong>Operator:</strong> Connect station -> C6; connect Ratan Colony -> C7 with an unverified claim; report Javed to Home Affairs -> E5.</p></article>
+    <article class="script-card"><span class="tag">C6 / Mira Halek / tap</span><h3>The military truck</h3><p><strong>Call:</strong> From Nabinagar Central Station, requests Ratan Mining Company Office. Mira wants the mine office to stop a shipment labelled as worker freight.</p><blockquote><strong>If tapped:</strong> "I can see the truck manifest. Captain Varo signed it. It is not coal and it is not going to the civilian depot. It leaves at 18:20."</blockquote><p><strong>Operator:</strong> Connect and tap -> C7 with evidence; connect without tapping -> C7 without evidence; let the call expire -> E6.</p></article>
+    <article class="script-card"><span class="tag">C7 / Tomas Vale / side</span><h3>The journalist's bargain</h3><p><strong>Call:</strong> From Grand Neela Hotel, requests South Neeladesh Embassy. Tomas offers money for the room number of a People's Transition Council lawyer. He wants proof of southern influence.</p><blockquote><strong>If tapped:</strong> "The lawyer is not selling the country. She has three judges in that room and believes the embassy is the only place they will not be arrested."</blockquote><p><strong>Operator:</strong> Sell the room -> C8 with cash +2 and council trust -1; protect it -> C8 with trust +1; report Tomas -> E7.</p></article>
+    <article class="script-card"><span class="tag">C8 / Dilan Bose</span><h3>The transmitter choice</h3><p><strong>Call:</strong> From National Radio Building, requests Nabinagar Cantonment. Dilan says a censor locked the transmitter room and asks the army for guards before a public announcement.</p><blockquote><strong>If tapped:</strong> "The draft announcement blames Riverland organizers for the president's shooting. The evidence is a blank page with a stamp on it."</blockquote><p><strong>Operator:</strong> Connect army or Secretariat -> C9 with different control flags; connect Home Affairs -> E8; tap and remember the accusation -> C9 with radio evidence.</p></article>
+    <article class="script-card"><span class="tag">C9 / Laleh Mir</span><h3>The evacuation route</h3><p><strong>Call:</strong> From Shapla Apartments, requests Ratan Colony. Laleh asks for workers, drivers, and fuel to move minority families before the radio accusation spreads.</p><blockquote><strong>If tapped:</strong> "Do not write the children's names. If the police get a list, they will call it an evacuation register and use it as a target list."</blockquote><p><strong>Operator:</strong> Connect workers and report radio evidence -> C10; army escort -> C10 with names exposed; Home Affairs -> E9; expire -> C10 with evacuation late.</p></article>
+    <article class="script-card"><span class="tag">C10 / Suri Nahal</span><h3>The evidence bargain</h3><p><strong>Call:</strong> From Republic Secretariat, requests South Neeladesh Embassy. Suri asks what the operator knows about arrests, the radio draft, and the military shipment.</p><blockquote><strong>If tapped:</strong> "We can protect witnesses, but not if you give us names we cannot verify. Tell us what you heard, not what you suspect."</blockquote><p><strong>Operator:</strong> Share verified evidence -> C11; share names without protection -> E10; share nothing -> C11; misroute to Home Affairs -> E11.</p></article>
+    <article class="script-card"><span class="tag">C11 / Kamal Das / side</span><h3>The family decision</h3><p><strong>Call:</strong> From Shapla Apartments, requests Neeladesh Central Hospital. Kamal says the family has food but no safe transport and asks whether the operator's wife should leave the hospital.</p><blockquote><strong>If tapped:</strong> "Your wife says she will stay with the patients. She thinks the guards protect everyone. I do not think they do."</blockquote><p><strong>Operator:</strong> Connect hospital, workers, or Cantonment -> C12 with different family states; delay -> E12.</p></article>
+    <article class="script-card"><span class="tag">C12 / Colonel Arman Vey</span><h3>The sealed order</h3><p><strong>Call:</strong> From Nabinagar Cantonment, requests Republic Secretariat. Arman holds an order bearing the president's seal and asks whether civilian officials issued a matching order.</p><blockquote><strong>If tapped:</strong> "The order says occupy the hospital and radio first. It does not say who signed it. I need to know whether the president can still speak."</blockquote><p><strong>Operator:</strong> Connect Secretariat and tell the truth -> C13; report truck evidence -> C13 and arrest Captain Varo; claim the president confirms it -> E13; connect Radio -> E14.</p></article>
+    <article class="script-card"><span class="tag">C13 / Dr. Bimal Saye</span><h3>The president cannot answer</h3><p><strong>Call:</strong> From Neeladesh Central Hospital, requests National Radio Building. Bimal says the president is alive but cannot rule, confirm an order, or contradict the people speaking for him.</p><blockquote><strong>If tapped:</strong> "The ICU monitor is steady. His eyes are open, but he cannot form words. Anyone claiming a presidential answer is lying."</blockquote><p><strong>Operator:</strong> Tell Radio the truth -> C14; preserve the lie through Secretariat -> E15; call EMS -> C14 if wife safe or E16 if unsafe; choose family first -> C16.</p></article>
+    <article class="script-card"><span class="tag">C14 / Meera Tal</span><h3>Recognition</h3><p><strong>Call:</strong> From South Neeladesh Embassy, requests Republic Secretariat. Meera asks the Secretariat to hear the council's request for recognition and a safe route for judges.</p><blockquote><strong>If tapped:</strong> "Recognition comes with fuel, medicine, and advisers. The council may survive, but it will owe the South more than it admits."</blockquote><p><strong>Operator:</strong> Connect Secretariat -> C15; misroute to Home Affairs Annex -> E17; refuse -> C15 without recognition.</p></article>
+    <article class="script-card"><span class="tag">C15 / Omar Fenn</span><h3>The corridor</h3><p><strong>Call:</strong> From Nabinagar Central Station, requests Ratan Colony. Omar says refugees, miners, and soldiers are converging on the platform and asks which authority should receive the rail key.</p><blockquote><strong>If tapped:</strong> "The civilian dispatcher has the passenger list. The army officer has the fuel manifest. If I hand over the key, one of them will own the night."</blockquote><p><strong>Operator:</strong> Open civilian corridor -> E18 if evidence reached Suri; open army corridor -> E19; hold the line -> E20.</p></article>
+    <article class="script-card"><span class="tag">C16 / Kamal Das</span><h3>The last call home</h3><p><strong>Call:</strong> From Shapla Apartments, requests Neeladesh Central Hospital. Kamal asks for a final decision: spend the last cash on a family vehicle, or use it to keep the political corridor open.</p><blockquote><strong>If tapped:</strong> "There is no political question left in this call. Tell me whether I should bring her home or wait for you to decide what the country needs."</blockquote><p><strong>Operator:</strong> Protect wife and child -> E21; spend the last cash on the corridor -> E22; ignore -> E23.</p></article>
+  </div></section>
+
+  <section class="panel"><h2>Ending nodes</h2><table><tr><th>Node</th><th>Ending</th><th>State requirement or consequence</th></tr>
+    <tr><td><span class="tag">E1</span> <span class="tag">E3</span> <span class="tag">E4</span> <span class="tag">E12</span> <span class="tag">E13</span> <span class="tag">E16</span> <span class="tag">E23</span></td><td>Family loss / operator death</td><td>Wife dies, the family cannot eat, or armed forces reach the hospital before evacuation.</td></tr>
+    <tr><td><span class="tag">E2</span> <span class="tag">E5</span> <span class="tag">E8</span> <span class="tag">E9</span> <span class="tag">E10</span> <span class="tag">E11</span> <span class="tag">E17</span></td><td>Repression</td><td>The operator gives names or evidence to the wrong authority; arrests and nationalist violence become irreversible.</td></tr>
+    <tr><td><span class="tag">E6</span> <span class="tag">E20</span></td><td>Renewed civil war</td><td>Rail, mine, radio, and civilian institutions stop coordinating.</td></tr>
+    <tr><td><span class="tag">E7</span></td><td>Foreign crackdown</td><td>Journalists and civilian leaders are removed before they can establish a public record.</td></tr>
+    <tr><td><span class="tag">E14</span> <span class="tag">E19</span></td><td>Managed military rule</td><td>The army controls the transmitter and transport corridor.</td></tr>
+    <tr><td><span class="tag">E15</span></td><td>Nationalist emergency</td><td>The ruling party preserves power through a false presidential order.</td></tr>
+    <tr><td><span class="tag">E18</span></td><td>Civilian transition</td><td>Verified evidence reaches the council and the station corridor stays open.</td></tr>
+    <tr><td><span class="tag">E21</span></td><td>Political survival with family</td><td>The operator's political side may be compromised, but his wife and child survive.</td></tr>
+    <tr><td><span class="tag">E22</span></td><td>Transition without the operator</td><td>The country reaches a civilian settlement, but the operator spends his last resources saving the corridor and cannot survive.</td></tr>
+  </table></section>
+
+  <div class="footer">DAG REVIEW TARGET // Review the call nodes, edge actions, and ending conditions. This document is the story authority; Rust state, Directory records, caller profiles, and LLM prompts should be changed to implement it.</div>
 </main>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', themeVariables: { fontFamily: 'ui-monospace, monospace', primaryColor: '#66e3e8', primaryTextColor: '#151515', primaryBorderColor: '#151515', lineColor: '#ffd21f', secondaryColor: '#d8d0ff', tertiaryColor: '#ff665b' } });
+  await mermaid.run();
+  document.querySelectorAll('.relationship-graph .edgeLabel').forEach(label => {
+    const text = label.textContent.toLowerCase();
+    const positive = ['uses', 'protects', 'supports', 'cooperates', 'funds', 'accepts', 'may fund', 'may switch'].some(word => text.includes(word));
+    label.classList.add(positive ? 'positive' : 'negative');
+  });
+
+  const viewport = document.querySelector('.visual-dag');
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let startScrollLeft = 0;
+  let startScrollTop = 0;
+
+  viewport.addEventListener('pointerdown', event => {
+    dragging = true;
+    startX = event.clientX;
+    startY = event.clientY;
+    startScrollLeft = viewport.scrollLeft;
+    startScrollTop = viewport.scrollTop;
+    viewport.classList.add('dragging');
+    viewport.setPointerCapture(event.pointerId);
+  });
+
+  viewport.addEventListener('pointermove', event => {
+    if (!dragging) return;
+    event.preventDefault();
+    viewport.scrollLeft = startScrollLeft - (event.clientX - startX);
+    viewport.scrollTop = startScrollTop - (event.clientY - startY);
+  });
+
+  const stopDragging = event => {
+    if (!dragging) return;
+    dragging = false;
+    viewport.classList.remove('dragging');
+    if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
+  };
+
+  viewport.addEventListener('pointerup', stopDragging);
+  viewport.addEventListener('pointercancel', stopDragging);
+</script>
 </body>
 </html>
