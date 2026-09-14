@@ -1139,7 +1139,7 @@ fn validate_authored_content(content: &AuthoredContent) -> Result<(), GraphCompi
         .collect::<BTreeSet<_>>();
 
     for listing in content.line_listings.iter() {
-        if listing.line >= 16 {
+        if listing.line >= 12 {
             return Err(GraphCompileError::InvalidLine {
                 listing_id: listing.id.clone(),
                 line: listing.line,

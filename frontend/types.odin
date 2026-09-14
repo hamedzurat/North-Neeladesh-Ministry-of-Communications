@@ -3,14 +3,14 @@ package frontend
 import "core:net"
 import rl "nn_vendor:raylib"
 
-PROTOCOL_VERSION :: 1
+PROTOCOL_VERSION :: 2
 MAX_FRAME_SIZE :: 1_048_576
 WINDOW_W :: 1440
 WINDOW_H :: 900
-LINE_COUNT :: 16
-ENDPOINT_COUNT :: 22
+LINE_COUNT :: 12
+ENDPOINT_COUNT :: 16
 CORD_SLOT_COUNT :: 8
-ACTION_COUNT :: 6
+ACTION_COUNT :: 4
 
 INK :: rl.Color{235, 235, 229, 255}
 MUTED :: rl.Color{151, 157, 165, 255}
@@ -31,7 +31,7 @@ CAMERA: rl.Camera2D
 Port_Kind :: enum { Subscriber, Operator, Ring_Generator, Tap_Bridge }
 Port :: struct { kind: Port_Kind, index: u8 }
 Cord :: struct { first, second: Port }
-Held :: struct { ptt, police, ems, fire, tap_1, tap_2: bool }
+    Held :: struct { ptt, police, ems, tap: bool }
 Tuning :: struct { coarse, fine: u16 }
 Input_Debug :: struct { firmware_version: string, transport_connected: bool, device_faults: [dynamic]string }
 Input_Intent :: struct {
@@ -52,7 +52,7 @@ Shift :: struct { number: u8, phase: string, active_call_count: u8, completed_ro
 
 State_Output :: struct {
 	state_revision: u64,
-	line_lamps: [16]bool,
+    line_lamps: [12]bool,
 	game_phase: string,
 	clock_shift: u8,
 	elapsed_seconds: u32,
@@ -101,15 +101,14 @@ Input_State :: struct {
 }
 
 REF_LINE_LABELS := [LINE_COUNT]cstring {
-	"RAIL DISPATCH", "KHARAD CLINIC", "RATION OFFICE", "FIRE STATION",
-	"FOUNDRY APTS", "BORDER POST", "LABOUR OFFICE", "MINISTRY DESK",
-	"RIVER MARKET", "GRAND HOTEL", "POLICE POST", "STEEL WORKS",
-	"PHARMACY", "FREIGHT YARD", "POST OFFICE", "EXCHANGE ANNEX",
+	"NEELADESH CENTRAL HOSPITAL", "REPUBLIC SECRETARIAT", "HOME AFFAIRS ANNEX",
+	"NABINAGAR CANTONMENT", "NATIONAL RADIO BUILDING", "SOUTH NEELADESH EMBASSY",
+	"GRAND NEELA HOTEL", "RATAN MINING COMPANY OFFICE", "RATAN COLONY",
+	"SHAPLA APARTMENTS", "KHEYAGHAT MARKET", "NABINAGAR CENTRAL STATION",
 }
 
 REF_ACTION_LABELS := [ACTION_COUNT]cstring {
-	"PTT / OPERATOR", "POLICE", "EMS", "FIRE", "TAP BRIDGE 1 LISTEN",
-	"TAP BRIDGE 2 LISTEN",
+	"PTT / OPERATOR", "POLICE", "EMS", "TAP BRIDGE LISTEN",
 }
 
 REF_SEGMENTS := [10][7]bool {

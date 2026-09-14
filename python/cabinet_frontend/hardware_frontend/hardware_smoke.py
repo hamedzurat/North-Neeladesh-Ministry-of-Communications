@@ -20,13 +20,13 @@ def exercise_components(
 ) -> int:
     """Exercise every available output once and report one input sample."""
     print("HARDWARE // WS2812 walking test", file=output)
-    for index in range(8):
-        lines = [False] * 8
+    for index in range(12):
+        lines = [False] * 12
         lines[index] = True
         components.line_lamps.set_lines(lines)
         print(f"HARDWARE // LED {index} on", file=output)
         sleep(led_delay)
-    components.line_lamps.set_lines([False] * 8)
+    components.line_lamps.set_lines([False] * 12)
 
     print("HARDWARE // TM1637 8888", file=output)
     components.seven_segment.show("8888")

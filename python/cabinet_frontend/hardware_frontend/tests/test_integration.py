@@ -52,13 +52,13 @@ class HardwareFrontendIntegrationTests(unittest.TestCase):
         observed: dict[str, object] = {}
         codec = JsonCodec()
         response = {
-            "protocol_version": 1,
+            "protocol_version": 2,
             "input_sequence": 1,
             "accepted": True,
             "error": None,
             "state_revision": 4,
             "output": {
-                "line_lamps": [True] + [False] * 15,
+            "line_lamps": [True] + [False] * 11,
                 "game_phase": "ready",
                 "clock": {"shift": 1, "elapsed_seconds": 65},
                 "speaker_active": False,
@@ -119,4 +119,4 @@ class HardwareFrontendIntegrationTests(unittest.TestCase):
             [{"first": "subscriber_0", "second": "operator"}],
         )
         self.assertEqual(frontend.state_revision, 4)
-        self.assertEqual(components[0].calls[0], ("lines", [True] + [False] * 15))
+        self.assertEqual(components[0].calls[0], ("lines", [True] + [False] * 11))

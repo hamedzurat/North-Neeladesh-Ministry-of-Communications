@@ -73,15 +73,15 @@ ssh taki@192.168.1.34 \
 
 ## Current physical mapping
 
-- WS2812: GPIO 12, 8 pixels, `/dev/leds0`.
+- WS2812: GPIO 12, 12 pixels, `/dev/leds0`.
 - TM1637: CLK GPIO 27, DIO GPIO 17.
 - MCP23017: I2C bus 1, address `0x20`.
 - E-paper control: MCP pins 8, 9, 10; SPI bus 0/device 0 at 10 MHz.
 - Rotary encoder: MCP pins 11 and 12.
 - Pair detector: MCP pins 0 through 5 are `subscriber_0` through `subscriber_5`;
   pin 6 is `operator`; pin 7 is `ring_generator`.
-- Keyboard fallback: set `NN_KEYBOARD_CONTROLS=1`; `p` toggles PTT, `1`/`2`/`3`
-  toggle Police/EMS/Fire, `q`/`w` toggle Tap 1/2, and `x` clears all controls.
+- Keyboard fallback: set `NN_KEYBOARD_CONTROLS=1`; `p` toggles PTT, `1`/`2`
+  toggle Police/EMS, `q` toggles the Tap Bridge listen control, and `x` clears all controls.
   Press `d` to edit Directory Terminal digits, use `[` and `]` to select a
   digit, and press `0`-`9` to set it.
 

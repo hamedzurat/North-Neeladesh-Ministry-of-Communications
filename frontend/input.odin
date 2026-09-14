@@ -3,18 +3,18 @@ package frontend
 import rl "nn_vendor:raylib"
 
 ref_port_from_endpoint :: proc(endpoint: int) -> Port {
-	if endpoint < 16 do return Port{kind = .Subscriber, index = u8(endpoint)}
-	if endpoint == 16 do return Port{kind = .Operator}
-	if endpoint == 17 do return Port{kind = .Ring_Generator}
-	return Port{kind = .Tap_Bridge, index = u8(endpoint - 17)}
+	if endpoint < 12 do return Port{kind = .Subscriber, index = u8(endpoint)}
+	if endpoint == 12 do return Port{kind = .Operator}
+	if endpoint == 13 do return Port{kind = .Ring_Generator}
+	return Port{kind = .Tap_Bridge, index = u8(endpoint - 13)}
 }
 
 ref_endpoint_from_port :: proc(port: Port) -> int {
 	switch port.kind {
 	case .Subscriber: return int(port.index)
-	case .Operator: return 16
-	case .Ring_Generator: return 17
-	case .Tap_Bridge: return 17 + int(port.index)
+	case .Operator: return 12
+	case .Ring_Generator: return 13
+	case .Tap_Bridge: return 13 + int(port.index)
 	}
 	return -1
 }
@@ -73,9 +73,7 @@ ref_action_slot :: proc(held: ^Held, index: int) -> ^bool {
 	case 0: return &held.ptt
 	case 1: return &held.police
 	case 2: return &held.ems
-	case 3: return &held.fire
-	case 4: return &held.tap_1
-	case 5: return &held.tap_2
+	case 3: return &held.tap
 	}
 	return nil
 }

@@ -603,10 +603,10 @@ impl Backend {
     }
 
     fn debug_inject_call(&mut self, caller_line: u8, callee_line: u8) -> Result<(), ProtocolError> {
-        if caller_line >= 16 || callee_line >= 16 || caller_line == callee_line {
+        if caller_line >= 12 || callee_line >= 12 || caller_line == callee_line {
             return Err(protocol_error(
                 "invalid_debug_call",
-                "debug Calls must use two different subscriber lines from 0 through 15",
+                "debug Calls must use two different subscriber lines from 0 through 11",
             ));
         }
         if !self.debug_godmode
@@ -893,7 +893,7 @@ impl Backend {
             } else {
                 next_state.calls.clear();
                 next_state.call = None;
-                next_state.line_lamps = [false; 16];
+                next_state.line_lamps = [false; 12];
                 next_state.shift.number = next_state.shift.number.saturating_add(1);
                 next_state.shift.phase = ShiftPhase::Ready;
                 next_state.shift.active_call_count = 0;
@@ -919,7 +919,7 @@ impl Backend {
         if final_standoff {
             next_state.calls.clear();
             next_state.call = None;
-            next_state.line_lamps = [false; 16];
+            next_state.line_lamps = [false; 12];
             next_state.shift.phase = ShiftPhase::Settled;
             next_state.shift.active_call_count = 0;
             next_state.game_phase = GamePhase::Ended;
@@ -1596,7 +1596,6 @@ impl Backend {
             return match shift {
                 1 => Some(ServiceKind::Police),
                 2 => Some(ServiceKind::Ems),
-                3 => Some(ServiceKind::Fire),
                 _ => None,
             };
         }
@@ -1896,7 +1895,7 @@ impl Default for Backend {
 struct CallTransition {
     calls: Vec<exchange_protocol::CallStatus>,
     call: Option<exchange_protocol::CallStatus>,
-    line_lamps: [bool; 16],
+    line_lamps: [bool; 12],
     game_phase: GamePhase,
     shift: ShiftStatus,
     routing_receipt: Option<String>,
@@ -1906,7 +1905,7 @@ struct CallTransition {
 
 struct SingleCallTransition {
     call: Option<exchange_protocol::CallStatus>,
-    line_lamps: [bool; 16],
+    line_lamps: [bool; 12],
     game_phase: GamePhase,
     shift: ShiftStatus,
     routing_receipt: Option<String>,
@@ -2116,7 +2115,7 @@ fn advance_single_call(
         let Some((caller_line, callee)) = authored_call else {
             if input.cord_topology.is_empty() {
                 return SingleCallTransition {
-                    line_lamps: [false; 16],
+                    line_lamps: [false; 12],
                     call: None,
                     game_phase: state.game_phase.clone(),
                     shift: state.shift.clone(),
@@ -2306,7 +2305,7 @@ fn advance_single_call(
                 next_shift.active_call_count = 0;
                 return SingleCallTransition {
                     call: None,
-                    line_lamps: [false; 16],
+                    line_lamps: [false; 12],
                     game_phase: next_game_phase,
                     shift: next_shift,
                     routing_receipt: None,
@@ -2321,7 +2320,7 @@ fn advance_single_call(
             if input.cord_topology.is_empty() {
                 return SingleCallTransition {
                     call: None,
-                    line_lamps: [false; 16],
+                    line_lamps: [false; 12],
                     game_phase: next_game_phase,
                     shift: next_shift,
                     routing_receipt: None,
@@ -2340,7 +2339,7 @@ fn advance_single_call(
                 next_shift.active_call_count = 0;
                 return SingleCallTransition {
                     call: None,
-                    line_lamps: [false; 16],
+                    line_lamps: [false; 12],
                     game_phase: next_game_phase,
                     shift: next_shift,
                     routing_receipt: None,
@@ -2480,7 +2479,7 @@ fn speaker_is_active(input: &InputState, state: &StateOutput) -> bool {
             .iter()
             .any(|cord| cord.first == PortId::Operator || cord.second == PortId::Operator);
     let tap_active = tap_bridge_monitoring(input, state).is_some();
-    operator_active || held.police || held.ems || held.fire || tap_active
+    operator_active || held.police || held.ems || tap_active
 }
 
 fn service_from_controls(held: &exchange_protocol::HeldControls) -> Option<ServiceKind> {
@@ -2488,8 +2487,6 @@ fn service_from_controls(held: &exchange_protocol::HeldControls) -> Option<Servi
         Some(ServiceKind::Police)
     } else if held.ems {
         Some(ServiceKind::Ems)
-    } else if held.fire {
-        Some(ServiceKind::Fire)
     } else {
         None
     }
@@ -2590,7 +2587,6 @@ fn service_label(service: ServiceKind) -> &'static str {
     match service {
         ServiceKind::Police => "POLICE",
         ServiceKind::Ems => "EMS",
-        ServiceKind::Fire => "FIRE",
     }
 }
 
@@ -2650,8 +2646,8 @@ fn has_wrong_direct_circuit(cords: &[CordConnection], caller: &PortId, callee: &
         })
 }
 
-fn lamps_for_call(call: Option<&exchange_protocol::CallStatus>) -> [bool; 16] {
-    let mut lamps = [false; 16];
+fn lamps_for_call(call: Option<&exchange_protocol::CallStatus>) -> [bool; 12] {
+    let mut lamps = [false; 12];
     let Some(call) = call else {
         return lamps;
     };
@@ -2667,8 +2663,8 @@ fn lamps_for_call(call: Option<&exchange_protocol::CallStatus>) -> [bool; 16] {
     lamps
 }
 
-fn lamps_for_calls(calls: &[exchange_protocol::CallStatus]) -> [bool; 16] {
-    let mut lamps = [false; 16];
+fn lamps_for_calls(calls: &[exchange_protocol::CallStatus]) -> [bool; 12] {
+    let mut lamps = [false; 12];
     for call in calls {
         lamps[call.caller_line as usize] = true;
         if matches!(
@@ -2684,7 +2680,7 @@ fn lamps_for_calls(calls: &[exchange_protocol::CallStatus]) -> [bool; 16] {
 }
 
 fn light_ring_generator_lines(
-    lamps: &mut [bool; 16],
+    lamps: &mut [bool; 12],
     cords: &[CordConnection],
     crank_is_recent: bool,
 ) {
@@ -2698,14 +2694,14 @@ fn light_ring_generator_lines(
             | (PortId::RingGenerator, PortId::Subscriber(line)) => Some(*line),
             _ => None,
         };
-        if let Some(line) = line.filter(|line| *line < 16) {
+        if let Some(line) = line.filter(|line| *line < 12) {
             lamps[line as usize] = true;
         }
     }
 }
 
 fn has_tap_bridge_circuit(cords: &[CordConnection], caller: &PortId, callee: &PortId) -> bool {
-    (1..=2).any(|bridge| has_tap_bridge_circuit_on_bridge(cords, caller, callee, bridge))
+    has_tap_bridge_circuit_on_bridge(cords, caller, callee, 1)
 }
 
 fn has_tap_bridge_circuit_on_bridge(
@@ -2721,13 +2717,9 @@ fn has_tap_bridge_circuit_on_bridge(
 }
 
 fn tap_bridge_monitoring(input: &InputState, state: &StateOutput) -> Option<u8> {
-    (1..=2).find(|bridge| {
-        let held = if *bridge == 1 {
-            input.held_controls.tap_1
-        } else {
-            input.held_controls.tap_2
-        };
-        held && state.calls.iter().any(|call| {
+    let held = input.held_controls.tap;
+    held.then(|| 1).filter(|bridge| {
+        state.calls.iter().any(|call| {
             matches!(
                 call.phase,
                 exchange_protocol::CallPhase::Connected | exchange_protocol::CallPhase::Completed
@@ -3113,16 +3105,16 @@ fn validate_cords(cords: &[CordConnection]) -> Result<(), ProtocolError> {
 
 fn validate_port(port: &PortId) -> Result<(), ProtocolError> {
     match port {
-        PortId::Subscriber(line) if *line < 16 => Ok(()),
-        PortId::Tap(index) if (1..=4).contains(index) => Ok(()),
+        PortId::Subscriber(line) if *line < 12 => Ok(()),
+        PortId::Tap(index) if (1..=2).contains(index) => Ok(()),
         PortId::Operator | PortId::RingGenerator => Ok(()),
         PortId::Subscriber(_) => Err(protocol_error(
             "invalid_port",
-            "subscriber ports must be numbered 0 through 15",
+            "subscriber ports must be numbered 0 through 11",
         )),
         PortId::Tap(_) => Err(protocol_error(
             "invalid_port",
-            "Tap Bridge jacks must be tap_1 through tap_4",
+            "Tap Bridge jacks must be tap_1 or tap_2",
         )),
     }
 }
@@ -3541,7 +3533,7 @@ fn simple_place_for_line(line: u8) -> &'static str {
         0 => "RAIL DISPATCH",
         1 => "KHARAD CLINIC",
         2 => "RATION OFFICE",
-        3 => "FIRE STATION",
+        3 => "BORDER DEPOT",
         4 => "FOUNDRY APTS",
         5 => "BORDER POST",
         6 => "LABOUR OFFICE",
@@ -3565,7 +3557,7 @@ fn simple_directory_user(line: u8) -> (&'static str, &'static str, &'static str)
         ),
         3 => (
             "CAPTAIN OREN VEY",
-            "fire watch officer",
+            "border watch officer",
             "on duty until the dawn bell",
         ),
         4 => (
@@ -3597,7 +3589,7 @@ fn initial_state(
     required_service_kind: Option<ServiceKind>,
 ) -> StateOutput {
     StateOutput {
-        line_lamps: [false; 16],
+        line_lamps: [false; 12],
         game_phase: GamePhase::Ready,
         run_generation: 0,
         clock: ClockState {
@@ -3764,7 +3756,7 @@ mod tests {
 
     #[test]
     fn crank_lights_every_subscriber_connected_to_ring_generator() {
-        let mut lamps = [false; 16];
+        let mut lamps = [false; 12];
         let cords = vec![
             CordConnection {
                 first: PortId::Subscriber(3),
@@ -3785,7 +3777,7 @@ mod tests {
 
     #[test]
     fn ring_generator_lamps_stay_dark_without_a_new_crank_timestamp() {
-        let mut lamps = [false; 16];
+        let mut lamps = [false; 12];
         let cords = vec![CordConnection {
             first: PortId::Subscriber(3),
             second: PortId::RingGenerator,

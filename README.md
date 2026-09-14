@@ -151,9 +151,7 @@ The action buttons are:
 - `PTT / OPERATOR`
 - `POLICE`
 - `EMS`
-- `FIRE`
-- `TAP BRIDGE 1 LISTEN`
-- `TAP BRIDGE 2 LISTEN`
+- `TAP BRIDGE LISTEN`
 
 The initial Directory value is `0001`. The live hardware story uses subscriber
 lines `0` through `5`, keeps two Calls active, and chooses new caller/callee

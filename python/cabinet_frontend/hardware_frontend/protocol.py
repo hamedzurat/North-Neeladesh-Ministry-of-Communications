@@ -69,7 +69,7 @@ class ProtocolValidationError(ValueError):
 
 def validate_input_message(message: dict[str, Any]) -> None:
     _require_keys(message, "protocol_version", "input_sequence", "expected_state_revision", "input")
-    if message["protocol_version"] != 1:
+    if message["protocol_version"] != 2:
         raise ProtocolValidationError("unsupported input protocol version")
     if not isinstance(message["input_sequence"], int) or message["input_sequence"] <= 0:
         raise ProtocolValidationError("input_sequence must be a positive integer")
@@ -98,7 +98,10 @@ def validate_input_message(message: dict[str, Any]) -> None:
             endpoints.add(endpoint)
 
     held = _map(input_state["held_controls"], "held_controls")
-    for key in ("ptt", "police", "ems", "fire", "tap_1", "tap_2"):
+    held_keys = {"ptt", "police", "ems", "tap"}
+    if set(held) != held_keys:
+        raise ProtocolValidationError("held_controls contains unsupported controls")
+    for key in held_keys:
         if not isinstance(held.get(key), bool):
             raise ProtocolValidationError(f"held_controls.{key} must be boolean")
 
@@ -148,7 +151,7 @@ def validate_state_message(message: dict[str, Any]) -> None:
         "state_revision",
         "output",
     )
-    if message["protocol_version"] != 1:
+    if message["protocol_version"] != 2:
         raise ProtocolValidationError("unsupported state protocol version")
     if not isinstance(message["accepted"], bool):
         raise ProtocolValidationError("accepted must be boolean")
@@ -177,10 +180,10 @@ def validate_state_message(message: dict[str, Any]) -> None:
     lamps = output["line_lamps"]
     if (
         not isinstance(lamps, list)
-        or len(lamps) != 16
+        or len(lamps) != 12
         or not all(isinstance(value, bool) for value in lamps)
     ):
-        raise ProtocolValidationError("output.line_lamps must contain sixteen booleans")
+        raise ProtocolValidationError("output.line_lamps must contain twelve booleans")
     _map(output["clock"], "output.clock")
     _require_keys(output["clock"], "shift", "elapsed_seconds")
     _map(output["tuning"], "output.tuning")
@@ -228,12 +231,12 @@ def _valid_port(value: Any) -> bool:
         suffix = value.removeprefix("subscriber_")
         return (
             suffix.isdigit()
-            and 0 <= int(suffix) < 16
+            and 0 <= int(suffix) < 12
             and (suffix == "0" or not suffix.startswith("0"))
         )
     if value.startswith("tap_"):
         suffix = value.removeprefix("tap_")
-        return suffix in {"1", "2", "3", "4"}
+        return suffix in {"1", "2"}
     return False
 
 

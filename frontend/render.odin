@@ -51,20 +51,20 @@ ref_draw_lamp :: proc(position: rl.Vector2, lit := false) {
 ref_draw_subscriber_lines :: proc(app: ^Input_State, jacks: ^[ENDPOINT_COUNT]rl.Vector2) {
 	area := ref_rect(20, 20, 900, 490)
 	ref_panel(area)
-	cell_width: f32 = 98
+	cell_width: f32 = 135
 	cell_height: f32 = 220
 	gap: f32 = 11
 	start_x := area.x + 17
 	start_y := area.y + 19
 
 	for index in 0 ..< LINE_COUNT {
-		column := index % 8
-		row := index / 8
+		column := index % 6
+		row := index / 6
 		cell := ref_rect(start_x + f32(column) * (cell_width + gap), start_y + f32(row) * (cell_height + gap), cell_width, cell_height)
 		rl.DrawRectangleRounded(cell, 0.04, 3, CONTROL)
 		rl.DrawRectangleRoundedLinesEx(cell, 0.04, 3, 1, BORDER)
-		label_width := ref_measure(REF_LINE_LABELS[index], 10)
-		ref_text_c(REF_LINE_LABELS[index], cell.x + (cell.width - label_width) / 2, cell.y + 16, 10)
+		label_width := ref_measure(REF_LINE_LABELS[index], 8)
+		ref_text_c(REF_LINE_LABELS[index], cell.x + (cell.width - label_width) / 2, cell.y + 16, 8)
 		lamp_position := ref_point(cell.x + cell.width / 2, cell.y + 99)
 		jack_position := ref_point(cell.x + cell.width / 2, cell.y + 170)
 		ref_draw_lamp(lamp_position, app.backend_output.line_lamps[index])
@@ -74,10 +74,9 @@ ref_draw_subscriber_lines :: proc(app: ^Input_State, jacks: ^[ENDPOINT_COUNT]rl.
 }
 
 ref_tap_position :: proc(index: int) -> rl.Vector2 {
-	bridge := index / 2
 	side := index % 2
-	centers := [2]f32{400, 700}
-	return ref_point(20 + centers[bridge] + (f32(side) * 2 - 1) * 20, 602)
+	center_x: f32 = 470
+	return ref_point(20 + center_x + (f32(side) * 2 - 1) * 20, 602)
 }
 
 ref_draw_exchange_ports :: proc(jacks: ^[ENDPOINT_COUNT]rl.Vector2) {
@@ -85,22 +84,19 @@ ref_draw_exchange_ports :: proc(jacks: ^[ENDPOINT_COUNT]rl.Vector2) {
 	ref_panel(area)
 	ref_text_c("OPERATOR", 85, area.y + 20, 12, MUTED)
 	ref_text_c("RING GENERATOR", 210, area.y + 20, 12, MUTED)
-	jacks[16] = ref_point(120, area.y + 77)
-	jacks[17] = ref_point(270, area.y + 77)
-	ref_draw_jack(jacks[16])
-	ref_draw_jack(jacks[17])
-	centers := [2]f32{400, 700}
-	for index in 0 ..< 2 {
-		center_x := 20 + centers[index]
-		ref_text(fmt.tprintf("TAP BRIDGE %d", index + 1), center_x - 45, area.y + 20, 11, MUTED)
-		first := ref_tap_position(index * 2)
-		second := ref_tap_position(index * 2 + 1)
-		jacks[18 + index * 2] = first
-		jacks[19 + index * 2] = second
-		rl.DrawLineEx(first, second, 3, BORDER)
-		ref_draw_jack(first)
-		ref_draw_jack(second)
-	}
+	jacks[12] = ref_point(120, area.y + 77)
+	jacks[13] = ref_point(270, area.y + 77)
+	ref_draw_jack(jacks[12])
+	ref_draw_jack(jacks[13])
+	center_x := 20 + f32(470)
+	ref_text_c("TAP BRIDGE", center_x - 38, area.y + 20, 11, MUTED)
+	first := ref_tap_position(0)
+	second := ref_tap_position(1)
+	jacks[14] = first
+	jacks[15] = second
+	rl.DrawLineEx(first, second, 3, BORDER)
+	ref_draw_jack(first)
+	ref_draw_jack(second)
 	for color, index in REF_CORD_COLORS {
 		x := area.x + 342 + f32(index) * 64
 		rl.DrawRectangleRounded(ref_rect(x, area.y + 105, 42, 5), 0.8, 3, color)

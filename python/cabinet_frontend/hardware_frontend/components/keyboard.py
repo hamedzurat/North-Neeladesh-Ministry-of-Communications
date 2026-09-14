@@ -26,9 +26,7 @@ class KeyboardControls:
         "p": "ptt",
         "1": "police",
         "2": "ems",
-        "3": "fire",
-        "q": "tap_1",
-        "w": "tap_2",
+        "q": "tap",
     }
 
     def __init__(self, input_stream: TextIO = sys.stdin, output: TextIO = sys.stdout) -> None:
@@ -42,7 +40,7 @@ class KeyboardControls:
         if input_stream.isatty():
             self._old_terminal = termios.tcgetattr(input_stream.fileno())
             tty.setcbreak(input_stream.fileno())
-        print("KEYBOARD CONTROLS // p=PTT 1=POLICE 2=EMS 3=FIRE q= TAP1 w= TAP2", file=output)
+        print("KEYBOARD CONTROLS // p=PTT 1=POLICE 2=EMS q=TAP1", file=output)
 
     def poll(self) -> HeldControls:
         if not self.input_stream.isatty():

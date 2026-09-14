@@ -18,10 +18,10 @@ end
 subgraph CONSOLE["Retro Switchboard Console"]
 ESP["ESP32 DevKit<br/>USB serial primary<br/>Wi-Fi backup"]
 subgraph PATCH["Logical Patch Panel"]
-MAIN["16 subscriber sockets"]
+MAIN["12 subscriber sockets"]
 OP["1 operator socket"]
 RING["1 ring-generator socket"]
-TAP["8 wiretap sockets<br/>4 blocks × 2"]
+TAP["2 wiretap sockets<br/>1 block × 2"]
 RPROT["26 × 1 kΩ series resistors"]
 MCPA["MCP23017 — 0x20"]
 MCPB["MCP23017 — 0x21"]
@@ -34,7 +34,7 @@ RPROT --> MCPB
 end
 subgraph IDINPUT["Identity & Button Inputs"]
 BCD["4 BCD thumbwheels<br/>16 digital bits"]
-BUTTONS["PTT, police, EMS, fire,<br/>lookup & 4 wiretap buttons"]
+BUTTONS["PTT, police, EMS,<br/>lookup & 1 wiretap button"]
 MCPC["MCP23017 — 0x22"]
 DIRECT["3 direct ESP32 inputs"]
 BCD --> MCPC
@@ -188,7 +188,7 @@ end
   - [ ] 26x - 6.35 mm mono TS panel sockets
   - [ ] 16x - 6.35 mm heavy-duty mono TS plugs
   - [ ] 5m - Flexible two-core / shielded patch cable
-  - [ ] 2x - Eight-pixel WS2812B straight LED modules (16 subscriber LEDs total)
+  - [ ] 1x - Twelve-pixel WS2812B straight LED module (12 subscriber LEDs total)
   - [ ] 1x - 74HCT125 logic-level buffer IC
   - [ ] 30x - 1 kΩ resistors (26x socket protection + 2x audio mix + 1x printer protection + 1x spare)
   - [ ] 2x - 2.2 kΩ resistors
@@ -209,8 +209,8 @@ end
   - [ ] 2x - Full-size 10 kΩ linear potentiometers (Tuning knobs A & B)
   - [ ] 3x - Retro control knobs (2x tuning, 1x volume)
   - [ ] 1x - 10 kΩ or 50 kΩ logarithmic volume potentiometer
-  - [ ] 5x - Threaded metal momentary pushbuttons (PTT, Police, EMS, Fire, Lookup)
-  - [ ] 4x - Basic two-pin pushbuttons (Wiretap listen buttons)
+  - [ ] 4x - Threaded metal momentary pushbuttons (PTT, Police, EMS, Lookup)
+  - [ ] 1x - Basic two-pin pushbutton (Tap Bridge listen)
   - [ ] 1x - DPST panel rocker switch (Main power switch)
   - [ ] 1x - PAM8403 miniature audio amplifier module
   - [ ] 1x - 3 W, 8 Ω miniature speaker
@@ -237,7 +237,7 @@ end
   - [ ] LLM
   - [ ] STT (transcriber)
 - [ ] Writing (World Building)
-  - [ ] Name 16 subscriber ports
+  - [ ] Name 12 subscriber ports
   - [ ] Write 20+ different characters
   - [ ] Create multiple endings
   - [ ] Write game trailer script

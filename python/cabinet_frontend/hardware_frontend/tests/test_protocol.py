@@ -9,6 +9,7 @@ from hardware_frontend.protocol import (
     frame,
     receive_exact,
     receive_frame,
+    _valid_port,
     validate_input_message,
 )
 
@@ -44,7 +45,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_backend_port_zero_is_a_valid_subscriber_port(self) -> None:
         message = {
-            "protocol_version": 1,
+            "protocol_version": 2,
             "input_sequence": 1,
             "expected_state_revision": 0,
             "input": {
@@ -53,9 +54,7 @@ class ProtocolTests(unittest.TestCase):
                     "ptt": False,
                     "police": False,
                     "ems": False,
-                    "fire": False,
-                    "tap_1": False,
-                    "tap_2": False,
+                    "tap": False,
                 },
                 "directory_digits": [0, 0, 0, 1],
                     "crank_rotation_timestamps": [0, 0, 0, 0],
@@ -69,9 +68,16 @@ class ProtocolTests(unittest.TestCase):
         }
         validate_input_message(message)
 
+    def test_game_contract_uses_twelve_lines_and_one_tap_bridge(self) -> None:
+        self.assertTrue(_valid_port("subscriber_11"))
+        self.assertTrue(_valid_port("tap_1"))
+        self.assertTrue(_valid_port("tap_2"))
+        self.assertFalse(_valid_port("subscriber_12"))
+        self.assertFalse(_valid_port("tap_3"))
+
     def test_invalid_topology_is_rejected_before_transmission(self) -> None:
         message = {
-            "protocol_version": 1,
+            "protocol_version": 2,
             "input_sequence": 1,
             "expected_state_revision": 0,
             "input": {
@@ -83,9 +89,7 @@ class ProtocolTests(unittest.TestCase):
                     "ptt": False,
                     "police": False,
                     "ems": False,
-                    "fire": False,
-                    "tap_1": False,
-                    "tap_2": False,
+                    "tap": False,
                 },
                 "directory_digits": [0, 0, 0, 1],
                     "crank_rotation_timestamps": [0, 0, 0, 0],
@@ -105,5 +109,5 @@ class ProtocolTests(unittest.TestCase):
             codec = CborCodec()
         except RuntimeError as error:
             self.skipTest(str(error))
-        value = {"protocol_version": 1, "input_sequence": 1, "accepted": True}
+        value = {"protocol_version": 2, "input_sequence": 1, "accepted": True}
         self.assertEqual(codec.decode(codec.encode(value)), value)

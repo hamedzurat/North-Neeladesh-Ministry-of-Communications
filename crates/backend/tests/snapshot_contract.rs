@@ -163,8 +163,8 @@ fn printer_output_is_backend_owned_across_inputs() {
 #[test]
 fn eight_cords_are_allowed_but_ninth_and_duplicate_endpoints_are_rejected() {
     let mut backend = Backend::new();
-    let cords: Vec<_> = (0..8)
-        .map(|index| cord(PortId::Subscriber(index), PortId::Subscriber(index + 8)))
+    let cords: Vec<_> = (0..6)
+        .map(|index| cord(PortId::Subscriber(index), PortId::Subscriber(index + 6)))
         .collect();
     let accepted = backend.apply_input_message(topology_input(1, 0, cords.clone()));
     assert!(accepted.accepted);
@@ -179,9 +179,9 @@ fn eight_cords_are_allowed_but_ninth_and_duplicate_endpoints_are_rejected() {
             cord(PortId::Subscriber(6), PortId::Subscriber(7)),
             cord(PortId::Subscriber(8), PortId::Subscriber(9)),
             cord(PortId::Subscriber(10), PortId::Subscriber(11)),
-            cord(PortId::Subscriber(12), PortId::Subscriber(13)),
-            cord(PortId::Subscriber(14), PortId::Operator),
-            cord(PortId::Subscriber(15), PortId::RingGenerator),
+            cord(PortId::Subscriber(0), PortId::Subscriber(1)),
+            cord(PortId::Subscriber(2), PortId::Subscriber(3)),
+            cord(PortId::Subscriber(4), PortId::Subscriber(5)),
         ]
         .to_vec(),
     ));
@@ -206,7 +206,7 @@ fn arbitrary_physical_topology_is_accepted_without_advancing_routing() {
     let response = backend.apply_input_message(topology_input(
         1,
         0,
-        vec![cord(PortId::Subscriber(6), PortId::Subscriber(14))],
+        vec![cord(PortId::Subscriber(6), PortId::Subscriber(8))],
     ));
 
     assert!(response.accepted);
@@ -248,7 +248,7 @@ fn routing_requires_timestamped_crank_rotations_and_accepts_valid_topology() {
             cord(PortId::Subscriber(1), PortId::RingGenerator),
         ],
     );
-    no_rotation.input.held_controls.tap_1 = true;
+    no_rotation.input.held_controls.tap = true;
     let no_rotation = backend.apply_input_message(no_rotation);
     assert_eq!(
         no_rotation.output.call.as_ref().unwrap().phase,

@@ -267,7 +267,7 @@ fn third_shift_supports_competing_calls_and_tap_bridge_monitoring() {
             cord(PortId::Subscriber(1), PortId::Tap(2)),
         ],
     );
-    listening.input.held_controls.tap_1 = true;
+    listening.input.held_controls.tap = true;
     let listening = backend.apply_input_message(listening);
     assert_eq!(listening.output.tap_bridge_monitoring, Some(1));
     assert!(listening.output.speaker_active);
@@ -282,7 +282,7 @@ fn third_shift_supports_competing_calls_and_tap_bridge_monitoring() {
             cord(PortId::Subscriber(1), PortId::Tap(2)),
         ],
     );
-    listening_again.input.held_controls.tap_1 = true;
+    listening_again.input.held_controls.tap = true;
     let listening_again = backend.apply_input_message(listening_again);
     assert_eq!(listening_again.output.tap_bridge_monitoring, Some(1));
     assert_eq!(

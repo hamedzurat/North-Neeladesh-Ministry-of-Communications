@@ -30,8 +30,8 @@ input_to_cbor :: proc(input: Input_Intent, input_sequence, expected_state_revisi
 
 held_to_cbor :: proc(held: Held) -> cbor.Value {
 	return cbor_map({
-		entry("ptt", held.ptt), entry("police", held.police), entry("ems", held.ems), entry("fire", held.fire),
-		entry("tap_1", held.tap_1), entry("tap_2", held.tap_2),
+		entry("ptt", held.ptt), entry("police", held.police), entry("ems", held.ems),
+		entry("tap", held.tap),
 	})
 }
 
@@ -99,6 +99,8 @@ state_message_is_complete :: proc(value: cbor.Value) -> bool {
 	if u16_value(map_get_or(value, "protocol_version")) != PROTOCOL_VERSION do return false
 	output, output_ok := map_get(value, "output")
 	if !output_ok || !map_has_keys(output, {"line_lamps", "game_phase", "clock", "speaker_active", "interference_level", "tap_bridge_audio_active", "tuning", "directory_pages", "printer_output", "call", "calls", "service_call", "tap_bridge_monitoring", "shift", "debug"}) do return false
+	line_lamps, line_lamps_ok := map_get(output, "line_lamps")
+	if !line_lamps_ok || len(array_value(line_lamps)) != 12 do return false
 	clock, clock_ok := map_get(output, "clock")
 	if !clock_ok || !map_has_keys(clock, {"shift", "elapsed_seconds"}) do return false
 	tuning, tuning_ok := map_get(output, "tuning")
@@ -128,7 +130,7 @@ u16_value :: proc(value: cbor.Value) -> u16 { return u16(u64_value(value)) }
 u8_value :: proc(value: cbor.Value) -> u8 { return u8(u64_value(value)) }
 array_value :: proc(value: cbor.Value) -> []cbor.Value { #partial switch item in value { case ^cbor.Array: return item^; case: return nil } }
 
-decode_lamps :: proc(value: cbor.Value) -> [16]bool { result: [16]bool; for item, i in array_value(value) { if i < 16 { result[i] = bool_value(item) } }; return result }
+decode_lamps :: proc(value: cbor.Value) -> [12]bool { result: [12]bool; for item, i in array_value(value) { if i < 12 { result[i] = bool_value(item) } }; return result }
 
 decode_pages :: proc(value: cbor.Value) -> [dynamic]Page {
 	result := make([dynamic]Page, 0)

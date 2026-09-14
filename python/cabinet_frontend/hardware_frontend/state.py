@@ -11,18 +11,14 @@ class HeldControls:
     ptt: bool = False
     police: bool = False
     ems: bool = False
-    fire: bool = False
-    tap_1: bool = False
-    tap_2: bool = False
+    tap: bool = False
 
     def to_wire(self) -> dict[str, bool]:
         return {
             "ptt": self.ptt,
             "police": self.police,
             "ems": self.ems,
-            "fire": self.fire,
-            "tap_1": self.tap_1,
-            "tap_2": self.tap_2,
+            "tap": self.tap,
         }
 
 
@@ -62,7 +58,7 @@ def input_message(
     timestamps = physical.crank_rotation_timestamps[-4:]
     timestamps = [0] * (4 - len(timestamps)) + timestamps
     return {
-        "protocol_version": 1,
+        "protocol_version": 2,
         "input_sequence": sequence,
         "expected_state_revision": expected_state_revision,
         "input": {

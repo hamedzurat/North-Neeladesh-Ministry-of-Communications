@@ -66,7 +66,7 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
         physical_message(
             3,
             2,
-            vec![cord(PortId::Subscriber(6), PortId::Subscriber(14))],
+            vec![cord(PortId::Subscriber(6), PortId::Subscriber(8))],
             [0; 4],
         ),
     )?;

@@ -16,7 +16,7 @@ Deferred until after the hardware loop is truthful:
 - Large Subscriber and Faction catalogues.
 - Subscriber Memories, Actions, and State Queries.
 - Household economy and Ministry progression.
-- More than two Tap Bridges.
+- More than one Tap Bridge.
 - Final manufacturing and physical wiring.
 
 ## Target Demo
@@ -27,7 +27,7 @@ One repeatable accelerated Shift:
 - Backend owns the displayed clock.
 - Odin and the Pi frontend render the same snapshots.
 - A temporary authored story exercises normal Routing, interference/tuning,
-  competing and Held Callers, both Tap Bridges, Directory use, all three
+  competing and Held Callers, one Tap Bridge, Directory use, Police/EMS
   Service controls, printer output, voice activity, and reset.
 - Missing physical parts use Odin or dummy components with the same protocol
   semantics.
@@ -103,11 +103,11 @@ Odin, and the dummy Cabinet Frontend.
   advance `state_revision`, and create no Routing receipt.
 - Routing attempts with a Directory selection that does not match the authored
   Call return `accepted: false` with `directory_selection_required`.
-- Police, EMS, and Fire are represented by the shared `ServiceKind` and generic
+- Police and EMS are represented by the shared `ServiceKind` and generic
   press/release tests pass.
 - A required ServiceKind must match the held Service control; the wrong type
   does not increment completion.
-- The hardware demo assigns Police, EMS, and Fire requirements to its three
+- The hardware demo assigns Police and EMS requirements to its authored
   authored mechanical Shifts.
 - Two Tap Bridge controls are represented and only the matching held control
   reports monitoring.
@@ -160,9 +160,9 @@ The state guard and final response now agree. Required behavior is implemented:
 
 `apply_service_transition` now validates the required type for every ServiceKind:
 
-- A required Police, EMS, or Fire call accepts only that type.
+- A required Police or EMS call accepts only that type.
 - A wrong type emits a typed diagnostic and does not increment completion.
-- The hardware story visibly exercises Police, EMS, and Fire.
+- The hardware story visibly exercises Police and EMS.
 
 ### Completed P0: Reset printer reconciliation
 
@@ -214,7 +214,7 @@ Required demo behavior:
 
 `python/cabinet_frontend/hardware_frontend/components/factory.py:67-90`
 creates `NoopControls` unless keyboard mode is enabled. There is no real GPIO
-mapping yet for PTT, Police, EMS, Fire, Tap 1, Tap 2, or Directory digits.
+mapping yet for PTT, Police, EMS, Tap, or Directory digits.
 Tuning also has no physical input and defaults to `0/0`.
 
 The current real component path can exercise some output and topology devices,
@@ -248,7 +248,7 @@ Work from the top down. Do not start deferred game systems.
 
 - Added a wrong-Directory Routing test.
 - Changed pre-ring responses to `accepted: false` with typed errors.
-- Added required ServiceKind tests and a runtime Police/EMS/Fire Shift test.
+- Added required ServiceKind tests and runtime Police/EMS tests.
 - Added an OutputMapper reset/receipt test.
 - Added Tap pre-ring rejection coverage.
 
@@ -269,7 +269,7 @@ Author a small linear sequence of Shift Calls:
 2. Neri's Call has interference and requires tuning.
 3. A Tap Bridge Call exposes a bounded intercepted exchange and a competing
    Held Caller.
-4. Police, EMS, and Fire each produce visible Service behavior at deterministic
+4. Police and EMS each produce visible Service behavior at deterministic
    points.
 5. The Shift settles, prints an Ending, and resets cleanly.
 
@@ -308,7 +308,7 @@ persistence or final story prose.
 - Ringing requires the Ring Generator and crank.
 - Both Tap Bridges can be exercised and release stops monitoring.
 - Competing and Held Callers work in the authored sequence.
-- Police, EMS, and Fire each produce correct Service state and receipts.
+- Police and EMS each produce correct Service state and receipts.
 - Wrong ServiceKind cannot satisfy a required Service rule.
 - Tuning reduces authored interference and permits the affected route.
 - Clock values match in Odin and the Pi frontend.

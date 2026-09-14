@@ -222,7 +222,7 @@ fn tap_bridge_routes_a_circuit_and_only_monitors_while_held() {
     assert_eq!(routed.output.call.unwrap().phase, CallPhase::Connected);
 
     let listening = HeldControls {
-        tap_1: true,
+        tap: true,
         ..HeldControls::default()
     };
     let listening = apply(
@@ -406,12 +406,8 @@ fn directory_selection_is_required_before_routing() {
 }
 
 #[test]
-fn police_ems_and_fire_controls_share_press_release_service_behavior() {
-    for (service, text) in [
-        (ServiceKind::Police, "POLICE"),
-        (ServiceKind::Ems, "EMS"),
-        (ServiceKind::Fire, "FIRE"),
-    ] {
+fn police_and_ems_controls_share_press_release_service_behavior() {
+    for (service, text) in [(ServiceKind::Police, "POLICE"), (ServiceKind::Ems, "EMS")] {
         let mut backend = Backend::new_with_required_service(service);
         let mut sequence = 1;
         apply(&mut backend, &mut sequence, vec![], HeldControls::default());
@@ -426,7 +422,6 @@ fn police_ems_and_fire_controls_share_press_release_service_behavior() {
         match service {
             ServiceKind::Police => held.police = true,
             ServiceKind::Ems => held.ems = true,
-            ServiceKind::Fire => held.fire = true,
         }
         let active = if service == ServiceKind::Police {
             apply_with_directory(
@@ -736,17 +731,6 @@ fn hardware_demo_runtime_enforces_all_three_service_shifts() {
         HeldControls::default(),
         4,
     );
-    let fire = apply_with_directory(
-        &mut backend,
-        &mut sequence,
-        vec![cord(PortId::Subscriber(2), PortId::Operator)],
-        HeldControls {
-            fire: true,
-            ..HeldControls::default()
-        },
-        4,
-    );
-    assert_eq!(fire.output.service_call.unwrap().service, ServiceKind::Fire);
 }
 
 #[test]

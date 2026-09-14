@@ -8,7 +8,7 @@ Each message is framed as:
 u32 big-endian payload length | CBOR payload
 ```
 
-The maximum payload is 4 MiB. The normal frontend protocol version is `1`; the development debug protocol version is `2`. The larger bound allows the development debug surface to retrieve retained voice audio without changing the normal frontend message shapes.
+The maximum payload is 4 MiB. The normal frontend protocol version is `2`; the development debug protocol version is `2`. The game cabinet has twelve subscriber lines, one two-jack Tap Bridge, and Police/EMS service controls.
 
 ## InputMessage
 
@@ -16,14 +16,13 @@ The wire shape is exactly:
 
 ```text
 {
-  "protocol_version": 1,
+  "protocol_version": 2,
   "input_sequence": u64,
   "expected_state_revision": u64,
   "input": {
     "cord_topology": [{"first": PortId, "second": PortId}],
     "held_controls": {
-      "ptt": bool, "police": bool, "ems": bool, "fire": bool,
-      "tap_1": bool, "tap_2": bool
+      "ptt": bool, "police": bool, "ems": bool, "tap": bool
     },
     "directory_digits": [u8; 4],
     "crank_rotation_timestamps": [u64; 4],
@@ -39,7 +38,7 @@ The wire shape is exactly:
 
 `input_sequence` is the request identity. It must be positive and increase for accepted requests. An exact retry of the previous request returns the previous response idempotently. The backend also requires `expected_state_revision` to equal its current revision; rejected requests do not advance that revision.
 
-`PortId` is always one CBOR text string: `subscriber_0` through `subscriber_15`, `operator`, `ring_generator`, or `tap_1` through `tap_4` (the four jacks belonging to two Tap Bridges). A topology has at most eight cords, and every endpoint may occur in at most one cord. Valid physical topologies are accepted even when they do not advance the current call.
+`PortId` is always one CBOR text string: `subscriber_0` through `subscriber_11`, `operator`, `ring_generator`, or `tap_1` and `tap_2` (the two jacks belonging to one Tap Bridge). A topology has at most eight cords, and every endpoint may occur in at most one cord. Valid physical topologies are accepted even when they do not advance the current call.
 
 The crank array contains the timestamps, in milliseconds, of the last four completed full local rotations. Odin records a timestamp when a rotation completes. It does not send a rotation count or computed speed; the backend validates the chronological history and decides whether a new timestamp satisfies ringing.
 
@@ -49,13 +48,13 @@ The response wire shape is exactly:
 
 ```text
 {
-  "protocol_version": 1,
+  "protocol_version": 2,
   "input_sequence": u64,
   "accepted": bool,
   "error": {"code": string, "message": string}|null,
   "state_revision": u64,
   "output": {
-    "line_lamps": [bool; 16],
+    "line_lamps": [bool; 12],
     "game_phase": string,
     "run_generation": u64,
     "clock": {"shift": u8, "elapsed_seconds": u32},

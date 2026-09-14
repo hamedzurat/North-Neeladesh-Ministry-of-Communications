@@ -38,8 +38,8 @@ class OutputMapper:
 
     def apply(self, output: dict[str, Any], now: float | None = None) -> None:
         self.faults.clear()
-        lines = [bool(value) for value in output.get("line_lamps", [False] * 16)]
-        lines = lines[:16]
+        lines = [bool(value) for value in output.get("line_lamps", [False] * 12)]
+        lines = lines[:12]
         if lines != self._last_lines and self._try(
             "line_lamps", lambda: self.line_lamps.set_lines(lines)
         ):

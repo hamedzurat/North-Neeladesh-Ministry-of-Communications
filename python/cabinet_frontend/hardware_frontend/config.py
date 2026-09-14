@@ -23,12 +23,12 @@ class HardwareConfig:
     encoder_s1: int = 11
     encoder_s2: int = 12
     ptt_pin: int = 13
-    ws2812_count: int = 8
+    ws2812_count: int = 12
     tm1637_clk: int = 27
     tm1637_dio: int = 17
     directory_digits: tuple[int, int, int, int] = (0, 0, 0, 1)
     pin_to_port: dict[int, str] = field(default_factory=lambda: dict(DEFAULT_PIN_TO_PORT))
-    line_led_map: dict[int, int] = field(default_factory=lambda: dict(enumerate(range(8))))
+    line_led_map: dict[int, int] = field(default_factory=lambda: dict(enumerate(range(12))))
     poll_interval: float = 0.1
     pair_scan_interval: float = 2.0
     epaper_page_interval: float = 8.0

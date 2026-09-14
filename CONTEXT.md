@@ -377,7 +377,7 @@ The Exchange Operator's standing under the Service Rules currently in force, pro
 _Avoid_: Lives, failure meter
 
 **Service Call**:
-An outbound Call Attempt that the Exchange Operator places directly to police, emergency medical services, or the fire service using its dedicated control. It uses no Cord but occupies the single Operator conversation.
+An outbound Call Attempt that the Exchange Operator places directly to police or emergency medical services using its dedicated control. It uses no Cord but occupies the single Operator conversation.
 _Avoid_: Emergency button, service shortcut
 
 **Operator Session**:

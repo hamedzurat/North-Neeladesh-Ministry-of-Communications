@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwn
 use std::fmt;
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 pub const DEBUG_PROTOCOL_VERSION: u16 = 2;
 pub const MAX_FRAME_SIZE: usize = 4 * 1_048_576;
 pub const VOICE_PROTOCOL_VERSION: u16 = 2;
@@ -28,10 +28,10 @@ impl Serialize for PortId {
         S: Serializer,
     {
         let value = match self {
-            Self::Subscriber(index) if *index < 16 => format!("subscriber_{index}"),
+            Self::Subscriber(index) if *index < 12 => format!("subscriber_{index}"),
             Self::Operator => "operator".to_string(),
             Self::RingGenerator => "ring_generator".to_string(),
-            Self::Tap(index) if (1..=4).contains(index) => format!("tap_{index}"),
+            Self::Tap(index) if (1..=2).contains(index) => format!("tap_{index}"),
             Self::Subscriber(_) => {
                 return Err(serde::ser::Error::custom("invalid subscriber port"));
             }
@@ -57,7 +57,7 @@ impl<'de> Visitor<'de> for PortIdVisitor {
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(
-            "a subscriber_0..subscriber_15, operator, ring_generator, or tap_1..tap_4 port string",
+            "a subscriber_0..subscriber_11, operator, ring_generator, or tap_1..tap_2 port string",
         )
     }
 
@@ -69,15 +69,15 @@ impl<'de> Visitor<'de> for PortIdVisitor {
             "operator" => Ok(PortId::Operator),
             "ring_generator" => Ok(PortId::RingGenerator),
             _ if value.starts_with("subscriber_") => parse_index(value, "subscriber_")
-                .filter(|index| *index < 16)
+                .filter(|index| *index < 12)
                 .map(PortId::Subscriber)
                 .ok_or_else(|| {
-                    E::custom("subscriber port must be subscriber_0 through subscriber_15")
+                    E::custom("subscriber port must be subscriber_0 through subscriber_11")
                 }),
             _ if value.starts_with("tap_") => parse_index(value, "tap_")
-                .filter(|index| (1..=4).contains(index))
+                .filter(|index| (1..=2).contains(index))
                 .map(PortId::Tap)
-                .ok_or_else(|| E::custom("tap port must be tap_1 through tap_4")),
+                .ok_or_else(|| E::custom("tap port must be tap_1 through tap_2")),
             _ => Err(E::custom("invalid port string")),
         }
     }
@@ -104,9 +104,7 @@ pub struct HeldControls {
     pub ptt: bool,
     pub police: bool,
     pub ems: bool,
-    pub fire: bool,
-    pub tap_1: bool,
-    pub tap_2: bool,
+    pub tap: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -188,7 +186,6 @@ pub struct CallStatus {
 pub enum ServiceKind {
     Police,
     Ems,
-    Fire,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -270,7 +267,7 @@ pub struct OutputDebug {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StateOutput {
-    pub line_lamps: [bool; 16],
+    pub line_lamps: [bool; 12],
     pub game_phase: GamePhase,
     pub run_generation: u64,
     pub clock: ClockState,
@@ -682,11 +679,13 @@ impl RtpL16Packet {
             }
             payload = &payload[..payload.len() - padding];
         }
-        if payload.len() % 2 != 0 {
+        if !payload.len().is_multiple_of(2) {
             return Err(VoiceDatagramError::RtpOddPayload);
         }
         let samples = payload
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|bytes| i16::from_be_bytes([bytes[0], bytes[1]]))
             .collect();
         Ok(Self {
@@ -777,13 +776,11 @@ mod tests {
     fn ports_are_single_wire_strings() {
         for port in [
             PortId::Subscriber(0),
-            PortId::Subscriber(15),
+            PortId::Subscriber(11),
             PortId::Operator,
             PortId::RingGenerator,
             PortId::Tap(1),
             PortId::Tap(2),
-            PortId::Tap(3),
-            PortId::Tap(4),
         ] {
             let bytes = serde_cbor::to_vec(&port).unwrap();
             let decoded: PortId = serde_cbor::from_slice(&bytes).unwrap();
@@ -794,7 +791,12 @@ mod tests {
             serde_cbor::to_vec(&PortId::Subscriber(3)).unwrap(),
             serde_cbor::to_vec(&"subscriber_3").unwrap()
         );
+        assert!(
+            serde_cbor::from_slice::<PortId>(&serde_cbor::to_vec(&"subscriber_12").unwrap())
+                .is_err()
+        );
         assert!(serde_cbor::from_slice::<PortId>(&serde_cbor::to_vec(&"tap_5").unwrap()).is_err());
+        assert!(serde_cbor::from_slice::<PortId>(&serde_cbor::to_vec(&"tap_3").unwrap()).is_err());
     }
 
     #[test]
