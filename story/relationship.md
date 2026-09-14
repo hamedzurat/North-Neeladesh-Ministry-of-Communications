@@ -11,8 +11,6 @@ flowchart LR
     AUTONOMY["Riverland Autonomy League"]
     TNB["True North Brigade"]
     SOUTH["Government of South Neeladesh"]
-    PTC["People's Transition Council"]
-    OWNERS["Mine Owners' Compact"]
 
     NRP -->|"supports and uses"| SPD
     SPD -->|"protects for now"| NRP
@@ -21,7 +19,6 @@ flowchart LR
 
     NRP -.->|"hates"| WORKERS
     NRP -.->|"hates"| AUTONOMY
-    NRP -.->|"hates"| PTC
 
     SPD -.->|"hates"| WORKERS
     SPD -.->|"hates"| AUTONOMY
@@ -33,7 +30,6 @@ flowchart LR
 
     WORKERS -->|"cooperates with"| AUTONOMY
     WORKERS -.->|"hates"| NRP
-    WORKERS -.->|"hates"| OWNERS
     WORKERS -.->|"distrusts"| SOUTH
 
     AUTONOMY -->|"cooperates with"| WORKERS
@@ -45,11 +41,5 @@ flowchart LR
     TNB -.->|"hates"| WORKERS
     TNB -.->|"hates"| SOUTH
 
-    SOUTH -->|"funds and influences"| PTC
     SOUTH -->|"tries to use"| AUTONOMY
-    PTC -->|"accepts support from"| SOUTH
-
-    OWNERS -->|"funds while useful"| NRP
-    OWNERS -->|"may fund"| ARMY
-    OWNERS -->|"may switch to"| PTC
 ```

@@ -28,12 +28,4 @@ The True North Brigade is a domestic terrorist movement aligned with the preside
 
 South Neeladesh wants a friendly puppet government in the North. It offers medicine, fuel, intelligence, money, and diplomatic recognition while secretly contacting northern politicians and officers.
 
-## People's Transition Council
-
-The People's Transition Council is a respectable civilian opposition made up of lawyers, professors, business owners, and former officials. It promises democratic government, but South Neeladesh funds and influences its leadership.
-
-## Mine Owners' Compact
-
-The mine-owning families and companies want production and exports to continue. They will support the ruling party, army, or civilian opposition if that side can break strikes, keep taxes low, and protect their property.
-
 Senior judges may appear as individual NPCs, but they are not a faction.
