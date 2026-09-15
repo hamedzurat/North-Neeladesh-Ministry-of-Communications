@@ -310,12 +310,6 @@ fn guard_destination_dialogue(
                 dialogue = replace_place_mentions(&dialogue, place, &context.requested_place);
             }
         }
-    } else {
-        dialogue = replace_place_mentions(
-            &dialogue,
-            &context.requested_place,
-            "the matter I called about",
-        );
     }
     dialogue
 }

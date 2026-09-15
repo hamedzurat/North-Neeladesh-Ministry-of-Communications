@@ -407,7 +407,7 @@ fn directory_selection_is_required_before_routing() {
 
 #[test]
 fn police_and_ems_controls_share_press_release_service_behavior() {
-    for (service, text) in [(ServiceKind::Police, "POLICE"), (ServiceKind::Ems, "EMS")] {
+    for service in [ServiceKind::Police, ServiceKind::Ems] {
         let mut backend = Backend::new_with_required_service(service);
         let mut sequence = 1;
         apply(&mut backend, &mut sequence, vec![], HeldControls::default());
@@ -458,11 +458,11 @@ fn police_and_ems_controls_share_press_release_service_behavior() {
             ServiceCallPhase::Completed
         );
         assert!(
-            completed
+            !completed
                 .output
                 .printer_output
                 .iter()
-                .any(|entry| entry.text == format!("SERVICE {text} COMPLETED"))
+                .any(|entry| entry.text.contains("COMPLETED"))
         );
     }
 }
@@ -895,6 +895,6 @@ fn ems_service_calls_are_recorded_and_missing_ems_is_a_typed_error() {
             .output
             .printer_output
             .iter()
-            .any(|entry| entry.text.contains("SERVICE ERROR"))
+            .any(|entry| entry.text == "SHIFT 1 END\nEARNED +$0\nCOST -$0")
     );
 }

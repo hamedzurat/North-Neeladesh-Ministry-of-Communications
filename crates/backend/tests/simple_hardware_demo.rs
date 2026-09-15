@@ -54,13 +54,6 @@ fn live_hardware_loop_keeps_two_calls_on_lines_zero_through_five() {
     );
     assert_eq!(waiting.output.shift.active_call_count, 2);
     assert!(
-        waiting
-            .output
-            .printer_output
-            .iter()
-            .any(|entry| entry.text.starts_with("PAPER NOTE //"))
-    );
-    assert!(
         waiting.output.directory_pages[0]
             .lines
             .iter()
@@ -142,7 +135,7 @@ fn live_hardware_loop_keeps_two_calls_on_lines_zero_through_five() {
     ));
     assert_eq!(connected.output.call.unwrap().phase, CallPhase::Connected);
     assert!(
-        connected
+        !connected
             .output
             .printer_output
             .iter()
@@ -182,7 +175,7 @@ fn simple_hardware_failure_prints_a_cost() {
     let failed = backend.apply_input_message(input(&backend, 2, vec![], 1, [0; 4]));
 
     assert!(
-        failed
+        !failed
             .output
             .printer_output
             .iter()

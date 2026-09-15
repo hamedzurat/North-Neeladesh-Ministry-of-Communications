@@ -14,5 +14,9 @@ serde_json.workspace = true
 name = "exchange-backend"
 path = "src/main.rs"
 
+[[bin]]
+name = "north-neeladesh-human-test"
+path = "src/bin/north_neeladesh_human_test.rs"
+
 [dev-dependencies]
 serde_cbor.workspace = true

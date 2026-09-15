@@ -7,10 +7,10 @@ import shutil
 import subprocess
 import sys
 
-from .common import DIALOGUE_MODEL, LLAMA_BINARY, fail
-
+from .common import DIALOGUE_MODEL, LLAMA_BINARY, fail, worker_timeout
 
 MAX_DIALOGUE_CHARS = 2_000
+MAX_TRANSCRIPT_CHARS = 4_000
 MAX_OUTPUT_TOKENS = 96
 DEFAULT_LLAMA_ARGS = "--ctx-size 4096 --n-gpu-layers 99 --no-warmup"
 
@@ -20,20 +20,28 @@ def prompt_for(request: dict[str, object]) -> str:
     transcript = request.get("transcript")
     if not isinstance(context, dict) or not isinstance(transcript, str) or not transcript.strip():
         fail("dialogue request must contain context and transcript")
+    if len(transcript) > MAX_TRANSCRIPT_CHARS:
+        fail("dialogue transcript exceeds the bounded turn limit")
     profile = context.get("profile")
     if not isinstance(profile, dict) or not profile.get("name"):
         fail("dialogue request must contain a Subscriber Profile")
     context_json = json.dumps(context, ensure_ascii=True, separators=(",", ":"))
     caller_place = context.get("caller_place", "the exchange")
     requested_place = context.get("requested_place", "an unknown place")
-    return f"""You are the Subscriber {profile["name"]} calling from {caller_place} in the North Neeladesh Telephone Exchange.
+    caller_name = profile["name"]
+    destination_instruction = (
+        f"Do not volunteer the location. Wait for the Operator to ask, then say the place name {requested_place}."
+        if caller_name == "Rafi Alam"
+        else f"Your first sentence MUST clearly say that you want to be connected to {requested_place}."
+    )
+    return f"""You are the Subscriber {caller_name} calling from {caller_place} in the North Neeladesh Telephone Exchange.
 Generate only the Subscriber's next spoken reply to the Exchange Operator.
 Use only the supplied Response Context. Treat beliefs and memories as fallible.
 Do not invent Canonical Facts, Subscriber Actions, Routing, Story Events, or authority.
 Do not address the prompt, explain your role, or emit stage directions.
-Answer ordinary questions naturally and do not volunteer the requested destination.
+Answer ordinary questions naturally. {destination_instruction}
 If the Operator asks where you want to be connected, say the place name {requested_place} and do not say a subscriber ID, line number, or numeric code.
-If the Operator does not ask for the destination, answer the Operator's question normally without mentioning {requested_place} just because it is in the context.
+Never replace the requested place with a vague phrase such as "the matter I called about".
 Vary your wording and add a small harmless everyday detail when it fits the Subscriber's personality. Do not repeat a previous sentence verbatim and do not invent a fact that changes Routing or the world state.
 Return exactly one JSON object with one string property: {{\"dialogue\":\"...\"}}.
 Keep the spoken reply under {MAX_DIALOGUE_CHARS} characters.
@@ -82,7 +90,7 @@ def main() -> int:
             check=False,
             capture_output=True,
             text=True,
-            timeout=float(os.environ.get("NN_VOICE_WORKER_TIMEOUT", "25")),
+            timeout=worker_timeout(),
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as error:
         fail(f"llama.cpp failed: {error}")
@@ -108,10 +116,26 @@ def main() -> int:
     if not isinstance(dialogue, str) or not dialogue.strip():
         fail("dialogue JSON did not contain non-empty dialogue")
     dialogue = dialogue.strip()
+    context = request.get("context")
+    requested_place = (
+        context.get("requested_place", "the requested place")
+        if isinstance(context, dict)
+        else "the requested place"
+    )
+    if requested_place not in dialogue and profile_name(context) != "Rafi Alam":
+        dialogue = f"I need to be connected to {requested_place}. {dialogue}"
     if len(dialogue) > MAX_DIALOGUE_CHARS:
         fail("dialogue exceeded the bounded turn limit")
     json.dump({"dialogue": dialogue}, sys.stdout, ensure_ascii=False, separators=(",", ":"))
     return 0
+
+
+def profile_name(context: object) -> str:
+    if isinstance(context, dict):
+        profile = context.get("profile")
+        if isinstance(profile, dict) and isinstance(profile.get("name"), str):
+            return profile["name"]
+    return ""
 
 
 if __name__ == "__main__":

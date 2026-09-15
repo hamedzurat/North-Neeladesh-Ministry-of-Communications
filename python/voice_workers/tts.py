@@ -9,7 +9,6 @@ from contextlib import redirect_stdout
 
 from .common import TTS_MODEL, fail
 
-
 SAMPLE_RATE = 24_000
 SUPPORTED_SPEAKERS = frozenset(
     {"Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee"}
@@ -69,7 +68,7 @@ def load_model():
         with redirect_stdout(sys.stderr):
             import torch
             from qwen_tts import Qwen3TTSModel
-    except ImportError as error:
+    except Exception as error:  # noqa: BLE001 - model packages have backend-specific failures
         fail(f"Qwen3-TTS Python dependencies are unavailable: {error}")
 
     device = os.environ.get("NN_QWEN3_TTS_DEVICE", "cuda:0")
@@ -88,7 +87,7 @@ def load_model():
                 attn_implementation=attention,
                 local_files_only=True,
             )
-    except Exception as error:  # model runtimes expose backend-specific exception types
+    except Exception as error:  # noqa: BLE001 - model runtimes expose backend-specific failures
         fail(f"Qwen3-TTS model load failed: {error}")
     return model, torch
 
@@ -126,7 +125,7 @@ def main() -> int:
         for pcm in pcm_chunks(model, torch, speaker, text):
             audio_output.write(pcm)
             audio_output.flush()
-    except Exception as error:  # model runtimes expose backend-specific exception types
+    except Exception as error:  # noqa: BLE001 - model runtimes expose backend-specific failures
         fail(f"Qwen3-TTS synthesis failed: {error}")
     return 0
 
@@ -146,7 +145,7 @@ def persistent_main() -> int:
                 audio_output.flush()
             audio_output.write(struct.pack("<I", 0))
             audio_output.flush()
-        except Exception as error:  # model runtimes expose backend-specific exception types
+        except Exception as error:  # noqa: BLE001 - model runtimes expose backend-specific failures
             fail(f"Qwen3-TTS synthesis failed: {error}")
     return 0
 

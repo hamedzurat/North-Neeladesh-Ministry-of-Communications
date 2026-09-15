@@ -1,5 +1,5 @@
 [project]
-name = "north-neeladesh-cabinet-frontend"
+name = "cabinet-frontend"
 version = "0.1.0"
 description = "Raspberry Pi Cabinet Frontend for North Neeladesh"
 requires-python = ">=3.12"
@@ -11,6 +11,7 @@ dependencies = [
     "gpiozero>=2",
     "lgpio>=0.2.2; platform_machine == 'aarch64' and sys_platform == 'linux'",
     "spidev>=3.6",
+    "ruff>=0.16.7",
 ]
 
 [build-system]
@@ -18,4 +19,4 @@ requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["hardware_frontend*"]
+include = ["cabinet_frontend*"]

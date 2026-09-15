@@ -13,7 +13,6 @@ from .common import (
     WHISPER_MODEL,
 )
 
-
 WHISPER_REPOSITORY = "ggerganov/whisper.cpp"
 DIALOGUE_REPOSITORY = "unsloth/Qwen3-4B-Instruct-2507-GGUF"
 TTS_REPOSITORY = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"

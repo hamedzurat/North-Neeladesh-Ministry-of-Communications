@@ -31,7 +31,7 @@ just frontend-check
 just voice-checks
 just voice-preflight
 uv run --directory python/cabinet_frontend \
-  python -m unittest discover -s hardware_frontend/tests -t . -v
+  python -m unittest discover -s cabinet_frontend/tests -t . -v
 ```
 
 The GUI build can be checked separately:
@@ -199,7 +199,7 @@ LAN-reachable address, then configure the Pi to use that host:
 
 ```sh
 # On the laptop or arcade host. Restrict these ports with the local firewall.
-just backend address=0.0.0.0:7878 voice_address=0.0.0.0:7879
+just backend-debug address=0.0.0.0:7878 voice_address=0.0.0.0:7879
 
 # On the Pi, for the Cabinet-side audio transport.
 just voice-daemon backend_address=192.168.1.8:7879
@@ -211,52 +211,34 @@ using `NN_BACKEND_ADDRESS=192.168.1.8:7878`. Start the installed service on
 the Pi:
 
 ```sh
-sudo systemctl start north-neeladesh-hardware-frontend.service
-journalctl -u north-neeladesh-hardware-frontend.service -f
+sudo systemctl start north-neeladesh-cabinet-frontend.service
+journalctl -u north-neeladesh-cabinet-frontend.service -f
 ```
 
 From the development machine, inspect both services on the Pi at
 `taki@192.168.1.34` with `./scripts/status_pi.sh`. The exact service names are
-`north-neeladesh-hardware-frontend.service` and
+`north-neeladesh-cabinet-frontend.service` and
 `north-neeladesh-voice-daemon.service`.
 
 The voice daemon is separate from the Cabinet Frontend process. It carries
 microphone PCM to the laptop backend and plays returned synthesized audio on
 the Cabinet device. The Cabinet Frontend carries controls and hardware output.
 
-### Dummy mode: adapter check only
+### Cabinet frontend
 
-Dummy mode is not the arcade and is not a second GUI. Its purpose is to let you
-develop and test the Cabinet protocol/output boundary on a laptop without GPIO,
-SPI, I2C, `/dev/leds0`, or physical hardware. The current dummy input devices
-are no-op, so they cannot play the game by themselves.
+The Cabinet Frontend runs against the physical Raspberry Pi hardware. It reads
+the patch panel, switches, rotary encoder, and Directory buttons, then sends
+the resulting input snapshot to the backend. It drives the lamps, TM1637,
+e-paper display, and `/dev/usb/lp0` printer. Voice playback remains in the
+separate voice daemon.
 
-Stop Odin first, keep the debug backend and debug dashboard running, click
-`Reset run`, then run the dummy client as the only game client:
-
-```sh
-NN_HARDWARE_MODE=dummy uv run --directory python/cabinet_frontend \
-  python -m hardware_frontend --backend-address 127.0.0.1:7878
-```
-
-The dummy client prints hardware updates to the terminal. Use the debug
-dashboard's `Inject call`, `Advance time`, and `Reset run` controls for output
-mapping checks, and check for:
-
-- line lamp updates;
-- Directory page updates;
-- printer receipts, including a new run after backend restart;
-- speaker/audio activity;
-- no GPIO, SPI, I2C, or `/dev/leds0` access.
-
-Do not use `Inject call` or debug bypass controls as evidence that the Cabinet
-can play the game. They only prove that the Cabinet renders backend snapshots.
+Run the frontend tests with:
 
 Run the Cabinet tests independently with:
 
 ```sh
 uv run --directory python/cabinet_frontend \
-  python -m unittest discover -s hardware_frontend/tests -t . -v
+  python -m unittest discover -s cabinet_frontend/tests -t . -v
 ```
 
 ## Voice Diagnostics
@@ -313,7 +295,7 @@ The following are implemented and covered by automated tests:
 - caller-to-Operator voice context with the requested callee;
 - three-second connected lamp windows and automatic Call replacement;
 - Odin rendering of backend output;
-- dummy Cabinet output mapping and printer reset reconciliation.
+- Cabinet hardware input mapping, output mapping, and printer reset reconciliation.
 
 The legacy authored graph remains available for backend regression tests, but it
 is no longer used by the live hardware server. The live loop has no terminal

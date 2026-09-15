@@ -319,13 +319,11 @@ fn routing_requires_timestamped_crank_rotations_and_accepts_valid_topology() {
     );
     assert_eq!(connected.output.shift.completed_routings, 1);
     assert!(
-        connected
+        !connected
             .output
             .printer_output
-            .last()
-            .unwrap()
-            .text
-            .contains("ROUTING")
+            .iter()
+            .any(|entry| entry.text.contains("ROUTING"))
     );
 }
 

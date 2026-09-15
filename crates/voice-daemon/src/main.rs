@@ -252,6 +252,9 @@ impl RelaySession<'_> {
                 complete: index + 1 == chunks.len(),
                 samples: chunk.to_vec(),
             })?;
+            if index + 1 < chunks.len() {
+                thread::sleep(Duration::from_millis(1));
+            }
         }
         Ok(())
     }

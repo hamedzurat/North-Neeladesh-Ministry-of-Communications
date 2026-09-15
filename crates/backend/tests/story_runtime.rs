@@ -1,4 +1,5 @@
 use exchange_backend::Backend;
+use exchange_backend::story::{OperatorServiceReport, OperatorTextAction, OperatorTurn};
 use exchange_protocol::{
     CallPhase, CordConnection, HeldControls, InputDebug, InputMessage, InputState,
     PROTOCOL_VERSION, PortId, ServiceErrorKind, TuningState,
@@ -30,6 +31,27 @@ fn apply(
     cords: Vec<CordConnection>,
 ) -> exchange_protocol::StateMessage {
     let response = backend.apply_input_message(input(*sequence, *sequence - 1, cords));
+    *sequence += 1;
+    response
+}
+
+fn apply_with_directory_and_controls(
+    backend: &mut Backend,
+    sequence: &mut u64,
+    directory: u16,
+    cords: Vec<CordConnection>,
+    held_controls: HeldControls,
+) -> exchange_protocol::StateMessage {
+    let revision = backend.debug_snapshot().run.state_revision;
+    let mut message = input(*sequence, revision, cords);
+    message.input.directory_digits = [0, 0, 0, directory as u8];
+    message.input.held_controls = held_controls;
+    let response = backend.apply_input_message(message);
+    assert!(
+        response.accepted,
+        "frontend tick rejected: {:?}",
+        response.error
+    );
     *sequence += 1;
     response
 }
@@ -176,4 +198,99 @@ fn path_proposals_cannot_resolve_a_shift_call() {
     assert_eq!(selection.node_id, "shift_call");
     assert!(selection.rejected_proposal);
     assert_eq!(backend.story_node_id(), "shift_call");
+}
+
+#[test]
+fn completed_ems_service_resolves_the_pending_north_call_once() {
+    let mut backend = Backend::new_north_neeladesh();
+    let mut sequence = 1;
+    backend.select_story_path(None);
+    let old_call = backend.story_call_id().unwrap().to_string();
+    let node = backend.story_graph().node(backend.story_node_id()).unwrap();
+    let exchange_backend::story::StoryNodeKind::ShiftCall { beat_id, .. } = &node.kind else {
+        panic!("North story did not select a call");
+    };
+    let beat = backend.story_graph().story_beat(beat_id).unwrap();
+    let premise = backend
+        .story_graph()
+        .call_premise(&beat.call_premise_id)
+        .unwrap();
+    let caller = backend
+        .story_graph()
+        .line_listing(&premise.caller_line_id)
+        .unwrap()
+        .line;
+    let directory = premise.directory_ids[0];
+    let operator_cord = vec![cord(PortId::Subscriber(caller), PortId::Operator)];
+
+    apply_with_directory_and_controls(
+        &mut backend,
+        &mut sequence,
+        directory,
+        vec![],
+        HeldControls::default(),
+    );
+    apply_with_directory_and_controls(
+        &mut backend,
+        &mut sequence,
+        directory,
+        operator_cord.clone(),
+        HeldControls::default(),
+    );
+    backend
+        .apply_operator_turn(OperatorTurn {
+            speech: "EMS is on the way.".into(),
+            action: OperatorTextAction::CallEms,
+            service_report: Some(OperatorServiceReport {
+                location: Some("shapla_apartments".into()),
+                medical_emergency: Some(true),
+                ..OperatorServiceReport::default()
+            }),
+        })
+        .unwrap();
+    assert!(
+        backend
+            .frontend_state()
+            .printer_output
+            .iter()
+            .all(|entry| !entry.text.contains("EMS is on the way"))
+    );
+    let mut held = HeldControls::default();
+    held.ems = true;
+    let active = apply_with_directory_and_controls(
+        &mut backend,
+        &mut sequence,
+        directory,
+        operator_cord,
+        held,
+    );
+    assert_eq!(
+        active.output.service_call.as_ref().map(|call| call.phase),
+        Some(exchange_protocol::ServiceCallPhase::Active),
+        "unexpected active-service response: {:?}",
+        active.output
+    );
+
+    let completed = apply_with_directory_and_controls(
+        &mut backend,
+        &mut sequence,
+        directory,
+        vec![],
+        HeldControls::default(),
+    );
+    assert_eq!(
+        completed.output.service_call.unwrap().phase,
+        exchange_protocol::ServiceCallPhase::Completed
+    );
+    assert_eq!(completed.output.shift.completed_service_calls, 1);
+    assert!(
+        backend
+            .north_neeladesh_state()
+            .unwrap()
+            .completed_calls
+            .contains(&old_call)
+    );
+    assert_ne!(backend.story_call_id(), Some(old_call.as_str()));
+    assert!(completed.output.call.is_none());
+    assert!(completed.output.calls.is_empty());
 }

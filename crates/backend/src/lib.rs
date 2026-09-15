@@ -18,16 +18,17 @@ use exchange_protocol::{
     decode_voice_input_audio, decode_voice_status, encode_voice_control, read_frame, write_frame,
 };
 use exchange_voice_daemon::{
-    CommandDialogueGenerator, CommandSpec, CommandSpeechToText, ConversationTurn, KnowledgeRecord,
-    MicrophoneCapture, OperatorSession, PersistentQwen3TtsCommand, Qwen3TtsCommand,
-    RelationshipNote, ResponseContext, SubscriberProfile, TextToSpeech, VoiceError, VoiceOutput,
+    CommandDialogueGenerator, CommandSpec, CommandSpeechToText, KnowledgeRecord, MicrophoneCapture,
+    OperatorSession, PersistentQwen3TtsCommand, Qwen3TtsCommand, RelationshipNote, ResponseContext,
+    SubscriberProfile, TextToSpeech, VoiceError, VoiceOutput,
 };
 
 pub mod story;
 
 use story::{
-    AuthoredContent, CompiledStoryGraph, GraphCompileError, StoryEligibilityState, StoryNodeKind,
-    StoryPathSelection,
+    AuthoredContent, CompiledStoryGraph, GraphCompileError, NorthNeeladeshState,
+    OperatorObservation, OperatorServiceReport, OperatorTextAction, OperatorTextError,
+    OperatorTurn, StoryEligibilityState, StoryNodeKind, StoryPathSelection,
 };
 
 const MAX_FAULTS: usize = 16;
@@ -103,10 +104,16 @@ pub struct Backend {
     simple_hardware_mode: bool,
     simple_rng_state: u64,
     simple_pending_calls: VecDeque<(u8, u8)>,
-    simple_connected_at: [Option<Instant>; 8],
-    simple_call_deadlines: [Option<u64>; 8],
-    simple_call_interacted: [bool; 8],
-    simple_failure_receipt: Option<String>,
+    simple_connected_at: [Option<Instant>; 12],
+    simple_call_deadlines: [Option<u64>; 12],
+    simple_call_interacted: [bool; 12],
+    shift_earned: u32,
+    shift_cost: u32,
+    north_state: Option<NorthNeeladeshState>,
+    pending_operator_action: Option<OperatorTextAction>,
+    pending_service_report: Option<OperatorServiceReport>,
+    north_recall_used: bool,
+    north_connected_since: Option<u64>,
 }
 
 struct VoiceConversationRecord {
@@ -122,6 +129,17 @@ impl Backend {
 
     pub fn new_four_shift_demo() -> Self {
         Self::new_four_shift_demo_with_printer_stress(false)
+    }
+
+    pub fn new_north_neeladesh() -> Self {
+        Self::new_north_neeladesh_with_printer_stress(false)
+    }
+
+    pub fn new_north_neeladesh_with_printer_stress(printer_stress: bool) -> Self {
+        let story = AuthoredContent::north_neeladesh()
+            .compile()
+            .expect("North Neeladesh authored Story Graph must compile");
+        Self::with_story(story, printer_stress, 0, None)
     }
 
     pub fn new_four_shift_demo_with_printer_stress(printer_stress: bool) -> Self {
@@ -198,6 +216,7 @@ impl Backend {
         required_service_kind: Option<ServiceKind>,
     ) -> Self {
         let story_node_id = story.start_node_id().to_string();
+        let north_story = story.node("m14_select").is_some();
         let mut state = initial_state(initial_required_service_calls, required_service_kind);
         if story.node("live_call").is_some() {
             state.directory_pages = simple_directory_pages([0, 0, 0, 1]);
@@ -256,10 +275,16 @@ impl Backend {
             simple_hardware_mode: false,
             simple_rng_state: 0x4e45_454c_4144_4553,
             simple_pending_calls: VecDeque::new(),
-            simple_connected_at: [None; 8],
-            simple_call_deadlines: [None; 8],
-            simple_call_interacted: [false; 8],
-            simple_failure_receipt: None,
+            simple_connected_at: [None; 12],
+            simple_call_deadlines: [None; 12],
+            simple_call_interacted: [false; 12],
+            shift_earned: 0,
+            shift_cost: 0,
+            north_state: north_story.then(NorthNeeladeshState::default),
+            pending_operator_action: None,
+            pending_service_report: None,
+            north_recall_used: false,
+            north_connected_since: None,
         }
     }
 
@@ -269,6 +294,658 @@ impl Backend {
 
     pub fn story_node_id(&self) -> &str {
         &self.story_node_id
+    }
+
+    pub fn frontend_state(&self) -> &StateOutput {
+        &self.state
+    }
+
+    /// Accept an untrusted dialogue proposal. Only the bounded intent and a
+    /// report validated against the current authored call can affect a turn;
+    /// physical routing and service controls remain authoritative.
+    pub fn apply_operator_turn(
+        &mut self,
+        turn: OperatorTurn,
+    ) -> Result<OperatorTextAction, OperatorTextError> {
+        if self.north_state.is_none() || !self.north_action_is_allowed(turn.action) {
+            return Err(OperatorTextError::InvalidIntent);
+        }
+        if turn.service_report.is_some()
+            && !matches!(
+                turn.action,
+                OperatorTextAction::CallEms | OperatorTextAction::ReportPolice
+            )
+        {
+            return Err(OperatorTextError::InvalidServiceReport);
+        }
+        if matches!(
+            turn.action,
+            OperatorTextAction::CallEms | OperatorTextAction::ReportPolice
+        ) && !self.service_report_is_valid(turn.action, turn.service_report.as_ref())
+        {
+            return Err(OperatorTextError::InvalidServiceReport);
+        }
+        self.pending_operator_action = Some(turn.action);
+        self.pending_service_report = turn.service_report;
+        self.state_revision = self.state_revision.wrapping_add(1);
+        Ok(turn.action)
+    }
+
+    pub fn complete_operator_decision(
+        &mut self,
+        action: OperatorTextAction,
+    ) -> Result<(), OperatorTextError> {
+        self.apply_story_action(action).map(|_| ())
+    }
+
+    fn apply_story_action(
+        &mut self,
+        action: OperatorTextAction,
+    ) -> Result<NorthNeeladeshState, OperatorTextError> {
+        if self.north_state.is_none() {
+            return Err(OperatorTextError::UnknownAction);
+        }
+        if self
+            .story
+            .node(&self.story_node_id)
+            .is_some_and(|node| matches!(node.kind, StoryNodeKind::RunStart { .. }))
+        {
+            let selection = self.story.select_next(&self.story_node_id, None);
+            self.story_node_id = selection.node_id;
+        }
+        if !self
+            .story
+            .node(&self.story_node_id)
+            .is_some_and(|node| matches!(node.kind, StoryNodeKind::ShiftCall { .. }))
+        {
+            return Ok(self.north_state.clone().expect("checked above"));
+        }
+        self.pending_operator_action = Some(action);
+        if matches!(
+            action,
+            OperatorTextAction::Ask | OperatorTextAction::DirectoryCheck | OperatorTextAction::Tap
+        ) {
+            self.apply_north_action(action, false);
+            return self
+                .north_state
+                .clone()
+                .ok_or(OperatorTextError::UnknownAction);
+        }
+        if !self.north_action_is_ready(action) {
+            return self
+                .north_state
+                .clone()
+                .ok_or(OperatorTextError::UnknownAction);
+        }
+        self.apply_north_action(action, true);
+        if let Some(ending) = self
+            .north_state
+            .as_ref()
+            .and_then(|state| state.ending.clone())
+        {
+            self.story_node_id = ending;
+        } else {
+            self.advance_story_outcome(StoryOutcome::Success);
+            if matches!(
+                self.story.node(&self.story_node_id).map(|node| &node.kind),
+                Some(StoryNodeKind::StoryEvent { .. })
+            ) {
+                let southbound = self.north_state.as_ref().is_some_and(|story| {
+                    story.flags.contains("SOUTH_EXIT_OFFER")
+                        && story.flags.contains("PLATFORM_SIX_OPEN")
+                        && story.flags.contains("SOUTHBOUND_ACCEPTED")
+                });
+                self.story_node_id = self
+                    .story
+                    .select_next(
+                        &self.story_node_id,
+                        southbound.then_some("southbound_household"),
+                    )
+                    .node_id;
+            }
+            self.settle_story_event(&self.state.clone());
+        }
+        self.north_state
+            .clone()
+            .ok_or(OperatorTextError::UnknownAction)
+    }
+
+    pub fn north_neeladesh_state(&self) -> Option<&NorthNeeladeshState> {
+        self.north_state.as_ref()
+    }
+
+    pub fn story_call_id(&self) -> Option<&str> {
+        self.current_story_call_id()
+    }
+
+    pub fn allowed_operator_intents(&self) -> Vec<&'static str> {
+        [
+            ("ask", OperatorTextAction::Ask),
+            ("directory_check", OperatorTextAction::DirectoryCheck),
+            ("tap", OperatorTextAction::Tap),
+            ("connect", OperatorTextAction::Connect),
+            ("refuse", OperatorTextAction::Refuse),
+            ("report_police", OperatorTextAction::ReportPolice),
+            ("call_ems", OperatorTextAction::CallEms),
+            ("disclose", OperatorTextAction::Disclose),
+            ("accept_payment", OperatorTextAction::AcceptPayment),
+        ]
+        .into_iter()
+        .filter_map(|(name, action)| self.north_action_is_allowed(action).then_some(name))
+        .collect()
+    }
+
+    fn north_action_is_allowed(&self, action: OperatorTextAction) -> bool {
+        let Some(call_id) = self.current_story_call_id() else {
+            return false;
+        };
+        if call_id == "s1_1_rafi" {
+            return matches!(
+                action,
+                OperatorTextAction::Ask
+                    | OperatorTextAction::CallEms
+                    | OperatorTextAction::ReportPolice
+                    | OperatorTextAction::Refuse
+            );
+        }
+        if matches!(action, OperatorTextAction::CallEms) {
+            return matches!(call_id, "s1_1_rafi" | "m11a_laleh");
+        }
+        if matches!(action, OperatorTextAction::ReportPolice) {
+            return matches!(
+                call_id,
+                "s1_1_rafi"
+                    | "s2_1_nahid"
+                    | "s3_1_nahid"
+                    | "m2_nayan"
+                    | "m4_laleh"
+                    | "m5_javed"
+                    | "m6_varo"
+                    | "m7_tomas"
+                    | "m8_bikram"
+                    | "m9_paro"
+                    | "m11a_laleh"
+                    | "m13_meera"
+                    | "m12_arman"
+            );
+        }
+        true
+    }
+
+    fn service_report_is_valid(
+        &self,
+        action: OperatorTextAction,
+        report: Option<&OperatorServiceReport>,
+    ) -> bool {
+        let Some(report) = report else { return false };
+        let Some(call_id) = self.current_story_call_id() else {
+            return false;
+        };
+        match (call_id, action) {
+            ("s1_1_rafi", OperatorTextAction::CallEms) => {
+                report.location.as_deref() == Some("shapla_apartments")
+                    && report.medical_emergency == Some(true)
+            }
+            ("m11a_laleh", OperatorTextAction::CallEms) => {
+                report.location.is_some() && report.medical_emergency == Some(true)
+            }
+            ("m8_bikram", OperatorTextAction::ReportPolice) => {
+                report.identity == Some(true)
+                    && report.target_addresses == Some(true)
+                    && report.report_phrase == Some(true)
+            }
+            ("s2_1_nahid", OperatorTextAction::ReportPolice) => {
+                report.alias == Some(true)
+                    && report.source_line == Some(true)
+                    && report.verification_code == Some(true)
+                    && report.employer == Some(true)
+            }
+            ("s3_1_nahid", OperatorTextAction::ReportPolice) => {
+                report.false_clinic == Some(true)
+                    && report.product_claim == Some(true)
+                    && report.source_line == Some(true)
+                    && report.payment_request == Some(true)
+            }
+            (_, OperatorTextAction::ReportPolice) => true,
+            _ => false,
+        }
+    }
+
+    fn north_action_is_ready(&self, action: OperatorTextAction) -> bool {
+        let Some(state) = self.north_state.as_ref() else {
+            return true;
+        };
+        let Some(call_id) = self.current_story_call_id() else {
+            return true;
+        };
+        match (call_id, action) {
+            ("s1_1_rafi", OperatorTextAction::CallEms)
+            | ("m11a_laleh", OperatorTextAction::CallEms)
+            | ("m8_bikram", OperatorTextAction::ReportPolice)
+            | ("s2_1_nahid", OperatorTextAction::ReportPolice)
+            | ("s3_1_nahid", OperatorTextAction::ReportPolice) => {
+                self.service_report_is_valid(action, self.pending_service_report.as_ref())
+            }
+            ("m13_meera", OperatorTextAction::Disclose) => {
+                state.flags.contains("BRIGADE_LEAK")
+                    && state.flags.contains("ARMY_MOVEMENT")
+                    && state.flags.contains("BLUE_LEDGER_CONFIRMED")
+            }
+            ("m5_javed", OperatorTextAction::AcceptPayment) => {
+                state.flags.contains("JAVED_OFFERED")
+            }
+            ("m9_paro", OperatorTextAction::Disclose) => state.flags.contains("M9_INFO_DISCLOSED"),
+            ("m14_mira", OperatorTextAction::AcceptPayment) => {
+                self.story_node_id == "m14r"
+                    && state.flags.contains("SOUTH_EXIT_OFFER")
+                    && state.flags.contains("PLATFORM_SIX_OPEN")
+            }
+            ("m9_paro", OperatorTextAction::AcceptPayment) => true,
+            ("s1_2_asha" | "s2_asha" | "s3_asha", OperatorTextAction::ReportPolice) => true,
+            ("s3_akash" | "s4_akash", OperatorTextAction::Disclose) => {
+                state.flags.contains("AKASH_PRIVATE_ADDRESS_DISCLOSED")
+            }
+            (_, OperatorTextAction::CallEms) => {
+                matches!(call_id, "s1_1_rafi" | "m11a_laleh")
+            }
+            (_, OperatorTextAction::ReportPolice) => {
+                matches!(
+                    call_id,
+                    "s1_1_rafi"
+                        | "s2_1_nahid"
+                        | "s3_1_nahid"
+                        | "m2_nayan"
+                        | "m4_laleh"
+                        | "m5_javed"
+                        | "m6_varo"
+                        | "m7_tomas"
+                        | "m8_bikram"
+                        | "m9_paro"
+                        | "m11a_laleh"
+                        | "m13_meera"
+                        | "m12_arman"
+                )
+            }
+            (_, OperatorTextAction::AcceptPayment) => {
+                matches!(call_id, "m5_javed" | "m9_paro" | "m14_mira")
+            }
+            _ => true,
+        }
+    }
+
+    fn apply_north_observation(&mut self, observation: &OperatorObservation) {
+        let call_id = self.current_story_call_id().map(str::to_string);
+        let Some(state) = self.north_state.as_mut() else {
+            return;
+        };
+        for fact in &observation.facts {
+            let flag = match (call_id.as_deref(), fact.as_str()) {
+                (Some("s1_1_rafi"), "location_complete") => Some("RAFI_LOCATION"),
+                (Some("s1_1_rafi"), "fall") => Some("RAFI_FALL"),
+                (Some("s1_1_rafi"), "head_injury") => Some("RAFI_INJURY"),
+                (Some("s1_1_rafi"), "unconscious") => Some("RAFI_UNCONSCIOUS"),
+                (Some("s2_1_nahid"), "secret_requested") => Some("ACCOUNT_SECRET_REQUESTED"),
+                (Some("s2_1_nahid"), "pin_or_code_disclosed") => Some("ACCOUNT_SECRET_DISCLOSED"),
+                (Some("s2_1_nahid"), "account_details_disclosed") => {
+                    Some("ACCOUNT_DETAILS_DISCLOSED")
+                }
+                (Some("s2_1_nahid"), "alias") => Some("NAHID_ALIAS"),
+                (Some("s2_1_nahid"), "source_line") => Some("NAHID_SOURCE_LINE"),
+                (Some("s2_1_nahid"), "verification_code") => Some("NAHID_VERIFICATION_CODE"),
+                (Some("s2_1_nahid"), "employer") => Some("NAHID_EMPLOYER"),
+                (Some("s3_1_nahid"), "wife_medical_details") => {
+                    Some("WIFE_MEDICAL_DETAILS_DISCLOSED")
+                }
+                (Some("s3_1_nahid"), "payment_details") => Some("FAKE_MEDICINE_PAYMENT_DISCLOSED"),
+                (Some("s3_1_nahid"), "false_clinic") => Some("FALSE_CLINIC"),
+                (Some("s3_1_nahid"), "product_claim") => Some("FAKE_PRODUCT_CLAIM"),
+                (Some("s3_1_nahid"), "source_line") => Some("NAHID_SOURCE_LINE_2"),
+                (Some("s3_1_nahid"), "payment_request") => Some("PAYMENT_REQUEST"),
+                (Some("m5_javed"), "rifles") => Some("WAGON_43_RIFLES"),
+                (Some("m5_javed"), "varo_stamp") => Some("VARO_STAMP_EVIDENCE"),
+                (Some("m5_javed"), "paid_silence_offer") => Some("JAVED_OFFERED"),
+                (Some("m8_bikram"), "identity") => Some("BIKRAM_IDENTITY"),
+                (Some("m8_bikram"), "target_addresses") => Some("BRIGADE_TARGET_ADDRESSES"),
+                (Some("m8_bikram"), "false_id") => Some("FALSE_ID"),
+                (Some("m8_bikram"), "report_phrase") => Some("BRIGADE_REPORT_PHRASE"),
+                (Some("m11a_laleh"), "injured") => Some("LALEH_INJURED"),
+                (Some("m11a_laleh"), "location_complete") => Some("LALEH_LOCATION"),
+                (Some("m9_paro"), "leak_or_wagon_information") => Some("M9_INFO_DISCLOSED"),
+                (Some("m13_meera"), "papers") => Some("MEERA_PAPERS"),
+                (Some("m13_meera"), "army_intelligence") => Some("MEERA_ARMY_INTELLIGENCE"),
+                (Some("m13_meera"), "convoy_location") => Some("MEERA_CONVOY_LOCATION"),
+                (Some("m12_arman"), "army_movement") => Some("ARMY_MOVEMENT"),
+                (Some("m8_bikram"), "brigade_leak") => Some("BRIGADE_LEAK"),
+                (Some("m13_meera"), "army_movement") => Some("ARMY_MOVEMENT"),
+                (Some("m13_meera"), "brigade_leak") => Some("BRIGADE_LEAK"),
+                (Some("m13_meera"), "blue_ledger") => Some("BLUE_LEDGER_CONFIRMED"),
+                (Some("m1_anika"), "president_silent") => Some("PRESIDENT_SILENT"),
+                (Some("m2_nayan" | "m6_varo"), "order_conflict") => Some("ORDER_CONFLICT"),
+                (Some("m3_rakesh"), "list_source") => Some("LIST_SOURCE"),
+                (Some("m7_tomas"), "courier_evidence") => Some("COURIER_EVIDENCE"),
+                (Some("s3_akash" | "s4_akash"), "private_address") => {
+                    Some("AKASH_PRIVATE_ADDRESS_DISCLOSED")
+                }
+                _ => None,
+            };
+            if let Some(flag) = flag {
+                state.flags.insert(flag.into());
+            }
+        }
+        if observation.phrase.as_deref() == Some("Platform Six before dawn")
+            && call_id.as_deref() == Some("m11a_laleh")
+            && observation.recipient.as_deref() == Some("laleh_mir")
+            && state.flags.contains("PLATFORM_RELAY_ACCEPTED")
+        {
+            state.flags.insert("PLATFORM_RELAY_DELIVERED".into());
+        }
+    }
+
+    fn apply_north_action(&mut self, action: OperatorTextAction, resolving: bool) {
+        let call_id = self.current_story_call_id().map(str::to_string);
+        let Some(call_id) = call_id else { return };
+        let Some(state) = self.north_state.as_mut() else {
+            return;
+        };
+        if resolving {
+            state.completed_calls.insert(call_id.clone());
+        }
+        match (call_id.as_str(), action) {
+            ("s1_1_rafi", OperatorTextAction::CallEms) => {
+                state.flags.insert("MOTHER_SAVED".into());
+                state.rating += 1;
+            }
+            ("s1_1_rafi", OperatorTextAction::ReportPolice) => state.rating -= 1,
+            ("s1_1_rafi", OperatorTextAction::Refuse) => state.rating -= 2,
+            ("m4_laleh", OperatorTextAction::ReportPolice) => {
+                state.flags.insert("LALEH_REPORTED".into());
+                state.rating -= 2;
+            }
+            ("m4_laleh", OperatorTextAction::Refuse) => state.rating -= 1,
+            ("m1_anika" | "m12_arman", OperatorTextAction::Refuse) => state.rating -= 1,
+            ("m13_meera", OperatorTextAction::Refuse) => state.rating -= 1,
+            (
+                "m2_nayan" | "m3_rakesh" | "m5_javed" | "m7_tomas" | "m9_paro",
+                OperatorTextAction::Refuse,
+            ) => state.rating -= 1,
+            ("m4_laleh", OperatorTextAction::Connect) => {
+                state.flags.insert("EVACUATION_OPEN".into());
+                state.rating += 1;
+            }
+            ("m4_laleh", OperatorTextAction::Disclose) => {
+                state.flags.insert("LALEH_WARNED".into());
+            }
+            ("m8_bikram", OperatorTextAction::ReportPolice) => {
+                state.flags.insert("BRIGADE_REPORT".into());
+                state.rating += 2;
+            }
+            ("m8_bikram", OperatorTextAction::Refuse) if state.flags.contains("FALSE_ID") => {
+                state.rating += 1;
+            }
+            ("m5_javed", OperatorTextAction::Connect) => state.rating += 1,
+            ("m8_bikram", OperatorTextAction::Connect) => state.rating -= 2,
+            ("m5_javed" | "m7_tomas" | "m9_paro", OperatorTextAction::ReportPolice) => {
+                state.rating -= 2;
+            }
+            ("m9_paro", OperatorTextAction::Connect) => {
+                state.rating += 1;
+                state.flags.insert("PLATFORM_POINTS_LOCKED".into());
+                state.flags.insert("M9_CONNECTED".into());
+            }
+            ("m10_audit", OperatorTextAction::Connect) => {
+                if state.flags.contains("LALEH_REPORTED") {
+                    state.flags.insert("WIFE_PROTECTED".into());
+                }
+                state.rating -= 1;
+            }
+            ("m10_audit", OperatorTextAction::Refuse) => {
+                state.flags.remove("WIFE_PROTECTED");
+            }
+            ("m5_javed", OperatorTextAction::AcceptPayment)
+                if state.flags.contains("JAVED_OFFERED") =>
+            {
+                state.flags.insert("REFUSE_VARO_CONTRACT".into());
+                state.flags.insert("VARO_CONTRACT_ACTIVE".into());
+            }
+            ("m6_varo", OperatorTextAction::Refuse)
+                if state.flags.contains("VARO_CONTRACT_ACTIVE") =>
+            {
+                state.flags.insert("VARO_CONTRACT_PAID".into());
+                state.money += 2;
+                state.flags.insert("M6_REFUSED".into());
+                state.rating -= 1;
+            }
+            ("m6_varo", OperatorTextAction::Refuse) => {
+                state.flags.insert("M6_REFUSED".into());
+                state.rating -= 1;
+            }
+            ("m9_paro", OperatorTextAction::AcceptPayment) => {
+                state.flags.insert("PLATFORM_RELAY_ACCEPTED".into());
+                state.flags.insert("M9_CONNECTED".into());
+            }
+            ("m6_varo", OperatorTextAction::Connect) => {
+                state.flags.insert("ARMY_AT_STATION".into());
+                state.flags.insert("M6_CONNECTED".into());
+            }
+            ("m11a_laleh", OperatorTextAction::Connect) => {
+                if state.flags.contains("M9_CONNECTED")
+                    && state.flags.contains("PLATFORM_RELAY_DELIVERED")
+                {
+                    state.flags.insert("PLATFORM_SIX_OPEN".into());
+                }
+            }
+            ("m11a_laleh", OperatorTextAction::Disclose) => {
+                if state.flags.contains("M9_CONNECTED")
+                    && state.flags.contains("PLATFORM_RELAY_DELIVERED")
+                {
+                    state.flags.insert("PLATFORM_SIX_OPEN".into());
+                }
+            }
+            ("m11b_dev", OperatorTextAction::Connect) => {
+                state.flags.insert("HOME_AFFAIRS_TRANSFER_READY".into());
+                state.rating -= 2;
+            }
+            ("m11a_laleh", OperatorTextAction::CallEms) => {
+                state.rating += 1;
+            }
+            ("m11a_laleh", OperatorTextAction::Refuse) => {
+                state.rating -= 1;
+            }
+            ("m11a_laleh", OperatorTextAction::ReportPolice) => {
+                state.flags.insert("LALEH_REPORTED".into());
+                state.flags.insert("WIFE_PROTECTED".into());
+                state.rating -= 2;
+            }
+            ("m12_arman", OperatorTextAction::Connect) => {
+                if state.flags.contains("M6_REFUSED") {
+                    state.flags.insert("M12_DELAYED_COLUMN".into());
+                    state.flags.insert("ARMY_AT_STATION".into());
+                }
+            }
+            ("m12_arman", OperatorTextAction::Disclose) if state.flags.contains("BRIGADE_LEAK") => {
+                state.flags.insert("ARMY_REDIRECTED".into());
+                state.flags.remove("ARMY_AT_STATION");
+            }
+            ("m12_arman", OperatorTextAction::Disclose)
+                if state.flags.contains("WAGON_43_RIFLES") =>
+            {
+                state.flags.insert("ARMY_REDIRECTED".into());
+                state.flags.remove("ARMY_AT_STATION");
+            }
+            ("m4_laleh", OperatorTextAction::DirectoryCheck) => {
+                state.flags.insert("LALEH_MARKED".into());
+            }
+            ("m8_bikram", OperatorTextAction::DirectoryCheck) => {
+                state.flags.insert("FALSE_ID".into());
+            }
+            ("m13_meera", OperatorTextAction::Disclose) => {
+                if state.flags.contains("BRIGADE_LEAK")
+                    && state.flags.contains("ARMY_MOVEMENT")
+                    && state.flags.contains("BLUE_LEDGER_CONFIRMED")
+                {
+                    state.flags.insert("SOUTH_EXIT_OFFER".into());
+                } else {
+                    state.flags.remove("SOUTH_EXIT_OFFER");
+                }
+            }
+            ("m13_meera", OperatorTextAction::ReportPolice) => {
+                state.flags.remove("SOUTH_EXIT_OFFER");
+                if state.flags.contains("MEERA_PAPERS")
+                    && state.flags.contains("MEERA_ARMY_INTELLIGENCE")
+                    && state.flags.contains("MEERA_CONVOY_LOCATION")
+                {
+                    state.rating += 1;
+                } else {
+                    state.rating -= 1;
+                }
+            }
+            ("m14_mira", OperatorTextAction::AcceptPayment)
+                if state.flags.contains("SOUTH_EXIT_OFFER")
+                    && state.flags.contains("PLATFORM_SIX_OPEN") =>
+            {
+                state.flags.insert("SOUTHBOUND_ACCEPTED".into());
+            }
+            ("m11b_dev", OperatorTextAction::Disclose) => {
+                state.flags.insert("PLATFORM_SIX_SEIZED".into());
+                state.flags.remove("SOUTH_EXIT_OFFER");
+                state.rating -= 2;
+            }
+            ("s1_2_asha" | "s2_asha", OperatorTextAction::Disclose) => {
+                state.kindness_calls = state.kindness_calls.saturating_add(1);
+            }
+            ("s1_2_asha" | "s2_asha", OperatorTextAction::Refuse) => {
+                state.kindness_calls = 0;
+            }
+            ("s1_2_asha" | "s2_asha", OperatorTextAction::ReportPolice) => {
+                state.kindness_calls = 0;
+                state.rating += 1;
+            }
+            ("s2_1_nahid", OperatorTextAction::Disclose)
+                if state.flags.contains("ACCOUNT_SECRET_DISCLOSED") =>
+            {
+                state.money -= 2;
+            }
+            ("s2_1_nahid" | "s3_1_nahid", OperatorTextAction::ReportPolice) => {
+                state.rating += 1;
+            }
+            ("s3_1_nahid", OperatorTextAction::Disclose)
+                if state.flags.contains("WIFE_MEDICAL_DETAILS_DISCLOSED") =>
+            {
+                state.rating -= 1;
+                if state.flags.contains("FAKE_MEDICINE_PAYMENT_DISCLOSED") {
+                    state.money -= 2;
+                }
+            }
+            ("m8_bikram", OperatorTextAction::Disclose) => {
+                state.rating -= 2;
+            }
+            ("m9_paro", OperatorTextAction::Disclose) => {
+                state.flags.insert("FAMILIES_WARNED".into());
+                state.flags.insert("WAGON_43_PROTECTED".into());
+            }
+            ("s3_akash" | "s4_akash", OperatorTextAction::Disclose) => {
+                state.rating -= 2;
+            }
+            ("s3_asha", OperatorTextAction::ReportPolice) => {
+                state.rating += 1;
+                state.kindness_calls = 0;
+            }
+            ("s3_asha", OperatorTextAction::Disclose) if state.kindness_calls >= 2 => {
+                state.flags.insert("ASHA_INHERITANCE".into());
+                state.money += 8;
+            }
+            (_, OperatorTextAction::Connect) if resolving => state.money += 1,
+            (_, OperatorTextAction::Refuse)
+                if resolving
+                    && !matches!(
+                        call_id.as_str(),
+                        "s1_1_rafi"
+                            | "m2_nayan"
+                            | "m3_rakesh"
+                            | "m4_laleh"
+                            | "m5_javed"
+                            | "m6_varo"
+                            | "m7_tomas"
+                            | "m9_paro"
+                            | "m11a_laleh"
+                            | "m13_meera"
+                            | "m8_bikram"
+                    ) =>
+            {
+                state.rating += 1;
+            }
+            (_, OperatorTextAction::ReportPolice)
+                if resolving
+                    && !matches!(
+                        call_id.as_str(),
+                        "s1_1_rafi" | "m4_laleh" | "m8_bikram" | "m11a_laleh" | "m13_meera"
+                    ) =>
+            {
+                state.rating -= 1;
+            }
+            (_, _) => {}
+        }
+        if resolving && state.money <= 0 {
+            state.ending = Some("ending_bankruptcy".into());
+        } else if resolving && state.money >= 20 {
+            state.ending = Some("ending_a_better_country".into());
+        } else if resolving && state.rating <= -5 {
+            state.ending = Some("ending_let_go".into());
+        } else if resolving && state.rating >= 8 {
+            state.ending = Some("ending_insubordination".into());
+        }
+    }
+
+    fn apply_north_missed(&mut self) {
+        let call_id = self.current_story_call_id().map(str::to_string);
+        let Some(state) = self.north_state.as_mut() else {
+            return;
+        };
+        if let Some(ref call_id) = call_id {
+            if call_id == "m10_audit" {
+                state.flags.remove("WIFE_PROTECTED");
+            }
+            if call_id == "m6_varo" {
+                state.flags.insert("M6_EXPIRED".into());
+                state.flags.insert("ARMY_AT_STATION".into());
+            }
+            state.completed_calls.insert(call_id.clone());
+        }
+        state.money -= 1;
+        if !matches!(
+            call_id.as_deref(),
+            Some(
+                "s1_2_asha"
+                    | "s2_asha"
+                    | "s3_asha"
+                    | "s2_1_nahid"
+                    | "s3_1_nahid"
+                    | "s3_akash"
+                    | "s4_akash"
+            )
+        ) {
+            state.rating -= 1;
+        }
+        if matches!(call_id.as_deref(), Some("s1_2_asha" | "s2_asha")) {
+            state.kindness_calls = 0;
+        }
+        self.pending_operator_action = None;
+        self.pending_service_report = None;
+        if state.money <= 0 {
+            state.ending = Some("ending_bankruptcy".into());
+        } else if state.rating <= -5 {
+            state.ending = Some("ending_let_go".into());
+        } else if state.rating >= 8 {
+            state.ending = Some("ending_insubordination".into());
+        }
+    }
+
+    fn current_story_call_id(&self) -> Option<&str> {
+        let StoryNodeKind::ShiftCall { beat_id, .. } = &self.story.node(&self.story_node_id)?.kind
+        else {
+            return None;
+        };
+        self.story.story_beat(beat_id).map(|beat| beat.id.as_str())
     }
 
     pub fn select_story_path(&mut self, proposal: Option<&str>) -> StoryPathSelection {
@@ -298,7 +975,13 @@ impl Backend {
                 self.state.shift.phase = ShiftPhase::Settled;
                 self.state.game_phase = GamePhase::Ended;
                 if let Some(ending) = self.story.ending(ending_id) {
-                    append_printer(&mut self.state, &ending_receipt(ending.conclusion.as_str()));
+                    let receipt = ending_receipt(ending.conclusion.as_str());
+                    Self::append_shift_summary(
+                        &mut self.state,
+                        &mut self.shift_earned,
+                        &mut self.shift_cost,
+                    );
+                    append_printer(&mut self.state, &receipt);
                 }
             }
         }
@@ -313,9 +996,14 @@ impl Backend {
         if self.simple_hardware_mode {
             self.state.directory_pages = simple_directory_pages([0, 0, 0, 1]);
         }
-        append_printer(&mut self.state, "RUN RESET // SHIFT READY");
         self.story_node_id = self.story.start_node_id().to_string();
+        if self.north_state.is_some() {
+            self.north_state = Some(NorthNeeladeshState::default());
+        }
+        self.pending_operator_action = None;
         self.state_revision = 0;
+        self.north_recall_used = false;
+        self.north_connected_since = None;
         self.last_request = None;
         self.last_response = None;
         self.last_frontend_input = None;
@@ -359,10 +1047,11 @@ impl Backend {
         self.directory_lookup_id = None;
         self.tap_bridge_listen_frames = 0;
         self.simple_pending_calls.clear();
-        self.simple_connected_at = [None; 8];
-        self.simple_call_deadlines = [None; 8];
-        self.simple_call_interacted = [false; 8];
-        self.simple_failure_receipt = None;
+        self.simple_connected_at = [None; 12];
+        self.simple_call_deadlines = [None; 12];
+        self.simple_call_interacted = [false; 12];
+        self.shift_earned = 0;
+        self.shift_cost = 0;
     }
 
     pub fn apply_input_message(&mut self, message: InputMessage) -> StateMessage {
@@ -513,9 +1202,6 @@ impl Backend {
                     .saturating_add(u64::from(seconds));
                 self.state.clock.elapsed_seconds = self.elapsed_seconds();
                 self.expire_calls();
-                if let Some(text) = self.simple_failure_receipt.take() {
-                    append_printer(&mut self.state, &text);
-                }
                 self.state_revision += 1;
                 Ok(())
             }
@@ -710,7 +1396,9 @@ impl Backend {
             );
         }
 
-        let input = &message.input;
+        let input_snapshot = message.input.clone();
+        let input = &input_snapshot;
+        let north_call_id = self.current_story_call_id().map(str::to_owned);
         let input_service = service_from_controls(&input.held_controls);
         let selected_directory_id = directory_id(input.directory_digits);
         let (simple_authored_call, simple_competing_call) = if self.simple_hardware_mode {
@@ -740,8 +1428,13 @@ impl Backend {
         let mut next_state = self.state.clone();
         next_state.interference_level = interference_level;
         let final_standoff = self.story_node_id == "ending_civil_war";
-        let authored_competing_call = operator_caller_line(&input.cord_topology)
-            .and_then(|line| self.story.authored_call_for_caller_line(line));
+        let authored_competing_call = if self.north_state.is_some() {
+            self.current_story_call_id()
+                .and_then(|call_id| self.story.north_competing_call(call_id))
+        } else {
+            operator_caller_line(&input.cord_topology)
+                .and_then(|line| self.story.authored_call_for_caller_line(line))
+        };
         let pre_ring_direct_connection = self.state.call.as_ref().is_some_and(|call| {
             matches!(
                 call.phase,
@@ -799,22 +1492,9 @@ impl Backend {
         if input_error.is_none() && known_directory_id(selected_directory_id) {
             let fresh_lookup = self.directory_lookup_id != Some(selected_directory_id);
             self.directory_lookup_id = Some(selected_directory_id);
-            if self.simple_hardware_mode && fresh_lookup {
-                append_printer(&mut next_state, &self.next_simple_printer_note());
-            }
+            if self.simple_hardware_mode && fresh_lookup {}
         }
         if input_error.is_none() && interference_level != self.last_interference_level {
-            append_printer(
-                &mut next_state,
-                &format!(
-                    "INTERFERENCE // LEVEL {interference_level}% // {}",
-                    if interference_level == 0 {
-                        "CLEAR"
-                    } else {
-                        "TUNE REQUIRED"
-                    }
-                ),
-            );
             self.last_interference_level = interference_level;
         }
         let interference_blocks_routing = has_diegetic_interference(&self.story_node_id)
@@ -824,7 +1504,35 @@ impl Backend {
                 .call
                 .as_ref()
                 .is_some_and(|call| direct_routing_topology(input, call));
-        let connected_callers_ready = self.simple_connected_callers_ready();
+        let connected_callers_ready = if self.is_four_shift_story() {
+            self.state
+                .call
+                .as_ref()
+                .filter(|call| call.phase == exchange_protocol::CallPhase::Connected)
+                .filter(|_| {
+                    self.north_connected_since.is_some_and(|started| {
+                        self.real_elapsed_seconds().saturating_sub(started) >= 10
+                    })
+                })
+                .map(|call| vec![call.caller_line])
+                .unwrap_or_default()
+        } else {
+            self.simple_connected_callers_ready()
+        };
+        let service_action_completion = self
+            .state
+            .service_call
+            .as_ref()
+            .filter(|service| service.phase == ServiceCallPhase::Active)
+            .is_some_and(|service| {
+                input_service.is_none()
+                    && self.pending_operator_action.and_then(service_for_action)
+                        == Some(service.service)
+            });
+        let intentional_story_action = matches!(
+            self.pending_operator_action,
+            Some(OperatorTextAction::Refuse | OperatorTextAction::ReportPolice)
+        ) && !service_action_completion;
         let mut transition = if directory_selection_mismatch
             || pre_ring_direct_connection
             || interference_blocks_routing
@@ -842,21 +1550,84 @@ impl Backend {
                     authored_competing_call
                 },
                 self.simple_hardware_mode,
-                self.simple_hardware_mode
+                (self.is_four_shift_story() || self.simple_hardware_mode)
                     .then_some(connected_callers_ready.as_slice()),
+                self.is_four_shift_story(),
             )
         };
+        if self.is_four_shift_story()
+            && transition
+                .call
+                .as_ref()
+                .is_some_and(|call| call.phase == exchange_protocol::CallPhase::Connected)
+            && self.north_connected_since.is_none()
+        {
+            self.north_connected_since = Some(self.real_elapsed_seconds());
+        }
+        if service_action_completion && !self.simple_hardware_mode {
+            transition.story_outcome = Some(StoryOutcome::Success);
+            transition.story_event_complete = true;
+        }
         if self.simple_hardware_mode {
             self.apply_simple_call_lifecycle(&mut transition);
-        } else if let Some(outcome) = transition.story_outcome {
-            self.advance_story_outcome(outcome);
+        } else if let Some(mut outcome) = transition.story_outcome {
+            let pending_action = self.pending_operator_action;
+            if self.north_state.is_some()
+                && pending_action.is_some_and(|action| !self.north_action_is_ready(action))
+            {
+                outcome = StoryOutcome::Invalid;
+                transition.story_outcome = Some(outcome);
+            }
+            if intentional_story_action {
+                outcome = StoryOutcome::Invalid;
+                transition.story_outcome = Some(outcome);
+            }
+            let gate_passed = !self.north_state.as_ref().is_some_and(|_| {
+                pending_action.is_some_and(|action| !self.north_action_is_ready(action))
+            });
+            if !gate_passed {
+                transition.story_outcome = None;
+                transition.story_event_complete = false;
+            }
+            if self.north_state.is_some() && gate_passed {
+                let recall = outcome == StoryOutcome::Missed
+                    && self.north_state.is_some()
+                    && !self.north_recall_used;
+                if recall {
+                    self.north_recall_used = true;
+                    transition.story_outcome = None;
+                    transition.story_event_complete = false;
+                } else if outcome == StoryOutcome::Missed {
+                    self.apply_north_missed();
+                } else {
+                    let action = self
+                        .pending_operator_action
+                        .take()
+                        .unwrap_or(OperatorTextAction::Connect);
+                    self.pending_service_report = None;
+                    self.apply_north_action(action, true);
+                }
+            } else {
+                self.pending_operator_action = None;
+                self.pending_service_report = None;
+            }
+            if gate_passed && transition.story_outcome.is_some() {
+                self.advance_story_outcome(outcome);
+            }
+            if let Some(ending) = self
+                .north_state
+                .as_ref()
+                .and_then(|state| state.ending.clone())
+            {
+                self.story_node_id = ending;
+            }
         }
         next_state.call = transition.call;
         next_state.calls = transition.calls;
         next_state.line_lamps = transition.line_lamps;
         next_state.game_phase = transition.game_phase;
         next_state.shift = transition.shift;
-        if transition.story_outcome == Some(StoryOutcome::Invalid) {
+        if transition.story_outcome == Some(StoryOutcome::Invalid) && !intentional_story_action {
             record_service_error(&mut next_state, ServiceErrorKind::MisroutedCall);
         }
         if directory_selection_mismatch {
@@ -884,17 +1655,44 @@ impl Backend {
             input,
             transition.story_event_complete,
         );
+        let north_shift_ends = self.north_state.is_some()
+            && (matches!(
+                north_call_id.as_deref(),
+                Some("m2_nayan" | "m6_varo" | "s3_akash")
+            ) || matches!(
+                self.story_node_id.as_str(),
+                "m2_nayan_success_node"
+                    | "m2_nayan_missed_node"
+                    | "m2_nayan_invalid_node"
+                    | "m6_varo_success_node"
+                    | "m6_varo_missed_node"
+                    | "m6_varo_invalid_node"
+                    | "s3_akash_success_node"
+                    | "s3_akash_missed_node"
+                    | "s3_akash_invalid_node"
+            ));
         if transition.story_event_complete && !self.simple_hardware_mode {
             self.settle_story_event(&next_state);
             if self.story_is_terminal() {
+                Self::append_shift_summary(
+                    &mut next_state,
+                    &mut self.shift_earned,
+                    &mut self.shift_cost,
+                );
                 next_state.shift.phase = ShiftPhase::Settled;
                 next_state.game_phase = GamePhase::Ended;
                 self.append_ending_receipt(&mut next_state);
-            } else {
+            } else if north_shift_ends || self.north_state.is_none() {
+                Self::append_shift_summary(
+                    &mut next_state,
+                    &mut self.shift_earned,
+                    &mut self.shift_cost,
+                );
                 next_state.calls.clear();
                 next_state.call = None;
                 next_state.line_lamps = [false; 12];
                 next_state.shift.number = next_state.shift.number.saturating_add(1);
+                let next_shift_number = next_state.shift.number;
                 next_state.shift.phase = ShiftPhase::Ready;
                 next_state.shift.active_call_count = 0;
                 next_state.shift.required_service_calls =
@@ -904,9 +1702,15 @@ impl Backend {
                     append_printer(
                         &mut next_state,
                         &format!(
-                            "SERVICE RULE // {} REQUIRED THIS SHIFT",
+                            "SHIFT {} START\nSERVICE RULE // {} REQUIRED THIS SHIFT",
+                            next_shift_number,
                             service_label(service)
                         ),
+                    );
+                } else {
+                    append_printer(
+                        &mut next_state,
+                        &format!("SHIFT {} START", next_shift_number),
                     );
                 }
                 next_state.game_phase = GamePhase::Ready;
@@ -914,6 +1718,11 @@ impl Backend {
                 self.shift_started_real_elapsed_seconds = self.real_elapsed_seconds();
                 self.interference_reduced = false;
                 self.service_error_recorded = false;
+            } else {
+                next_state.calls.clear();
+                next_state.call = None;
+                next_state.line_lamps = [false; 12];
+                next_state.shift.active_call_count = 0;
             }
         }
         if final_standoff {
@@ -923,6 +1732,11 @@ impl Backend {
             next_state.shift.phase = ShiftPhase::Settled;
             next_state.shift.active_call_count = 0;
             next_state.game_phase = GamePhase::Ended;
+            Self::append_shift_summary(
+                &mut next_state,
+                &mut self.shift_earned,
+                &mut self.shift_cost,
+            );
             self.append_ending_receipt(&mut next_state);
         }
         if input_error.is_none() && !final_standoff {
@@ -949,15 +1763,6 @@ impl Backend {
                 self.tap_bridge_listen_frames = 0;
             }
         }
-        let routing_receipt = transition.routing_receipt;
-
-        if let Some(text) = routing_receipt {
-            append_printer(&mut next_state, &text);
-        }
-        if let Some(text) = self.simple_failure_receipt.take() {
-            append_printer(&mut next_state, &text);
-        }
-
         if let Some(error) = input_error {
             let mut output = self.state.clone();
             output.debug.messages.push(BackendDiagnostic {
@@ -989,6 +1794,8 @@ impl Backend {
             tuning: input.tuning.clone(),
             directory_pages: if self.simple_hardware_mode {
                 simple_directory_pages(input.directory_digits)
+            } else if self.north_state.is_some() {
+                north_directory_pages(input.directory_digits)
             } else {
                 directory_pages(input.directory_digits)
             },
@@ -1017,8 +1824,10 @@ impl Backend {
         if ptt != self.last_ptt {
             self.last_ptt = ptt;
             let voice_id = if ptt {
-                let caller_line = self.state.call.as_ref().map_or(0, |call| call.caller_line);
-                let voice_id = self.voice_id_for_line(caller_line);
+                let caller_line = operator_caller_line(&input.cord_topology)
+                    .or_else(|| self.state.call.as_ref().map(|call| call.caller_line))
+                    .unwrap_or(0);
+                let voice_id = self.voice_id_for_current_call(caller_line);
                 self.voice_request_voice_id = Some(voice_id.clone());
                 voice_id
             } else {
@@ -1028,12 +1837,20 @@ impl Backend {
             };
             if ptt {
                 self.voice_id = Some(voice_id.clone());
-                self.voice_subscriber_line = self.state.call.as_ref().map(|call| call.caller_line);
-                self.voice_callee_line = self
-                    .state
-                    .call
-                    .as_ref()
-                    .map(|call| call.requested_callee_line);
+                self.voice_subscriber_line = operator_caller_line(&input.cord_topology)
+                    .or_else(|| self.state.call.as_ref().map(|call| call.caller_line));
+                self.voice_callee_line = self.voice_subscriber_line.and_then(|line| {
+                    self.state
+                        .calls
+                        .iter()
+                        .find(|call| call.caller_line == line)
+                        .or(self
+                            .state
+                            .call
+                            .as_ref()
+                            .filter(|call| call.caller_line == line))
+                        .map(|call| call.requested_callee_line)
+                });
                 self.voice_turn_id = Some(self.next_voice_turn_id);
                 self.next_voice_turn_id = self.next_voice_turn_id.wrapping_add(1);
             }
@@ -1093,10 +1910,21 @@ impl Backend {
                 .story_event(event_id)
                 .is_some_and(|event| event.outcomes.len() > 1)
         {
-            let choice = match directory_id(digits) {
-                2 => Some("final_taren_call"),
-                4 => Some("final_oren_call"),
-                _ => Some("ending_civil_war"),
+            let choice = if self.north_state.is_some() {
+                self.north_state
+                    .as_ref()
+                    .is_some_and(|story| {
+                        story.flags.contains("SOUTH_EXIT_OFFER")
+                            && story.flags.contains("PLATFORM_SIX_OPEN")
+                            && story.flags.contains("SOUTHBOUND_ACCEPTED")
+                    })
+                    .then_some("southbound_household")
+            } else {
+                match directory_id(digits) {
+                    2 => Some("final_taren_call"),
+                    4 => Some("final_oren_call"),
+                    _ => Some("ending_civil_war"),
+                }
             };
             self.story_node_id = self
                 .story
@@ -1202,22 +2030,6 @@ impl Backend {
                 return (caller, callee);
             }
         }
-    }
-
-    fn next_simple_printer_note(&mut self) -> String {
-        self.simple_rng_state = self
-            .simple_rng_state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        let notes = [
-            "PAPER NOTE // tea ration due at 16:00",
-            "PAPER NOTE // rain reported east of the exchange",
-            "PAPER NOTE // bicycle courier requested a spare stamp",
-            "PAPER NOTE // keep the switchboard dusted",
-            "PAPER NOTE // lunch tin left beside the crank",
-            "PAPER NOTE // evening train running three minutes late",
-        ];
-        notes[(self.simple_rng_state as usize) % notes.len()].to_string()
     }
 
     fn simple_connected_callers_ready(&self) -> Vec<u8> {
@@ -1377,6 +2189,12 @@ impl Backend {
             } else {
                 transition.routing_receipt.take()
             };
+            if newly_connected {
+                self.shift_earned += 5;
+            }
+            if misrouted {
+                self.shift_cost += 3;
+            }
         }
         transition.line_lamps = lamps_for_calls(&transition.calls);
         transition.shift.active_call_count = 2;
@@ -1406,6 +2224,39 @@ impl Backend {
 
     fn settle_story_event(&mut self, state: &StateOutput) {
         loop {
+            if self.north_state.is_some() && self.story_node_id == "m11_select" {
+                let reported = self
+                    .north_state
+                    .as_ref()
+                    .is_some_and(|story| story.flags.contains("LALEH_REPORTED"));
+                self.story_node_id = if reported { "m11b" } else { "m11a" }.to_string();
+                continue;
+            }
+            if self.north_state.is_some() && self.story_node_id == "m14_select" {
+                let Some(story) = self.north_state.as_ref() else {
+                    break;
+                };
+                self.story_node_id = if story.flags.contains("M9_CONNECTED")
+                    && story.flags.contains("PLATFORM_RELAY_DELIVERED")
+                    && story.flags.contains("PLATFORM_SIX_OPEN")
+                {
+                    "m14r"
+                } else if (story.flags.contains("M6_CONNECTED")
+                    || story.flags.contains("M6_EXPIRED")
+                    || story.flags.contains("M12_DELAYED_COLUMN"))
+                    && !story.flags.contains("ARMY_REDIRECTED")
+                {
+                    "m14a"
+                } else if story.flags.contains("HOME_AFFAIRS_TRANSFER_READY")
+                    && !story.flags.contains("ARMY_AT_STATION")
+                {
+                    "m14p"
+                } else {
+                    "m14c"
+                }
+                .to_string();
+                continue;
+            }
             let kind = self.story.node(&self.story_node_id).map(|node| &node.kind);
             if let Some(StoryNodeKind::StoryEvent { event_id, .. }) = kind
                 && self
@@ -1439,9 +2290,23 @@ impl Backend {
         )
     }
 
+    fn is_four_shift_story(&self) -> bool {
+        self.north_state.is_some()
+            && self
+                .story
+                .subscribers()
+                .iter()
+                .any(|subscriber| subscriber.id == "rafi_alam")
+    }
+
     fn expire_calls(&mut self) {
         if self.simple_hardware_mode {
             self.expire_simple_calls();
+            return;
+        }
+        // North callers wait for an explicit Operator resolution; the accelerated
+        // clock must not turn a long conversation into an accidental missed call.
+        if self.north_state.is_some() {
             return;
         }
         let shift_elapsed = self
@@ -1484,6 +2349,13 @@ impl Backend {
                 )
             {
                 self.advance_story_outcome(StoryOutcome::Missed);
+                if let Some(ending) = self
+                    .north_state
+                    .as_ref()
+                    .and_then(|story| story.ending.clone())
+                {
+                    self.story_node_id = ending;
+                }
             }
         }
         self.state.shift.active_call_count = self
@@ -1535,15 +2407,7 @@ impl Backend {
                     }
                 })
                 .sum::<usize>();
-            self.simple_failure_receipt = Some(format!(
-                "MISSED CALL // {} // COST -${}",
-                expired_callers
-                    .iter()
-                    .map(|line| simple_place_for_line(*line))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                cost
-            ));
+            self.shift_cost += cost as u32;
         }
         if let Some(call) = &mut self.state.call
             && expired_callers.contains(&call.caller_line)
@@ -1577,10 +2441,29 @@ impl Backend {
         }
     }
 
+    fn append_shift_summary(state: &mut StateOutput, earned: &mut u32, cost: &mut u32) {
+        append_printer(
+            state,
+            &format!(
+                "SHIFT {} END\nEARNED +${}\nCOST -${}",
+                state.shift.number, *earned, *cost
+            ),
+        );
+        *earned = 0;
+        *cost = 0;
+    }
+
     fn voice_id_for_line(&self, line: u8) -> String {
         self.story
             .subscriber_id_for_line(line)
             .map_or_else(|| "Ryan".to_string(), select_voice_id)
+    }
+
+    fn voice_id_for_current_call(&self, line: u8) -> String {
+        self.current_story_call_id()
+            .and_then(|call_id| self.story.call_premise(call_id))
+            .map(|premise| select_voice_id(&premise.caller_id))
+            .unwrap_or_else(|| self.voice_id_for_line(line))
     }
 
     fn required_service_calls_for_shift(&self, shift: u8) -> u32 {
@@ -1691,7 +2574,25 @@ impl Backend {
             }
             self.voice_status = Some(message.status);
             self.voice_speaker_active = matches!(message.status, VoiceStatus::Playing);
-            if message.status != VoiceStatus::Ready {
+            if message.status == VoiceStatus::Ready {
+                if let Some(conversation_id) = self
+                    .voice_conversations
+                    .iter()
+                    .find(|conversation| {
+                        conversation.summary.session_id == message.session_id
+                            && conversation.summary.turn_id == message.turn_id
+                    })
+                    .map(|conversation| conversation.summary.id)
+                {
+                    self.update_voice_conversation(
+                        conversation_id,
+                        VoiceStatus::Ready,
+                        None,
+                        None,
+                        None,
+                    );
+                }
+            } else {
                 let conversation_id = self.ensure_voice_conversation(
                     message.session_id,
                     message.turn_id,
@@ -1793,12 +2694,37 @@ impl Backend {
         }
         let conversation_id = self.next_voice_conversation_id;
         self.next_voice_conversation_id = self.next_voice_conversation_id.wrapping_add(1);
+        let caller_line = self
+            .voice_subscriber_line
+            .or_else(|| self.state.call.as_ref().map(|call| call.caller_line));
+        let caller_name = caller_line
+            .and_then(|line| match line {
+                0 => Some("Anika Roy"),
+                9 => Some("Rafi Alam"),
+                _ => None,
+            })
+            .or_else(|| {
+                self.current_story_call_id()
+                    .and_then(|call_id| match call_id {
+                        "s1_1_rafi" => Some("Rafi Alam"),
+                        "m1_anika" => Some("Anika Roy"),
+                        "s1_2_asha" => Some("Asha Sen"),
+                        _ => None,
+                    })
+            })
+            .unwrap_or("Unknown Caller")
+            .to_string();
         self.voice_conversations.push_back(VoiceConversationRecord {
             summary: DebugVoiceConversation {
                 id: conversation_id,
                 session_id,
                 turn_id,
                 state_revision,
+                caller_name,
+                caller_place: caller_line.map_or_else(
+                    || "Unknown Place".to_string(),
+                    |line| north_place_for_line(line).to_string(),
+                ),
                 status: None,
                 started_elapsed_seconds: self.elapsed_seconds(),
                 finished_elapsed_seconds: None,
@@ -1881,6 +2807,23 @@ fn select_voice_id(subscriber_id: &str) -> String {
         "mira_sen" => "Serena",
         "kavi_oran" => "Dylan",
         "sela_var" => "Vivian",
+        "anika_roy" => "Vivian",
+        "nayan_boro" => "Eric",
+        "rakesh_nahal" => "Dylan",
+        "laleh_mir" => "Serena",
+        "javed_rahman" => "Ryan",
+        "captain_varo" => "Dylan",
+        "tomas_vale" => "Ryan",
+        "bikram_sen" => "Eric",
+        "paro_sen" => "Vivian",
+        "dev_korr" => "Eric",
+        "arman_vey" => "Dylan",
+        "meera_tal" => "Serena",
+        "mira_halek" => "Vivian",
+        "rafi_alam" => "Ryan",
+        "akash_dey" => "Eric",
+        "nahid_bkash" => "Serena",
+        "asha_sen" => "Vivian",
         _ => "Ryan",
     }
     .to_string()
@@ -1946,6 +2889,7 @@ fn advance_calls(
     authored_competing_call: Option<(u8, u8)>,
     allow_competing_without_existing: bool,
     connected_callers_ready: Option<&[u8]>,
+    auto_complete_connected: bool,
 ) -> CallTransition {
     let operator_line = operator_caller_line(&input.cord_topology);
     let mut calls = state.calls.clone();
@@ -1981,7 +2925,7 @@ fn advance_calls(
         calls.push(exchange_protocol::CallStatus {
             caller_line,
             requested_callee_line: callee_line,
-            phase: exchange_protocol::CallPhase::OperatorSession,
+            phase: exchange_protocol::CallPhase::Waiting,
         });
     }
 
@@ -2014,6 +2958,7 @@ fn advance_calls(
             connected_callers_ready.is_none_or(|callers| {
                 authored_call.is_some_and(|(caller, _)| callers.contains(&caller))
             }),
+            auto_complete_connected,
         );
         if let Some(call) = single.call.clone() {
             focused_call = Some(call.clone());
@@ -2042,6 +2987,7 @@ fn advance_calls(
             previous_crank_rotation_timestamps,
             None,
             connected_callers_ready.is_none_or(|callers| callers.contains(&call.caller_line)),
+            auto_complete_connected,
         );
         if previous_focused_line == Some(call.caller_line)
             && operator_line.is_some()
@@ -2110,6 +3056,7 @@ fn advance_single_call(
     previous_crank_rotation_timestamps: [u64; 4],
     authored_call: Option<(u8, u8)>,
     connected_call_ready: bool,
+    auto_complete_connected: bool,
 ) -> SingleCallTransition {
     if state.call.is_none() {
         let Some((caller_line, callee)) = authored_call else {
@@ -2297,8 +3244,17 @@ fn advance_single_call(
             }
         }
         exchange_protocol::CallPhase::Connected => {
-            if direct_circuit && connected_call_ready {
-                next_call.phase = exchange_protocol::CallPhase::Completed;
+            if auto_complete_connected && direct_circuit && connected_call_ready {
+                next_shift.active_call_count = 0;
+                return SingleCallTransition {
+                    call: None,
+                    line_lamps: [false; 12],
+                    game_phase: next_game_phase,
+                    shift: next_shift,
+                    routing_receipt: None,
+                    story_outcome: None,
+                    story_event_complete: true,
+                };
             } else if direct_circuit || !connected_call_ready {
                 return unchanged_transition(state);
             } else if input.cord_topology.is_empty() {
@@ -2492,6 +3448,14 @@ fn service_from_controls(held: &exchange_protocol::HeldControls) -> Option<Servi
     }
 }
 
+fn service_for_action(action: OperatorTextAction) -> Option<ServiceKind> {
+    match action {
+        OperatorTextAction::CallEms => Some(ServiceKind::Ems),
+        OperatorTextAction::ReportPolice => Some(ServiceKind::Police),
+        _ => None,
+    }
+}
+
 fn apply_service_transition(
     backend: &mut Backend,
     state: &mut StateOutput,
@@ -2511,16 +3475,9 @@ fn apply_service_transition(
                     phase: ServiceCallPhase::Completed,
                 });
                 state.shift.completed_service_calls += 1;
-                append_printer(
-                    state,
-                    &format!("SERVICE {} COMPLETED", service_label(service)),
-                );
             }
         }
-        _ if held_service.is_some()
-            && backend.last_held_service != held_service
-            && state.shift.phase == ShiftPhase::Active =>
-        {
+        _ if held_service.is_some() && backend.last_held_service != held_service => {
             let service = held_service.expect("service checked above");
             let required_service = backend.required_service_kind_for_shift(state.shift.number);
             if let Some(required_service) = required_service
@@ -2556,10 +3513,9 @@ fn apply_service_transition(
                     service,
                     phase: ServiceCallPhase::Active,
                 });
-                for call in &mut state.calls {
-                    if call.phase == exchange_protocol::CallPhase::OperatorSession {
-                        call.phase = exchange_protocol::CallPhase::Held;
-                    }
+                let served_line = state.call.as_ref().map(|call| call.caller_line);
+                if let Some(served_line) = served_line {
+                    state.calls.retain(|call| call.caller_line != served_line);
                 }
                 state.call = None;
                 state.line_lamps = lamps_for_calls(&state.calls);
@@ -2574,12 +3530,6 @@ fn apply_service_transition(
     {
         record_service_error(state, ServiceErrorKind::MissedRequiredServiceCall);
         backend.service_error_recorded = true;
-        let required = backend
-            .required_service_kind_for_shift(state.shift.number)
-            .map_or("SERVICE".to_string(), |service| {
-                service_label(service).to_string()
-            });
-        append_printer(state, &format!("SERVICE ERROR {required} REQUIRED"));
     }
 }
 
@@ -2651,6 +3601,9 @@ fn lamps_for_call(call: Option<&exchange_protocol::CallStatus>) -> [bool; 12] {
     let Some(call) = call else {
         return lamps;
     };
+    if !call_lamp_active(&call.phase) {
+        return lamps;
+    }
     lamps[call.caller_line as usize] = true;
     if matches!(
         call.phase,
@@ -2666,6 +3619,9 @@ fn lamps_for_call(call: Option<&exchange_protocol::CallStatus>) -> [bool; 12] {
 fn lamps_for_calls(calls: &[exchange_protocol::CallStatus]) -> [bool; 12] {
     let mut lamps = [false; 12];
     for call in calls {
+        if !call_lamp_active(&call.phase) {
+            continue;
+        }
         lamps[call.caller_line as usize] = true;
         if matches!(
             call.phase,
@@ -2677,6 +3633,16 @@ fn lamps_for_calls(calls: &[exchange_protocol::CallStatus]) -> [bool; 12] {
         }
     }
     lamps
+}
+
+fn call_lamp_active(phase: &exchange_protocol::CallPhase) -> bool {
+    !matches!(
+        phase,
+        exchange_protocol::CallPhase::Completed
+            | exchange_protocol::CallPhase::Missed
+            | exchange_protocol::CallPhase::Misrouted
+            | exchange_protocol::CallPhase::Failed
+    )
 }
 
 fn light_ring_generator_lines(
@@ -2766,7 +3732,7 @@ pub fn serve_with_voice_and_debug(
     voice_socket: Option<UdpSocket>,
     debug_listener: Option<TcpListener>,
 ) -> io::Result<()> {
-    let backend = Arc::new(Mutex::new(Backend::new_simple_hardware_demo()));
+    let backend = Arc::new(Mutex::new(Backend::new_north_neeladesh()));
     let voice_socket = voice_socket.map(Arc::new);
     if let Some(debug_listener) = debug_listener {
         let backend = Arc::clone(&backend);
@@ -3348,7 +4314,7 @@ fn run_voice_worker_session(
     let mut session = OperatorSession::new(
         input.session_id,
         input.state_revision,
-        demo_response_context(subscriber_line, callee_line, voice_id, operator_knowledge),
+        north_response_context(subscriber_line, callee_line, voice_id, operator_knowledge),
         Box::new(ReceivedCapture::new(input.samples)),
         Box::new(CommandSpeechToText::new(stt)),
         Box::new(CommandDialogueGenerator::new(dialogue)),
@@ -3359,130 +4325,107 @@ fn run_voice_worker_session(
     session.release_ptt().map(|_| ())
 }
 
-fn demo_response_context(
+fn north_response_context(
     subscriber_line: u8,
     callee_line: Option<u8>,
     voice_id: String,
     operator_knowledge: Vec<String>,
 ) -> ResponseContext {
-    let (subscriber_id, name, personality, goal, premise, direction, relationship) =
-        match subscriber_line {
-            0 => (
-                1,
-                "Taren Kesh",
-                "precise railway dispatcher under pressure",
-                "Keep the railway moving",
-                "Connect me to the Records Office, Subscriber 0002.",
-                "Ask for a four-digit Subscriber ID before routing",
-                "Vira Dhal is a trusted records clerk",
-            ),
-            1 => (
-                2,
-                "Vira Dhal",
-                "careful factory records clerk protecting a fragile supply ledger",
-                "Keep the relief records moving",
-                "Connect me to Rail Dispatch, Subscriber 0001.",
-                "Give the Operator the requested public Subscriber ID",
-                "Taren Kesh works the Rail Dispatch desk",
-            ),
-            2 => (
-                3,
-                "Dr. Leya Varan",
-                "direct emergency physician balancing triage and family duty",
-                "Get help to the parent collapse",
-                "Connect me to the Border Post, Subscriber 0004.",
-                "Ask for the emergency connection by Subscriber ID",
-                "Oren Vey controls the border post response",
-            ),
-            3 => (
-                4,
-                "Captain Oren Vey",
-                "disciplined State Protection Directorate captain weighing order against civilians",
-                "Keep the border post under control",
-                "Connect me to the Records Office, Subscriber 0002.",
-                "State the condition of the corridor plainly",
-                "Vira Dhal holds records the Directorate wants",
-            ),
-            4 => (
-                5,
-                "Neri Tal",
-                "alert railway signal operator who notices patterns before officials do",
-                "Warn the exchange about the intercepted signal",
-                "Connect me to the Records Office, Subscriber 0002.",
-                "Describe the signal without inventing its source",
-                "Taren Kesh works the Rail Dispatch desk",
-            ),
-            5 => (
-                6,
-                "Mira Sen",
-                "calm waterworks dispatcher tracking a failing pump station",
-                "Keep the district water running",
-                "Connect me to the next station supervisor.",
-                "Give the Operator the requested line number clearly",
-                "The exchange connects public utility desks",
-            ),
-            6 => (
-                7,
-                "Kavi Oran",
-                "methodical archive clerk who speaks in short precise updates",
-                "Find the missing registry file",
-                "Connect me to the records desk I name.",
-                "Repeat the requested Subscriber ID before routing",
-                "The directory is the source of truth for line numbers",
-            ),
-            7 => (
-                8,
-                "Sela Var",
-                "night-shift telegraph operator with a dry, observant manner",
-                "Pass a warning to the correct station",
-                "Connect me to the station I request.",
-                "Name the requested line without guessing",
-                "Every physical line is numbered from zero through seven",
-            ),
-            _ => (
-                1,
-                "Taren Kesh",
-                "precise railway dispatcher under pressure",
-                "Keep the railway moving",
-                "Connect me to the Records Office, Subscriber 0002.",
-                "Ask for a four-digit Subscriber ID before routing",
-                "Vira Dhal is a trusted records clerk",
-            ),
-        };
-    let premise = callee_line.map_or_else(
-        || premise.to_string(),
-        |line| {
-            format!(
-                "Request a connection to {}. Do not volunteer the destination unless asked.",
-                simple_place_for_line(line)
-            )
-        },
-    );
-    let mut permitted_knowledge = vec![match subscriber_line {
-        0 => KnowledgeRecord {
-            fact: "Taren Kesh is waiting on a relief train record".to_string(),
-            learned_from: "railway_dispatch_call".to_string(),
-        },
-        1 => KnowledgeRecord {
-            fact: "The directory lists the Rail Dispatch Subscriber".to_string(),
-            learned_from: "directory_terminal".to_string(),
-        },
-        2 => KnowledgeRecord {
-            fact: "The exchange can place an EMS Service Call".to_string(),
-            learned_from: "clinic_protocol".to_string(),
-        },
-        3 => KnowledgeRecord {
-            fact: "The border post is under emergency authority".to_string(),
-            learned_from: "directorate_notice".to_string(),
-        },
-        4 => KnowledgeRecord {
-            fact: "The railway signal repeated after the relief train request".to_string(),
-            learned_from: "signal_box_log".to_string(),
-        },
-        _ => KnowledgeRecord {
-            fact: "The directory lists Vira Dhal".to_string(),
-            learned_from: "directory_terminal".to_string(),
-        },
+    let (subscriber_id, name, personality, goal, relationship) = match subscriber_line {
+        0 => (
+            1,
+            "Anika Roy",
+            "quiet hospital nurse",
+            "Speak with the person at the requested destination",
+            "the person I am calling",
+        ),
+        1 | 4 => (
+            2,
+            "Nayan Boro",
+            "careful government secretary",
+            "Get the official bulletin aired",
+            "the Republic Secretariat",
+        ),
+        2 => (
+            3,
+            "Inspector Rakesh Nahal",
+            "controlled ministry investigator",
+            "Verify the listed residents",
+            "Home Affairs",
+        ),
+        3 => (
+            6,
+            "Captain Varo",
+            "disciplined army officer",
+            "Keep the cantonment line controlled",
+            "the Army command",
+        ),
+        5 => (
+            12,
+            "Meera Tal",
+            "calm embassy contact under pressure",
+            "Reach the embassy contact",
+            "the South Neeladesh Embassy",
+        ),
+        6 => (
+            7,
+            "Tomas Vale",
+            "nervous hotel desk clerk",
+            "Reach the requested contact",
+            "the Hotel desk",
+        ),
+        7 => (
+            5,
+            "Javed Rahman",
+            "methodical mining office clerk",
+            "Report what the office knows",
+            "the Mining Office",
+        ),
+        8 => (
+            8,
+            "Paro Sen",
+            "careful colony resident",
+            "Reach the correct household",
+            "Ratan Colony",
+        ),
+        9 => (
+            14,
+            "Rafi Alam",
+            "worried Shapla Apartments resident",
+            "Get help to my mother",
+            "Asha Sen",
+        ),
+        10 => (
+            8,
+            "Bikram Sen",
+            "alert market clerk",
+            "Reach the requested contact",
+            "the Market",
+        ),
+        11 => (
+            13,
+            "Mira Halek",
+            "observant station worker",
+            "Report what happened at the station",
+            "Central Station",
+        ),
+        _ => (
+            0,
+            "Unknown Caller",
+            "guarded local caller",
+            "Reach the requested place",
+            "the exchange",
+        ),
+    };
+    let requested_place = callee_line
+        .map(north_place_for_line)
+        .unwrap_or("the requested place");
+    let mut permitted_knowledge = vec![KnowledgeRecord {
+        fact: format!(
+            "{name} is calling from {}",
+            north_place_for_line(subscriber_line)
+        ),
+        learned_from: "authored_call_premise".to_string(),
     }];
     permitted_knowledge.extend(operator_knowledge.into_iter().map(|fact| KnowledgeRecord {
         fact,
@@ -3502,29 +4445,38 @@ fn demo_response_context(
             }],
             permitted_actions: vec!["request_routing".to_string()],
         },
-        caller_place: simple_place_for_line(subscriber_line).to_string(),
-        requested_place: callee_line
-            .map(simple_place_for_line)
-            .unwrap_or("UNKNOWN PLACE")
-            .to_string(),
-        known_places: (0..SIMPLE_SUBSCRIBER_LINES)
-            .map(simple_place_for_line)
-            .map(str::to_string)
-            .collect(),
+        caller_place: north_place_for_line(subscriber_line).to_string(),
+        requested_place: requested_place.to_string(),
+        known_places: (0..12).map(north_place_for_line).map(str::to_string).collect(),
         subscriber_goal: goal.to_string(),
-        call_premise: premise,
-        story_beat_direction: if callee_line.is_some() {
-            "Answer ordinary questions naturally. If asked for the destination, name the place exactly. Add harmless everyday detail without changing the call."
-                .to_string()
-        } else {
-            direction.to_string()
-        },
+        call_premise: format!(
+            "Request a connection to {requested_place}. Do not volunteer the destination unless asked."
+        ),
+        story_beat_direction: "Answer ordinary questions naturally. If asked for the destination, name the place exactly. Add harmless everyday detail without changing the call.".to_string(),
         permitted_knowledge,
         beliefs: Vec::new(),
         relationship_notes: Vec::new(),
         memories: Vec::new(),
-        recent_conversation: Vec::<ConversationTurn>::new(),
+        recent_conversation: Vec::new(),
         current_input: None,
+    }
+}
+
+fn north_place_for_line(line: u8) -> &'static str {
+    match line {
+        0 => "Neeladesh Central Hospital",
+        1 => "Republic Secretariat",
+        2 => "Home Affairs Annex",
+        3 => "Cantonment",
+        4 => "National Radio Building",
+        5 => "South Neeladesh Embassy",
+        6 => "Hotel Meridian",
+        7 => "Mining Office",
+        8 => "Ratan Colony",
+        9 => "Shapla Apartments",
+        10 => "Old Market",
+        11 => "Central Station",
+        _ => "the exchange",
     }
 }
 
@@ -3631,7 +4583,7 @@ fn initial_printer_output(
 ) -> Vec<PrinterEntry> {
     let mut entries = vec![PrinterEntry {
         entry_id: 1,
-        text: "PROVINCIAL EXCHANGE READY // SHIFT CLOCK 08:00-16:00".to_string(),
+        text: "SHIFT 1 START\nPROVINCIAL EXCHANGE READY // SHIFT CLOCK 08:00-16:00".to_string(),
     }];
     if required_service_calls > 0
         && let Some(service) = required_service_kind
@@ -3708,6 +4660,54 @@ fn directory_pages(digits: [u8; 4]) -> Vec<DirectoryPage> {
                     format!("AFFILIATION // {affiliation}"),
                     format!("PUBLIC NOTE // {note}"),
                 ],
+            },
+        ],
+        None => vec![DirectoryPage {
+            page_number: 1,
+            heading: "NO RECORD".to_string(),
+            lines: vec![
+                format!("SUBSCRIBER ID {id:04}"),
+                "CHECK DIRECTORY SELECTION".to_string(),
+            ],
+        }],
+    }
+}
+
+fn north_directory_pages(digits: [u8; 4]) -> Vec<DirectoryPage> {
+    let id = directory_id(digits);
+    let record = match id {
+        1 => Some((0, "ANIKA ROY", "CENTRAL HOSPITAL", "Hospital nurse")),
+        2 => Some((1, "NAYAN BORO", "SECRETARIAT", "Government office")),
+        3 => Some((
+            2,
+            "INSPECTOR RAKESH NAHAL",
+            "HOME AFFAIRS",
+            "Ministry investigator",
+        )),
+        4 => Some((3, "CAPTAIN VARO", "CANTONMENT", "Army officer")),
+        5 => Some((4, "NAYAN BORO", "RADIO", "Radio office")),
+        6 => Some((5, "MEERA TAL", "EMBASSY", "Embassy contact")),
+        7 => Some((6, "TOMAS VALE", "HOTEL", "Hotel desk")),
+        8 => Some((9, "ASHA SEN", "SHAPLA APARTMENTS", "Resident")),
+        9 => Some((11, "LALEH MIR", "CENTRAL STATION", "Station contact")),
+        _ => None,
+    };
+    match record {
+        Some((line, heading, listing, role)) => vec![
+            DirectoryPage {
+                page_number: 1,
+                heading: heading.to_string(),
+                lines: vec![
+                    format!("SUBSCRIBER ID {id:04}"),
+                    format!("LINE LISTING // {listing}"),
+                    format!("LINE NUMBER // {line}"),
+                    role.to_string(),
+                ],
+            },
+            DirectoryPage {
+                page_number: 2,
+                heading: "PROVINCIAL EXCHANGE".to_string(),
+                lines: vec!["NORTH NEELADESH DIRECTORY".to_string()],
             },
         ],
         None => vec![DirectoryPage {
@@ -3824,7 +4824,7 @@ mod tests {
 
     #[test]
     fn voice_debug_retains_conversation_outputs_and_audio() {
-        let backend = Arc::new(Mutex::new(Backend::new()));
+        let backend = Arc::new(Mutex::new(Backend::new_north_neeladesh()));
         let ready = exchange_protocol::VoiceStatusMessage {
             protocol_version: exchange_protocol::VOICE_PROTOCOL_VERSION,
             session_id: 7,

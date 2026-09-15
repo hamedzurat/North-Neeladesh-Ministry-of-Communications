@@ -2,7 +2,7 @@
 
 import os
 import shutil
-import sys
+from importlib import import_module
 
 from .common import DIALOGUE_MODEL, LLAMA_BINARY, TTS_MODEL, WHISPER_BINARY, WHISPER_MODEL, fail
 
@@ -48,10 +48,10 @@ def main() -> int:
         os.path.join(tts_model, "speech_tokenizer", "config.json"), "Qwen3-TTS tokenizer config"
     )
     try:
-        import torch
-        import qwen_tts
-    except ImportError as error:
-        fail(f"missing offline Qwen3-TTS Python dependency: {error}")
+        import_module("torch")
+        import_module("qwen_tts")
+    except Exception as error:  # noqa: BLE001 - dependency imports have backend-specific failures
+        fail(f"offline Qwen3-TTS dependency check failed: {error}")
     print("offline voice worker preflight passed")
     return 0
 

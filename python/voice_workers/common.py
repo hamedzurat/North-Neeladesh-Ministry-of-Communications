@@ -1,8 +1,8 @@
+import math
 import os
 import sys
 from pathlib import Path
 from typing import NoReturn
-
 
 MODEL_ROOT = Path(
     os.environ.get(
@@ -18,5 +18,16 @@ LLAMA_BINARY = "llama-cli"
 
 
 def fail(message: str) -> NoReturn:
-    print(message, file=sys.stderr)
+    print(f"VOICE WORKER ERROR // {message}", file=sys.stderr, flush=True)
     raise SystemExit(1)
+
+
+def worker_timeout() -> float:
+    value = os.environ.get("NN_VOICE_WORKER_TIMEOUT", "25")
+    try:
+        timeout = float(value)
+    except ValueError:
+        fail("NN_VOICE_WORKER_TIMEOUT must be a number")
+    if not math.isfinite(timeout) or not 0 < timeout <= 300:
+        fail("NN_VOICE_WORKER_TIMEOUT must be between 0 and 300 seconds")
+    return timeout

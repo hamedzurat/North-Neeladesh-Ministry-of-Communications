@@ -12,7 +12,7 @@ The daemon never advances Routing or Story Graph state. The backend remains the 
 
 ## Worker contracts
 
-`just voice-daemon` runs relay-only mode. It does not load STT, dialogue, or Qwen3-TTS and it does not decide a Routing or Story Graph transition. `just backend` configures those workers on the laptop. The relay reports capture/playback failures as typed voice status messages and stays alive so the backend can recover or retry the session.
+`just voice-daemon` runs relay-only mode. It does not load STT, dialogue, or Qwen3-TTS and it does not decide a Routing or Story Graph transition. `just backend-debug` configures those workers on the laptop. The relay reports capture/playback failures as typed voice status messages and stays alive so the backend can recover or retry the session.
 
 The backend uses the checked-in real worker adapters. Audio capture and playback on the relay use the Rust `cpal` audio library; the backend STT and dialogue invoke the pacman-installed whisper.cpp and llama.cpp runtimes. The Python workers run from the `python/` uv project; `--no-sync` prevents the backend from installing packages or downloading a model at runtime. Install the runtimes with `sudo pacman -S llama-cpp ggml-cuda whisper-cpp`, provision the model assets with `just voice-setup`, then run `just voice-preflight` before the first session.
 
@@ -43,9 +43,7 @@ The paths above are automatic defaults. `NN_VOICE_MODEL_ROOT`, `NN_WHISPER_MODEL
 `NN_QWEN3_MODEL`, and `NN_QWEN3_TTS_MODEL` remain optional overrides for a different
 installation. Each `SubscriberProfile.voice_id` is the Qwen3-TTS CustomVoice speaker
 name directly, such as `Ryan` or `Vivian`; no voice mapping environment variable is
-used. Until authored Subscriber profiles are wired into the backend, development runs
-select a supported speaker randomly for each request so the voice catalogue can be
-tested. `just backend` sets `NN_VOICE_RANDOM_SPEAKER=1`; set it to `0` to pin `Ryan`.
+used. The four-Shift story selects the authored Subscriber voice for each request.
 
 `python/voice_workers/` contains the real model adapters. They are launched by the laptop backend as `python -m voice_workers.<worker>` inside the uv environment. The backend includes the selected Qwen3-TTS CustomVoice `voice_id` in each PTT control message. The relay sends captured PCM to the backend and plays the backend's RTP/L16 output locally. Their required stdin/stdout contracts are:
 
@@ -60,7 +58,7 @@ Each provider command has a bounded 30-second deadline. The Rust adapter bounds 
 
 ## Manual test
 
-1. Run `just voice-preflight`, then start the backend with `just backend`.
+1. Run `just voice-preflight`, then start the backend with `just backend-debug`.
 2. Start the relay with `just voice-daemon` on the laptop or Raspberry Pi.
 3. Start Odin with `just frontend` and connect Subscriber 0 to the Operator Jack.
 4. Hold the PTT control in Odin. The backend forwards `StartPtt`; the daemon captures microphone audio and reports `listening`.

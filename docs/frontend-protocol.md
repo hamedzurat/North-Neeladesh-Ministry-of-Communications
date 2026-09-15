@@ -91,11 +91,11 @@ just build
 Start the backend and frontend separately:
 
 ```sh
-just backend
+just backend-debug
 just frontend
 ```
 
-Backend variants are `backend-stress` and `backend-debug`. The debug variant enables printer stress and exposes the authoritative debug command boundary. Voice failures and retained conversation evidence are available through the debug surface rather than backend console tracing. The frontend trace command is:
+`backend-debug` is the only live backend entry point. It exposes the authoritative debug command boundary. Voice failures and retained conversation evidence are available through the debug surface rather than backend console tracing. The frontend trace command is:
 
 ```sh
 just frontend-trace
@@ -122,10 +122,10 @@ Voice status and audio do not advance the authoritative Routing state. Each back
 
 Manual verification:
 
-1. Run `just backend` in one terminal and `just frontend` in another.
-2. Complete the authored hardware demonstration: Taren/Vira routing with Directory lookup, tuned interference, a Police Service Call, and Tap Bridge monitoring. The four-Shift fixture remains available for development coverage.
+1. Run `just backend-debug`, `just debug-surface`, `just frontend`, and `just voice-daemon` in four terminals.
+2. Complete the authored four-Shift story through the Cabinet controls and voice path.
 3. Verify that Directory lookup, Ring Generator cranking, Held Callers, Tap Bridge listen control, Police completion, printer receipts, and backend-owned Shift transitions appear on the Cabinet.
 4. Repeat the run with a missed Call or omitted Police Service Call. Verify the typed Service Error and that an authored Ending is still reached.
-5. Change the Directory Terminal digits and verify the e-paper pages update from the backend; use `0002` for the authored Taren/Vira Routing and an unlisted ID to confirm the no-record display.
+5. Change the Directory Terminal digits and verify the e-paper pages update from the four-Shift story; use an unlisted ID to confirm the no-record display.
 
-For one real voice session, run `uv sync --project python` once during provisioning, configure the offline model assets, run `just voice-preflight`, then run `just backend` and `just voice-daemon`. PTT is controlled by the Cabinet Frontend; the relay stays listening while idle and carries only audio/status traffic. Use `just voice-smoke` for a hardware-free relay test; see `docs/voice-daemon.md` for the model and device configuration.
+For one real voice session, run `uv sync --project python` once during provisioning, configure the offline model assets, run `just voice-preflight`, then run `just backend-debug` and `just voice-daemon`. PTT is controlled by the Cabinet Frontend; the relay stays listening while idle and carries only audio/status traffic. Use `just voice-smoke` for a hardware-free relay test; see `docs/voice-daemon.md` for the model and device configuration.

@@ -443,6 +443,8 @@ pub struct DebugVoiceConversation {
     pub session_id: u64,
     pub turn_id: u64,
     pub state_revision: u64,
+    pub caller_name: String,
+    pub caller_place: String,
     pub status: Option<VoiceStatus>,
     pub started_elapsed_seconds: u32,
     pub finished_elapsed_seconds: Option<u32>,

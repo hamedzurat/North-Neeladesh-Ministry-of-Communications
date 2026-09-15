@@ -120,14 +120,26 @@
     .json-invalid { color: #ff8b80; }
     .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
     .wide { grid-column: 1 / -1; }
-    .graph-meta { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; color: var(--muted); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+     .graph-meta { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; color: var(--muted); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+     .graph-runtime { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+     .graph-runtime .fact { display: block; padding: 9px; border: 2px solid var(--ink); background: var(--paper); }
+     .graph-runtime .label { display: block; margin-bottom: 5px; color: var(--muted); font-size: 10px; }
+     .graph-runtime .value { display: block; font-weight: 900; overflow-wrap: anywhere; }
+     .story-progress { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+     .progress-beat { min-height: 78px; padding: 9px; border: 2px solid var(--ink); background: var(--paper); }
+     .progress-beat.complete { background: var(--green); }
+     .progress-beat.current { background: var(--cyan); box-shadow: 4px 4px 0 var(--ink); }
+     .progress-beat.next { background: var(--yellow); }
+     .progress-number { font-size: 11px; font-weight: 900; }
+     .progress-name { margin-top: 7px; font-size: 11px; font-weight: 900; }
+     .progress-place { margin-top: 5px; color: var(--muted); font-size: 10px; }
     .graph-key { display: inline-flex; align-items: center; gap: 6px; }
     .graph-key::before { content: ""; width: 13px; height: 13px; display: inline-block; border: 2px solid var(--ink); background: #fffdf5; }
     .graph-key.current::before { background: var(--cyan); }
     .graph-key.frontier::before { background: var(--yellow); }
     .graph-key.ending::before { background: var(--red); }
-    .story-graph { min-height: 270px; padding: 12px; border: 3px solid var(--ink); background: #171717; overflow-x: auto; }
-    .story-graph svg { display: block; min-width: 900px; }
+    .story-graph { min-height: 420px; max-height: 760px; padding: 12px; border: 3px solid var(--ink); background: #171717; overflow: auto; }
+    .story-graph svg { display: block; width: 2800px !important; min-width: 2800px !important; height: auto !important; max-width: none !important; }
     .story-edge { fill: none; stroke: #8e8b80; stroke-width: 2; marker-end: url(#story-arrow); }
     .story-edge.live { stroke: var(--yellow); stroke-width: 4; }
     .story-node { cursor: default; outline: none; }
@@ -138,19 +150,22 @@
     .story-node.ending rect { fill: var(--red); }
     .story-node.current.frontier rect { fill: var(--green); }
     .story-node:focus rect, .story-node:hover rect { stroke: var(--blue); stroke-width: 5; }
-    .story-node text { pointer-events: none; fill: var(--ink); font-weight: 900; }
-    .story-node .node-id { font-size: 11px; }
-    .story-node .node-kind { font-size: 10px; font-weight: 400; }
+     .story-node text { pointer-events: none; fill: var(--ink); font-weight: 900; }
+     .story-node .node-id { font-size: 11px; }
+     .story-node .node-kind { font-size: 10px; font-weight: 400; }
+     .story-node .node-state { font-size: 10px; letter-spacing: .08em; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 8px 6px; border-bottom: 2px solid var(--ink); text-align: left; vertical-align: top; }
     th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
     pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
     .empty { padding: 12px; border: 2px dashed var(--ink); color: var(--muted); }
-    @media (max-width: 900px) {
-      .voice-current, .conversation { grid-template-columns: 1fr; }
-      .grid { grid-template-columns: 1fr; }
-      .wide { grid-column: auto; }
-    }
+     @media (max-width: 900px) {
+       .voice-current, .conversation { grid-template-columns: 1fr; }
+       .grid { grid-template-columns: 1fr; }
+       .graph-runtime { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+       .story-progress { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+       .wide { grid-column: auto; }
+     }
     @media (max-width: 520px) {
       header { align-items: start; flex-direction: column; }
       .connection { text-align: left; }
@@ -169,11 +184,11 @@
     <div id="failure-alert" class="alert"></div>
 
     <section class="panel">
-      <div class="panel-title"><h2>Operator controls</h2><span class="muted">authoritative backend commands</span></div>
+      <div class="panel-title"><h2>Operator controls</h2><span class="muted">authoritative North Neeladesh backend commands</span></div>
       <div class="controls">
         <button class="danger" onclick="send('reset')">Reset run</button>
         <input id="seconds" type="number" min="0" value="30"><button onclick="advance()">Advance time</button>
-        <input id="caller" type="number" min="0" max="15" value="0"><input id="callee" type="number" min="0" max="15" value="1"><button class="primary" onclick="injectCall()">Inject call</button>
+        <input id="caller" type="number" min="0" max="11" value="0"><input id="callee" type="number" min="0" max="11" value="1"><button class="primary" onclick="injectCall()">Inject call</button>
         <input class="wide" id="event" placeholder="story event id" value="routing_success"><button onclick="forceEvent()">Force event</button>
         <input class="wide" id="path" placeholder="story node id"><button onclick="selectPath()">Select path</button>
         <button onclick="toggle('godmode')">Toggle godmode</button><button onclick="toggle('bypass_restrictions')">Toggle bypass</button>
@@ -204,20 +219,27 @@
        <section class="panel"><div class="panel-title"><h2>Run / shift</h2></div><div id="run" class="facts"></div></section>
        <section class="panel"><div class="panel-title"><h2>Story graph</h2></div><div id="story" class="facts"></div></section>
        <section class="panel"><div class="panel-title"><h2>Counters</h2></div><div id="counters" class="facts"></div></section>
-       <section class="panel wide"><div class="panel-title"><h2>Authored story DAG</h2><span id="graph-status" class="muted">waiting for graph</span></div><div class="graph-meta"><span class="graph-key current">current node</span><span class="graph-key frontier">authored frontier</span><span class="graph-key ending">ending</span><span>click a frontier node to request an authored path</span></div><div id="story-graph" class="story-graph"><div class="empty">Waiting for the authoritative Story Graph.</div></div></section>
+       <section class="panel wide"><div class="panel-title"><h2>Current story graph</h2><div class="controls"><button onclick="graphZoom(-0.25)">Zoom -</button><button onclick="graphZoom(0.25)">Zoom +</button><span id="graph-zoom" class="muted">180%</span><span id="graph-status" class="muted">waiting for graph</span></div></div><div id="graph-runtime" class="graph-runtime"></div><div class="graph-meta"><span class="graph-key current">current node</span><span class="graph-key frontier">available choice</span><span class="graph-key ending">ending</span><span>click an available choice to request a path</span></div><div id="story-graph" class="story-graph"><div class="empty">Waiting for the current Story Graph.</div></div></section>
+       <section class="panel wide"><div class="panel-title"><h2>Four-Shift progress</h2><span id="progress-status" class="muted">waiting for story state</span></div><div id="story-progress" class="story-progress"><div class="empty">Waiting for the current story progress.</div></div></section>
        <section class="panel"><div class="panel-title"><h2>Cabinet frontend</h2></div><div id="frontend" class="facts"></div></section>
       <section class="panel wide"><div class="panel-title"><h2>Frontend wire state</h2><span class="muted">exact JSON received and sent</span></div><div class="wire-json"><div class="label">last input received from frontend</div><pre id="frontend-input">No frontend input received.</pre></div><div class="wire-json"><div class="label">last output sent to frontend</div><pre id="frontend-output">No backend output sent.</pre></div></section>
       <section class="panel wide"><div class="panel-title"><h2>Connected wires</h2><span id="topology-status" class="muted">waiting for frontend input</span></div><div id="topology"></div></section>
       <section class="panel wide"><div class="panel-title"><h2>Calls</h2></div><div id="calls"></div></section>
-      <section class="panel wide"><div class="panel-title"><h2>Subscribers</h2></div><div id="subscribers"></div></section>
+       <section class="panel wide"><div class="panel-title"><h2>Subscribers</h2></div><div id="subscribers"></div></section>
     </div>
   </main>
   <script>
-    let latestSnapshot = null;
+      let latestSnapshot = null;
+      let graphScale = 1.8;
     const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const value = item => Array.isArray(item) ? item.join(', ') || '-' : (item ?? '-');
     const rows = object => Object.entries(object).map(([key, item]) => `<div class="fact"><span class="label">${esc(key)}</span><span class="value">${esc(value(item))}</span></div>`).join('');
-    const statusText = status => status || 'offline';
+      const statusText = status => status || 'offline';
+      function graphZoom(delta) {
+        graphScale = Math.min(4, Math.max(0.75, graphScale + delta));
+        document.getElementById('story-graph').style.zoom = graphScale;
+        document.getElementById('graph-zoom').textContent = `${Math.round(graphScale * 100)}%`;
+      }
 
     async function refresh() {
       try {
@@ -252,7 +274,8 @@
       }
        document.getElementById('run').innerHTML = rows({run: snapshot.run.number, revision: snapshot.run.state_revision, elapsed: snapshot.run.elapsed_seconds + 's', phase: snapshot.run.game_phase, godmode: snapshot.run.godmode, bypass: snapshot.run.bypass_restrictions, shift: snapshot.shift.number, shift_phase: snapshot.shift.phase});
        document.getElementById('story').innerHTML = rows({node: snapshot.story.current_node_id, beat: snapshot.story.current_story_beat || '-', frontier: snapshot.story.frontier, interference_level: snapshot.story.interference_level + '%', interference_clear: snapshot.story.interference_reduced, knowledge: snapshot.story.operator_knowledge});
-       renderStoryGraph(snapshot.story);
+       renderStoryGraph(snapshot.story, snapshot);
+       renderStoryProgress(snapshot.story);
        document.getElementById('counters').innerHTML = rows(snapshot.counters || {});
       document.getElementById('frontend').innerHTML = rows({firmware: snapshot.frontend.firmware_version || '-', transport: snapshot.frontend.transport_connected, faults: snapshot.frontend.device_faults});
       document.getElementById('frontend-input').innerHTML = highlightJson(snapshot.frontend.last_input_json, 'No frontend input received.');
@@ -268,86 +291,103 @@
        document.getElementById('subscribers').innerHTML = table(snapshot.subscribers, ['id', 'name', 'line', 'status', 'availability', 'pressure', 'current_goal', 'status_flags']);
      }
 
-     function renderStoryGraph(story) {
+       function renderStoryGraph(story, snapshot) {
        const graph = story.graph || [];
        const container = document.getElementById('story-graph');
        const status = document.getElementById('graph-status');
-       if (!graph.length) {
+        if (!graph.length) {
          status.textContent = 'graph unavailable';
-         container.innerHTML = '<div class="empty">The backend snapshot did not include an authored graph.</div>';
-         return;
-       }
-       const byId = new Map(graph.map(node => [node.id, node]));
-       const indegree = new Map(graph.map(node => [node.id, 0]));
-       graph.forEach(node => node.outgoing.forEach(next => indegree.set(next, (indegree.get(next) || 0) + 1)));
-       const rank = new Map([[graph.find(node => node.id === 'run_start')?.id || graph[0].id, 0]]);
-       const queue = [...rank.keys()];
-       const remaining = new Map(indegree);
-       while (queue.length) {
-         const id = queue.shift();
-         const node = byId.get(id);
-         if (!node) continue;
-         node.outgoing.forEach(next => {
-           rank.set(next, Math.max(rank.get(next) || 0, (rank.get(id) || 0) + 1));
-           remaining.set(next, remaining.get(next) - 1);
-           if (remaining.get(next) === 0) queue.push(next);
+         container.innerHTML = '<div class="empty">The backend snapshot did not include the current story graph.</div>';
+          return;
+        }
+        const activeCalls = (snapshot.calls || []).filter(call => call.phase !== 'Terminal');
+        document.getElementById('graph-runtime').innerHTML = [
+          ['GAME PHASE', snapshot.run.game_phase],
+          ['SHIFT', `${snapshot.shift.number} / ${snapshot.shift.phase}`],
+          ['CURRENT BEAT', story.current_story_beat || '-'],
+          ['CALLS', activeCalls.length ? activeCalls.map(call => `${call.caller_line} ${call.phase}`).join(' | ') : 'none'],
+        ].map(([label, value]) => `<div class="fact"><span class="label">${esc(label)}</span><span class="value">${esc(value)}</span></div>`).join('');
+        const current = story.current_node_id;
+        const frontier = new Set(story.frontier || []);
+         const byId = new Map(graph.map(node => [node.id, node]));
+         const rank = new Map([['run_start', 0]]);
+         const queue = ['run_start'];
+         while (queue.length) {
+           const id = queue.shift();
+           const node = byId.get(id);
+           if (!node) continue;
+           node.outgoing.forEach(next => {
+             if (byId.has(next) && !rank.has(next)) {
+               rank.set(next, rank.get(id) + 1);
+               queue.push(next);
+             }
+           });
+         }
+         const maxRank = Math.max(...rank.values());
+         graph.forEach(node => { if (!rank.has(node.id)) rank.set(node.id, maxRank + 1); });
+         const layers = new Map();
+         graph.forEach(node => {
+           const layer = layers.get(rank.get(node.id)) || [];
+           layer.push(node);
+           layers.set(rank.get(node.id), layer);
          });
-       }
-       graph.forEach(node => { if (!rank.has(node.id)) rank.set(node.id, 0); });
-       const layers = new Map();
-       graph.forEach(node => {
-         const layer = layers.get(rank.get(node.id)) || [];
-         layer.push(node);
-         layers.set(rank.get(node.id), layer);
-       });
-       [...layers.values()].forEach(layer => layer.sort((left, right) => left.id.localeCompare(right.id)));
-       const nodeWidth = 168;
-       const nodeHeight = 64;
-       const columnGap = 28;
-       const rowGap = 48;
-       const pad = 32;
-       const maxLayer = Math.max(...[...layers.values()].map(layer => layer.length));
-       const width = Math.max(900, pad * 2 + maxLayer * nodeWidth + (maxLayer - 1) * columnGap);
-       const height = pad * 2 + (Math.max(...rank.values()) + 1) * nodeHeight + Math.max(...rank.values()) * rowGap;
-       const positions = new Map();
-       layers.forEach((layer, layerRank) => layer.forEach((node, index) => positions.set(node.id, {
-         x: pad + index * (nodeWidth + columnGap),
-         y: pad + layerRank * (nodeHeight + rowGap),
-       })));
-       const current = story.current_node_id;
-       const frontier = new Set(story.frontier || []);
-       const edges = graph.flatMap(node => node.outgoing.map(next => {
-         const from = positions.get(node.id);
-         const to = positions.get(next);
-         if (!from || !to) return '';
-         const live = node.id === current && frontier.has(next);
-         const startX = from.x + nodeWidth / 2;
-         const endX = to.x + nodeWidth / 2;
-         const startY = from.y + nodeHeight;
-         const endY = to.y;
-         const bend = Math.max(18, (endY - startY) / 2);
-         return `<path class="story-edge ${live ? 'live' : ''}" d="M ${startX} ${startY} C ${startX} ${startY + bend}, ${endX} ${endY - bend}, ${endX} ${endY}"/>`;
-       })).join('');
-       const nodes = graph.map(node => {
-         const position = positions.get(node.id);
-         const ending = node.kind === 'ending';
-         const classes = [
-           'story-node',
-           node.id === current ? 'current' : '',
-           frontier.has(node.id) ? 'frontier' : '',
-           ending ? 'ending' : '',
-         ].filter(Boolean).join(' ');
-         const action = frontier.has(node.id) ? ' tabindex="0" role="button"' : '';
-         return `<g class="${classes}" data-node-id="${esc(node.id)}" transform="translate(${position.x} ${position.y})"${action}><rect width="${nodeWidth}" height="${nodeHeight}"/><text class="node-id" x="10" y="25">${esc(node.id)}</text><text class="node-kind" x="10" y="45">${esc(node.kind)}</text></g>`;
-       }).join('');
-       container.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Authored Story Graph"><defs><marker id="story-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 z" fill="#8e8b80"/></marker></defs>${edges}${nodes}</svg>`;
-       container.querySelectorAll('.story-node.frontier').forEach(node => {
-         const select = () => send('select_story_path', {id: node.dataset.nodeId});
-         node.addEventListener('click', select);
-         node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(); } });
-       });
-       status.textContent = `${graph.length} nodes // current ${current} // revision ${latestSnapshot.run.state_revision}`;
-     }
+         const nodeWidth = 240, nodeHeight = 86, columnGap = 42, rowGap = 100, pad = 56;
+         const maxLayer = Math.max(...[...layers.values()].map(layer => layer.length));
+         const width = Math.max(1200, pad * 2 + maxLayer * nodeWidth + (maxLayer - 1) * columnGap);
+         const height = pad * 2 + layers.size * nodeHeight + (layers.size - 1) * rowGap;
+         const positions = new Map();
+         layers.forEach((layer, layerRank) => layer.forEach((node, index) => positions.set(node.id, {
+           x: pad + index * (nodeWidth + columnGap), y: pad + layerRank * (nodeHeight + rowGap),
+         })));
+         const edges = graph.flatMap(node => node.outgoing.map(next => {
+           const from = positions.get(node.id), to = positions.get(next);
+           if (!from || !to) return '';
+           const bend = Math.max(24, (to.y - (from.y + nodeHeight)) / 2);
+           return `<path class="story-edge ${node.id === current && frontier.has(next) ? 'live' : ''}" d="M ${from.x + nodeWidth / 2} ${from.y + nodeHeight} C ${from.x + nodeWidth / 2} ${from.y + nodeHeight + bend}, ${to.x + nodeWidth / 2} ${to.y - bend}, ${to.x + nodeWidth / 2} ${to.y}"/>`;
+         })).join('');
+         const nodes = graph.map(node => {
+           const position = positions.get(node.id);
+           const classes = ['story-node', node.id === current ? 'current' : '', frontier.has(node.id) ? 'frontier' : '', node.kind === 'ending' ? 'ending' : ''].filter(Boolean).join(' ');
+           const action = frontier.has(node.id) ? ' tabindex="0" role="button"' : '';
+           const state = node.id === current ? 'CURRENT' : frontier.has(node.id) ? 'AVAILABLE' : node.kind === 'ending' ? 'ENDING' : '';
+           return `<g class="${classes}" data-node-id="${esc(node.id)}" transform="translate(${position.x} ${position.y})"${action}><rect width="${nodeWidth}" height="${nodeHeight}"/><text class="node-id" x="12" y="28">${esc(node.id)}</text><text class="node-kind" x="12" y="50">${esc(node.kind)}</text><text class="node-state" x="12" y="72">${state}</text></g>`;
+         }).join('');
+         container.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Current Story Graph"><defs><marker id="story-arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8e8b80"/></marker></defs>${edges}${nodes}</svg>`;
+         graphZoom(0);
+         container.querySelectorAll('.story-node.frontier').forEach(node => {
+           const select = () => send('select_story_path', {id: node.dataset.nodeId});
+           node.addEventListener('click', select);
+           node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(); } });
+         });
+        status.textContent = `${graph.length} nodes // current ${current} // revision ${latestSnapshot.run.state_revision}`;
+      }
+
+      function renderStoryProgress(story) {
+        const beats = (story.graph || []).filter(node => node.kind === 'shift_call').sort((left, right) => left.id.localeCompare(right.id, undefined, {numeric: true}));
+        const currentBeat = story.current_story_beat || '';
+        const currentIndex = beats.findIndex(node => node.id === currentBeat);
+        const names = {
+          s1_1_rafi: ['Rafi Alam', 'Shapla Apartments'], s1_2_asha: ['Asha Sen', 'Shapla Apartments'],
+          m1_anika: ['Anika Roy', 'Central Hospital'], m2_nayan: ['Nayan Boro', 'Republic Secretariat'],
+          m3_rakesh: ['Inspector Rakesh Nahal', 'Home Affairs Annex'], m4_laleh: ['Laleh Mir', 'Shapla Apartments'],
+          m5_javed: ['Javed Rahman', 'Mining Office'], m6_varo: ['Captain Varo', 'Cantonment'],
+          m7_tomas: ['Tomas Vale', 'Hotel Meridian'], m8_bikram: ['Bikram Sen', 'Old Market'],
+          m9_paro: ['Paro Sen', 'Ratan Colony'], m10_audit: ['Audit caller', 'National Radio Building'],
+          s2_1_nahid: ['Nahid from bKash', 'Hotel Meridian'], s2_asha: ['Asha Sen', 'Shapla Apartments'],
+          s3_1_nahid: ['Nahid from bKash', 'Hotel Meridian'], s3_asha: ['Asha Sen', 'Shapla Apartments'],
+          s3_akash: ['Akash Dey', 'Ratan Colony'], s4_akash: ['Akash Dey', 'Ratan Colony'],
+          m11a: ['Laleh Mir', 'Shapla Apartments'], m11b: ['Dev Korr', 'Home Affairs Annex'],
+          m12: ['Colonel Arman Vey', 'Cantonment'], m13: ['Meera Tal', 'South Neeladesh Embassy'],
+          m14r: ['Mira Halek', 'Central Station'], m14a: ['Mira Halek', 'Central Station'],
+          m14p: ['Mira Halek', 'Central Station'], m14c: ['Mira Halek', 'Central Station'],
+        };
+        document.getElementById('story-progress').innerHTML = beats.map((beat, index) => {
+          const state = index < currentIndex ? 'complete' : index === currentIndex ? 'current' : index === currentIndex + 1 ? 'next' : '';
+          const [name, place] = names[beat.id] || [beat.id, 'authored beat'];
+          return `<div class="progress-beat ${state}"><div class="progress-number">${String(index + 1).padStart(2, '0')} / ${beats.length}</div><div class="progress-name">${esc(name)}</div><div class="progress-place">${esc(place)}<br/>${esc(state || 'PENDING')}</div></div>`;
+        }).join('');
+        document.getElementById('progress-status').textContent = currentIndex >= 0 ? `beat ${currentIndex + 1} of ${beats.length} // ${currentBeat}` : `node ${story.current_node_id} // awaiting next beat`;
+      }
 
      function highlightJson(raw, emptyText) {
        if (!raw) return escText(emptyText);
@@ -390,8 +430,8 @@
       const capture = conversation.captured_samples ? `<audio controls preload="none" src="/api/voice/${conversation.id}/capture.wav"></audio>` : '<div class="audio-missing">capture unavailable</div>';
       const ttsReady = ['completed', 'failed', 'cancelled'].includes(conversation.status);
       const tts = conversation.tts_samples && ttsReady ? `<audio controls preload="none" src="/api/voice/${conversation.id}/tts.wav"></audio>` : (conversation.tts_samples ? '<div class="audio-missing">TTS still generating; replay after completion</div>' : '<div class="audio-missing">TTS audio unavailable</div>');
-      return `<article class="conversation ${failed ? 'failed' : ''}">
-        <div><div class="conversation-id">TURN ${conversation.id}</div><span class="badge ${badgeClass}">${esc(statusText(conversation.status))}</span><div class="muted">session ${esc(conversation.session_id)} / turn ${esc(conversation.turn_id)}</div><div class="muted">${esc(conversation.captured_samples)} input samples<br>${esc(conversation.tts_samples)} TTS samples</div></div>
+       return `<article class="conversation ${failed ? 'failed' : ''}">
+         <div><div class="conversation-id">TURN ${conversation.id}</div><span class="badge ${badgeClass}">${esc(statusText(conversation.status))}</span><div class="muted">${esc(conversation.caller_name || 'Unknown Caller')}<br>${esc(conversation.caller_place || 'Unknown Place')}</div><div class="muted">session ${esc(conversation.session_id)} / turn ${esc(conversation.turn_id)}</div><div class="muted">${esc(conversation.captured_samples)} input samples<br>${esc(conversation.tts_samples)} TTS samples</div></div>
         <div class="conversation-copy"><div class="label">STT</div><p>${esc(conversation.transcript || '-')}</p><div class="label">LLM</div><p>${esc(conversation.response_text || '-')}</p>${error}</div>
         <div><div class="label">RECORDED INPUT</div>${capture}<div class="label">SYNTHESIZED OUTPUT</div>${tts}</div>
       </article>`;

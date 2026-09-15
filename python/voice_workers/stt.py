@@ -8,15 +8,17 @@ import sys
 import tempfile
 import wave
 
-from .common import WHISPER_BINARY, WHISPER_MODEL, fail
-
+from .common import WHISPER_BINARY, WHISPER_MODEL, fail, worker_timeout
 
 SAMPLE_RATE = 16_000
+MAX_PCM_BYTES = SAMPLE_RATE * 2 * 60
 
 
 def main() -> int:
-    pcm = sys.stdin.buffer.read()
-    if not pcm or len(pcm) % 2:
+    pcm = sys.stdin.buffer.read(MAX_PCM_BYTES + 1)
+    if not pcm or len(pcm) > MAX_PCM_BYTES or len(pcm) % 2:
+        if len(pcm) > MAX_PCM_BYTES:
+            fail("STT input exceeds the 60 second limit")
         fail("STT input must be non-empty signed 16-bit PCM")
 
     binary_name = os.environ.get("NN_WHISPER_CPP", str(WHISPER_BINARY))
@@ -51,7 +53,7 @@ def main() -> int:
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=float(os.environ.get("NN_VOICE_WORKER_TIMEOUT", "25")),
+                timeout=worker_timeout(),
             )
         except (OSError, ValueError, subprocess.TimeoutExpired) as error:
             fail(f"whisper.cpp failed: {error}")
