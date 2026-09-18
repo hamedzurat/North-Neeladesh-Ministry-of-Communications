@@ -13,9 +13,10 @@ use exchange_protocol::{
     DebugVoiceConversation, DebugVoiceState, DirectoryPage, GamePhase, InputMessage, InputState,
     OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, RtpL16Packet,
     ServiceCallPhase, ServiceCallStatus, ServiceErrorCount, ServiceErrorKind, ServiceKind,
-    ShiftPhase, ShiftStatus, StateMessage, StateOutput, TuningState, VOICE_AUDIO_SAMPLE_RATE,
-    VoiceControl, VoiceControlMessage, VoiceInputAudioMessage, VoiceStatus,
-    decode_voice_input_audio, decode_voice_status, encode_voice_control, read_frame, write_frame,
+    ShiftPhase, ShiftStatus, StateMessage, StateOutput, TuningState, VOICE_AUDIO_PACKET_SAMPLES,
+    VOICE_AUDIO_SAMPLE_RATE, VoiceControl, VoiceControlMessage, VoiceInputAudioMessage,
+    VoiceStatus, decode_voice_input_audio, decode_voice_status, encode_voice_control, read_frame,
+    write_frame,
 };
 use exchange_voice_daemon::{
     CommandDialogueGenerator, CommandSpec, CommandSpeechToText, DialogueGenerator, KnowledgeRecord,
@@ -124,6 +125,10 @@ pub struct Backend {
     operator_knowledge: Vec<String>,
     interference_reduced: bool,
     pending_voice_audio: VecDeque<Vec<u8>>,
+    pending_neutral_conversation: Option<(u8, u8)>,
+    private_neutral_audio: VecDeque<Vec<u8>>,
+    neutral_audio_sequence: u16,
+    neutral_audio_timestamp: u32,
     pending_voice_input: Option<VoiceInputAudioMessage>,
     pending_voice_input_samples: Vec<i16>,
     pending_voice_input_next_chunk: u32,
@@ -313,6 +318,10 @@ impl Backend {
             operator_knowledge: Vec::new(),
             interference_reduced: false,
             pending_voice_audio: VecDeque::new(),
+            pending_neutral_conversation: None,
+            private_neutral_audio: VecDeque::new(),
+            neutral_audio_sequence: 0,
+            neutral_audio_timestamp: 0,
             pending_voice_input: None,
             pending_voice_input_samples: Vec::new(),
             pending_voice_input_next_chunk: 0,
@@ -1102,6 +1111,10 @@ impl Backend {
         self.operator_knowledge.clear();
         self.interference_reduced = false;
         self.pending_voice_audio.clear();
+        self.pending_neutral_conversation = None;
+        self.private_neutral_audio.clear();
+        self.neutral_audio_sequence = 0;
+        self.neutral_audio_timestamp = 0;
         self.pending_voice_input = None;
         self.pending_voice_input_samples.clear();
         self.pending_voice_input_next_chunk = 0;
@@ -1897,6 +1910,7 @@ impl Backend {
                         "Neri Tal's intercepted signal mentions Vira Dhal".to_string()
                     });
                 }
+                self.release_private_neutral_audio();
             } else {
                 self.tap_bridge_listen_frames = 0;
             }
@@ -2398,6 +2412,14 @@ impl Backend {
                 transition.routing_receipt.take()
             };
             if newly_connected {
+                if let Some(call) = transition
+                    .calls
+                    .iter()
+                    .find(|call| call.phase == exchange_protocol::CallPhase::Connected)
+                {
+                    self.pending_neutral_conversation =
+                        Some((call.caller_line, call.requested_callee_line));
+                }
                 let duration = Self::simple_conversation_seconds();
                 self.simple_conversation_seconds =
                     self.simple_conversation_seconds.saturating_add(duration);
@@ -2836,6 +2858,21 @@ impl Backend {
 
     fn queue_voice_datagram(&mut self, datagram: Vec<u8>) {
         self.pending_voice_audio.push_back(datagram);
+    }
+
+    fn take_neutral_conversation(&mut self) -> Option<(u8, u8)> {
+        self.pending_neutral_conversation.take()
+    }
+
+    fn queue_private_neutral_audio(&mut self, audio: Vec<Vec<u8>>) {
+        self.private_neutral_audio.extend(audio);
+    }
+
+    fn release_private_neutral_audio(&mut self) {
+        if self.tap_bridge_listen_frames >= 2 {
+            self.pending_voice_audio
+                .extend(self.private_neutral_audio.drain(..));
+        }
     }
 
     fn take_voice_input(
@@ -4079,7 +4116,7 @@ pub fn serve_voice(
             }
             Err(error) => return Err(error),
         };
-        let (outgoing, peer, control) = {
+        let (outgoing, peer, control, neutral_conversation) = {
             let mut backend = backend
                 .lock()
                 .map_err(|_| io::Error::other("backend state lock poisoned"))?;
@@ -4087,6 +4124,7 @@ pub fn serve_voice(
                 backend.take_voice_datagrams(),
                 peer.or(backend.voice_peer),
                 backend.take_voice_control(),
+                backend.take_neutral_conversation(),
             )
         };
         if let Some(peer) = peer {
@@ -4097,6 +4135,12 @@ pub fn serve_voice(
                 io::Error::other(format!("voice control encode failed: {error}"))
             })?;
             socket.send_to(&datagram, peer)?;
+        }
+        if let Some((caller_line, callee_line)) = neutral_conversation {
+            let backend = Arc::clone(&backend);
+            thread::spawn(move || {
+                generate_neutral_conversation_audio(caller_line, callee_line, backend, tts_engine)
+            });
         }
         if let Some((
             input,
@@ -4440,6 +4484,59 @@ impl VoiceOutput for BackendVoiceOutput {
         }
         backend.queue_voice_datagram(packet.encode());
         Ok(())
+    }
+}
+
+fn configured_tts(tts_engine: TtsEngine) -> Result<Box<dyn TextToSpeech>, VoiceError> {
+    let tts = CommandSpec::from_words(&env::var("NN_VOICE_TTS_COMMAND").map_err(|_| {
+        VoiceError::new(
+            "voice_worker_not_configured",
+            "NN_VOICE_TTS_COMMAND is not configured",
+        )
+    })?)?;
+    match tts_engine {
+        TtsEngine::Qwen if env::var_os("NN_VOICE_TTS_PERSISTENT").is_some() => {
+            Ok(Box::new(PersistentQwen3TtsCommand::new(tts)?))
+        }
+        TtsEngine::Qwen => Ok(Box::new(Qwen3TtsCommand::new(tts))),
+        TtsEngine::Pocket => Ok(Box::new(PersistentPocketTtsCommand::new(tts)?)),
+    }
+}
+
+fn generate_neutral_conversation_audio(
+    caller_line: u8,
+    callee_line: u8,
+    backend: Arc<Mutex<Backend>>,
+    tts_engine: TtsEngine,
+) {
+    let text = format!(
+        "{}: I am calling about an ordinary matter. Please connect me to {}. {}: Of course, this is the {}.",
+        simple_directory_user(caller_line).0,
+        simple_place_for_line(callee_line),
+        simple_directory_user(callee_line).0,
+        simple_place_for_line(callee_line),
+    );
+    let Ok(mut tts) = configured_tts(tts_engine) else {
+        return;
+    };
+    let Ok(samples) = tts.synthesize(&format!("neutral-line-{caller_line}"), &text) else {
+        return;
+    };
+    let mut packets = Vec::new();
+    for (index, chunk) in samples.chunks(VOICE_AUDIO_PACKET_SAMPLES).enumerate() {
+        packets.push(
+            RtpL16Packet {
+                marker: index == 0,
+                sequence: index as u16,
+                timestamp: (index * VOICE_AUDIO_PACKET_SAMPLES) as u32,
+                ssrc: 0x4e45_5554,
+                samples: chunk.to_vec(),
+            }
+            .encode(),
+        );
+    }
+    if let Ok(mut backend) = backend.lock() {
+        backend.queue_private_neutral_audio(packets);
     }
 }
 
