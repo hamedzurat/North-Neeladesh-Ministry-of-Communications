@@ -10,15 +10,12 @@ from .common import (
     LLAMA_BINARY,
     MODEL_ROOT,
     POCKET_VOICES,
-    TTS_MODEL,
     WHISPER_BINARY,
     WHISPER_MODEL,
 )
 
 WHISPER_REPOSITORY = "ggerganov/whisper.cpp"
 DIALOGUE_REPOSITORY = "unsloth/Qwen3-4B-Instruct-2507-GGUF"
-TTS_REPOSITORY = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
-TTS_TOKENIZER_REPOSITORY = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
 POCKET_VOICE_REPOSITORY = "kyutai/pocket-tts-without-voice-cloning"
 POCKET_VOICE_REVISION = "e81d79e8194ad4c7ce879c87a4258ef20cbf2487"
 POCKET_VOICE_NAMES = (
@@ -52,8 +49,6 @@ def main() -> int:
 
     hf_hub_download(WHISPER_REPOSITORY, filename=WHISPER_MODEL.name, local_dir=MODEL_ROOT)
     hf_hub_download(DIALOGUE_REPOSITORY, filename=DIALOGUE_MODEL.name, local_dir=MODEL_ROOT)
-    snapshot_download(TTS_REPOSITORY, local_dir=TTS_MODEL)
-    snapshot_download(TTS_TOKENIZER_REPOSITORY, local_dir=TTS_MODEL / "speech_tokenizer")
     for voice_id, filename in POCKET_VOICE_FILES.items():
         downloaded_voice = hf_hub_download(
             POCKET_VOICE_REPOSITORY,
@@ -69,7 +64,6 @@ def main() -> int:
     print("Voice model setup complete")
     print(f"  STT: {WHISPER_MODEL}")
     print(f"  Dialogue: {DIALOGUE_MODEL}")
-    print(f"  TTS: {TTS_MODEL}")
     print(f"  PocketTTS voices: {len(POCKET_VOICES)} files in {next(iter(POCKET_VOICES.values())).parent}")
     print(f"  Whisper runtime: {shutil.which(WHISPER_BINARY)}")
     print(f"  Dialogue runtime: {shutil.which(LLAMA_BINARY)}")

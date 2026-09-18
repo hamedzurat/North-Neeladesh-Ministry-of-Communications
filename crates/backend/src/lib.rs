@@ -18,19 +18,13 @@ use exchange_protocol::{
 };
 use exchange_voice_daemon::{
     CommandDialogueGenerator, CommandSpec, CommandSpeechToText, DialogueGenerator,
-    PersistentPocketTtsCommand, PersistentQwen3TtsCommand, Qwen3TtsCommand, ResponseContext,
-    SpeechToText, SubscriberProfile, TextToSpeech, VoiceError,
+    PersistentPocketTtsCommand, ResponseContext, SpeechToText, SubscriberProfile, TextToSpeech,
+    VoiceError,
 };
 
 const LINES: u8 = 12;
 const MAX_CALLS: usize = 3;
 const MAX_AUDIO_PACKETS: usize = 4096;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TtsEngine {
-    Qwen,
-    Pocket,
-}
 
 #[derive(Debug, Clone)]
 struct ActiveCall {
@@ -67,7 +61,6 @@ pub struct Backend {
     run_generation: u64,
     last_request: Option<InputMessage>,
     last_response: Option<StateMessage>,
-    tts_engine: TtsEngine,
     audio_queue: VecDeque<Vec<u8>>,
     audio_call: Option<(u8, u8)>,
     audio_sequence: u16,
@@ -122,7 +115,6 @@ impl Backend {
             run_generation: 0,
             last_request: None,
             last_response: None,
-            tts_engine: TtsEngine::Qwen,
             audio_queue: VecDeque::new(),
             audio_call: None,
             audio_sequence: 0,
@@ -474,6 +466,9 @@ impl Backend {
         self.state.tap_bridge_monitoring = tap_monitor(input, &self.state);
         self.state.tap_bridge_audio_active = self.state.tap_bridge_monitoring.is_some();
         self.update_voice_control(input, self.revision);
+        self.state.speaker_active = (input.held_controls.ptt
+            && !self.state.tap_bridge_audio_active)
+            || self.voice_speaker_active;
         self.state.game_phase = if self.state.game_phase == GamePhase::Ended {
             GamePhase::Ended
         } else if self.state.shift.phase == ShiftPhase::Settled {
@@ -523,8 +518,8 @@ impl Backend {
             self.next_voice_turn_id = self.next_voice_turn_id.wrapping_add(1);
         }
         let voice_id = caller
-            .map(|line| format!("neutral-line-{line}"))
-            .unwrap_or_else(|| "neutral-line-0".into());
+            .map(|line| format!("pocket-line-{line}"))
+            .unwrap_or_else(|| "pocket-line-0".into());
         self.pending_voice_control = Some(VoiceControlMessage {
             protocol_version: VOICE_PROTOCOL_VERSION,
             session_id: 1,
@@ -730,11 +725,7 @@ impl Backend {
         std::mem::take(&mut self.pending_tts)
     }
 
-    fn generate_call_audio(
-        engine: TtsEngine,
-        caller: u8,
-        callee: u8,
-    ) -> Result<Vec<i16>, VoiceError> {
+    fn generate_call_audio(caller: u8, callee: u8) -> Result<Vec<i16>, VoiceError> {
         let text = format!(
             "{}: Please connect me to {}. {}: Of course, I am at {}. {}: We can talk about {} while we wait.",
             directory_user(caller).0,
@@ -744,8 +735,8 @@ impl Backend {
             directory_user(caller).0,
             directory_user(caller).2,
         );
-        let mut tts = configured_tts(engine)?;
-        let samples = tts.synthesize(&format!("neutral-line-{caller}"), &text)?;
+        let mut tts = configured_tts()?;
+        let samples = tts.synthesize(&format!("pocket-line-{caller}"), &text)?;
         if samples.is_empty() {
             return Err(VoiceError::new(
                 "tts_empty_output",
@@ -1174,20 +1165,14 @@ fn crank(input: &InputState) -> bool {
             .windows(2)
             .all(|timestamps| timestamps[1] > timestamps[0])
 }
-fn configured_tts(engine: TtsEngine) -> Result<Box<dyn TextToSpeech>, VoiceError> {
+fn configured_tts() -> Result<Box<dyn TextToSpeech>, VoiceError> {
     let command = CommandSpec::from_words(&env::var("NN_VOICE_TTS_COMMAND").map_err(|_| {
         VoiceError::new(
             "voice_worker_not_configured",
             "NN_VOICE_TTS_COMMAND is not configured",
         )
     })?)?;
-    match engine {
-        TtsEngine::Qwen if env::var_os("NN_VOICE_TTS_PERSISTENT").is_some() => {
-            Ok(Box::new(PersistentQwen3TtsCommand::new(command)?))
-        }
-        TtsEngine::Qwen => Ok(Box::new(Qwen3TtsCommand::new(command))),
-        TtsEngine::Pocket => Ok(Box::new(PersistentPocketTtsCommand::new(command)?)),
-    }
+    Ok(Box::new(PersistentPocketTtsCommand::new(command)?))
 }
 fn lamps(calls: &[ActiveCall]) -> [bool; 12] {
     let mut result = [false; 12];
@@ -1247,15 +1232,13 @@ pub fn serve_with_voice_and_debug_engine(
     listener: TcpListener,
     voice_socket: Option<UdpSocket>,
     debug_listener: Option<TcpListener>,
-    tts: TtsEngine,
 ) -> io::Result<()> {
-    let mut initial = Backend::new_exchange();
-    initial.tts_engine = tts;
+    let initial = Backend::new_exchange();
     let backend = Arc::new(Mutex::new(initial));
     if let Some(socket) = voice_socket {
         let voice_backend = Arc::clone(&backend);
         thread::spawn(move || {
-            let _ = serve_voice(socket, voice_backend, tts);
+            let _ = serve_voice(socket, voice_backend);
         });
     }
     if let Some(listener) = debug_listener {
@@ -1283,16 +1266,12 @@ pub fn serve_with_voice_and_debug_engine(
     Ok(())
 }
 pub fn serve(listener: TcpListener) -> io::Result<()> {
-    serve_with_voice_and_debug_engine(listener, None, None, TtsEngine::Qwen)
+    serve_with_voice_and_debug_engine(listener, None, None)
 }
 pub fn serve_with_voice(listener: TcpListener, voice: Option<UdpSocket>) -> io::Result<()> {
-    serve_with_voice_and_debug_engine(listener, voice, None, TtsEngine::Qwen)
+    serve_with_voice_and_debug_engine(listener, voice, None)
 }
-pub fn serve_voice(
-    socket: UdpSocket,
-    backend: Arc<Mutex<Backend>>,
-    tts: TtsEngine,
-) -> io::Result<()> {
+pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
     socket.set_read_timeout(Some(Duration::from_millis(10)))?;
     let mut buffer = [0_u8; 65_535];
     let mut input_samples = Vec::new();
@@ -1345,8 +1324,7 @@ pub fn serve_voice(
                     let worker_socket = socket.try_clone()?;
                     let worker_backend = Arc::clone(&backend);
                     thread::spawn(move || {
-                        let result =
-                            generate_operator_response(tts, context, caller, callee, samples);
+                        let result = generate_operator_response(context, caller, callee, samples);
                         let (transcript, response, audio) = match result {
                             Ok(value) => value,
                             Err(error) => {
@@ -1454,7 +1432,6 @@ pub fn serve_voice(
 }
 
 fn generate_operator_response(
-    tts_engine: TtsEngine,
     context: ResponseContext,
     caller: u8,
     _callee: u8,
@@ -1485,16 +1462,8 @@ fn generate_operator_response(
                 "NN_VOICE_TTS_COMMAND is not configured",
             )
         })?)?;
-    let mut tts = match tts_engine {
-        TtsEngine::Qwen if env::var_os("NN_VOICE_TTS_PERSISTENT").is_some() => {
-            Box::new(PersistentQwen3TtsCommand::new(tts_command)?) as Box<dyn TextToSpeech>
-        }
-        TtsEngine::Qwen => Box::new(Qwen3TtsCommand::new(tts_command)) as Box<dyn TextToSpeech>,
-        TtsEngine::Pocket => {
-            Box::new(PersistentPocketTtsCommand::new(tts_command)?) as Box<dyn TextToSpeech>
-        }
-    };
-    let audio = tts.synthesize(&format!("neutral-line-{caller}"), &response)?;
+    let mut tts = PersistentPocketTtsCommand::new(tts_command)?;
+    let audio = tts.synthesize(&format!("pocket-line-{caller}"), &response)?;
     if audio.is_empty() {
         return Err(VoiceError::new(
             "tts_empty_output",
@@ -1518,17 +1487,17 @@ pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) ->
             }
             Err(error) => return Err(io::Error::new(ErrorKind::InvalidData, error.to_string())),
         };
-        let (response, pending_tts, tts_engine) = {
+        let (response, pending_tts) = {
             let mut state = backend
                 .lock()
                 .map_err(|_| io::Error::other("backend state lock poisoned"))?;
             let response = state.apply_input_message(request);
-            (response, state.take_pending_tts(), state.tts_engine)
+            (response, state.take_pending_tts())
         };
         for (caller, callee) in pending_tts {
             let worker_backend = Arc::clone(&backend);
             thread::spawn(move || {
-                if let Ok(samples) = Backend::generate_call_audio(tts_engine, caller, callee) {
+                if let Ok(samples) = Backend::generate_call_audio(caller, callee) {
                     if let Ok(mut state) = worker_backend.lock() {
                         state.install_generated_audio(caller, callee, samples);
                     }

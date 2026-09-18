@@ -52,10 +52,10 @@ arcade client described later.
 just backend-debug
 ```
 
-The default TTS engine is Qwen3-TTS. To use the CPU-only PocketTTS worker instead:
+The backend uses the CPU-only PocketTTS worker:
 
 ```sh
-just backend-debug 127.0.0.1:7878 127.0.0.1:7879 pocket
+just backend-debug
 ```
 
 This is the authoritative game backend. It listens on:

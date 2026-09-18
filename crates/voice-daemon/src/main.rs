@@ -60,7 +60,7 @@ fn run_relay_connection() -> Result<(), Box<dyn Error>> {
         last_audio_sequence: None,
     };
     relay.send_status(VoiceStatus::Ready, None)?;
-    log_voice_event("voice relay ready; backend owns STT, dialogue, and Qwen3-TTS");
+    log_voice_event("voice relay ready; backend owns STT, dialogue, and PocketTTS");
     loop {
         let datagram = match receiver.receive_datagram() {
             Ok(datagram) => datagram,

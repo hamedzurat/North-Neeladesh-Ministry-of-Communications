@@ -12,7 +12,7 @@ The daemon never advances Routing state. The backend remains the sole authority.
 
 ## Worker contracts
 
-`just voice-daemon` runs relay-only mode. It does not load STT, dialogue, or Qwen3-TTS and it does not decide a Routing transition. `just backend-debug` configures those workers on the laptop. The relay reports capture/playback failures as typed voice status messages and stays alive so the backend can recover or retry the session.
+`just voice-daemon` runs relay-only mode. It does not load STT, dialogue, or PocketTTS and it does not decide a Routing transition. `just backend-debug` configures those workers on the laptop. The relay reports capture/playback failures as typed voice status messages and stays alive so the backend can recover or retry the session.
 
 The backend uses the checked-in real worker adapters. Audio capture and playback on the relay use the Rust `cpal` audio library; the backend STT and dialogue invoke the pacman-installed whisper.cpp and llama.cpp runtimes. The Python workers run from the `python/` uv project; `--no-sync` prevents the backend from installing packages or downloading a model at runtime. Install the runtimes with `sudo pacman -S llama-cpp ggml-cuda whisper-cpp`, provision the model assets with `just voice-setup`, then run `just voice-preflight` before the first session.
 
@@ -52,7 +52,7 @@ used. The active neutral Call selects the subscriber voice context for each requ
 - `voice_workers.dialogue`: starts one local `llama-server` when the backend starts, keeps Qwen3-4B-Instruct-2507 Q4_K_M resident in VRAM, and sends each bounded Response Context and transcript to that server. It requests a dialogue-only JSON object and rejects malformed or overlong output. It cannot emit a Story Event, Routing, or state mutation.
 - `voice_workers.tts`: accepts only the Qwen3-TTS 1.7B request contract, uses the Subscriber profile's Qwen3-TTS CustomVoice speaker, and writes framed signed 16-bit little-endian mono PCM at 24 kHz to the persistent daemon worker. It synthesizes sentence-sized chunks and flushes each completed chunk immediately. Qwen's current API simulates incremental text input but does not expose true decoder-frame streaming.
 
-The backend starts with `--tts qwen` or `--tts pocket`. Qwen3-TTS uses the GPU settings documented below. PocketTTS always runs on the CPU and uses twelve official precomputed English voice embeddings in `python/.models/`, one for each subscriber line. The embedding files are ignored by Git and are downloaded by `just voice-setup`. There is no runtime engine fallback.
+PocketTTS always runs on the CPU and uses twelve official precomputed English voice embeddings in `python/.models/`, one for each subscriber line. The embedding files are ignored by Git and are downloaded by `just voice-setup`.
 
 Each provider command has a bounded 30-second deadline. The Rust adapter bounds capture to 15 seconds by default, limits worker output, preserves stderr diagnostics, kills cancelled or timed-out process groups, rejects non-zero exits and malformed output, and emits `failed` or `cancelled` without changing authoritative state. The dialogue worker receives only the active Subscriber Profile, current goal and Call Premise, Story Beat direction, permitted knowledge, beliefs, Relationship Notes, selected Memories, and at most six recent conversation turns. The approximate dynamic context limit is 3,072 tokens.
 

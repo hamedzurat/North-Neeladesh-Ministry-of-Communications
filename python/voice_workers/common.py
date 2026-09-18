@@ -12,7 +12,6 @@ MODEL_ROOT = Path(
 )
 WHISPER_MODEL = MODEL_ROOT / "ggml-base.en.bin"
 DIALOGUE_MODEL = MODEL_ROOT / "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
-TTS_MODEL = MODEL_ROOT / "Qwen3-TTS-12Hz-1.7B-CustomVoice"
 POCKET_VOICE_ROOT = Path(__file__).resolve().parents[1] / ".models"
 POCKET_VOICES = {
     f"pocket-line-{line}": POCKET_VOICE_ROOT / f"pocket-line-{line}.safetensors"
