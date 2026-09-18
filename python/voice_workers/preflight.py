@@ -4,7 +4,15 @@ import os
 import shutil
 from importlib import import_module
 
-from .common import DIALOGUE_MODEL, LLAMA_BINARY, TTS_MODEL, WHISPER_BINARY, WHISPER_MODEL, fail
+from .common import (
+    DIALOGUE_MODEL,
+    LLAMA_BINARY,
+    POCKET_VOICES,
+    TTS_MODEL,
+    WHISPER_BINARY,
+    WHISPER_MODEL,
+    fail,
+)
 
 
 def require_command(name: str) -> None:
@@ -47,9 +55,12 @@ def main() -> int:
     require_file(
         os.path.join(tts_model, "speech_tokenizer", "config.json"), "Qwen3-TTS tokenizer config"
     )
+    for voice_path in POCKET_VOICES.values():
+        require_file(str(voice_path), "PocketTTS voice file")
     try:
         import_module("torch")
         import_module("qwen_tts")
+        import_module("pocket_tts")
     except Exception as error:  # noqa: BLE001 - dependency imports have backend-specific failures
         fail(f"offline Qwen3-TTS dependency check failed: {error}")
     print("offline voice worker preflight passed")

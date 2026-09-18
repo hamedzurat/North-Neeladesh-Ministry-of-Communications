@@ -4,8 +4,12 @@ import json
 import os
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 
 from .common import DIALOGUE_MODEL, LLAMA_BINARY, fail, worker_timeout
 
@@ -55,6 +59,8 @@ Exchange Operator transcript:
 
 
 def main() -> int:
+    if "--persistent" in sys.argv:
+        return persistent_main()
     try:
         request = json.load(sys.stdin)
     except json.JSONDecodeError as error:
@@ -128,6 +134,92 @@ def main() -> int:
         fail("dialogue exceeded the bounded turn limit")
     json.dump({"dialogue": dialogue}, sys.stdout, ensure_ascii=False, separators=(",", ":"))
     return 0
+
+
+def persistent_main() -> int:
+    binary_name = os.environ.get("NN_LLAMA_SERVER", "llama-server")
+    binary = shutil.which(binary_name) or binary_name
+    model = os.environ.get("NN_QWEN3_MODEL", str(DIALOGUE_MODEL))
+    if not os.path.isfile(model):
+        fail(f"Qwen3 model does not exist: {model}")
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    command = [binary, "--model", model, "--host", "127.0.0.1", "--port", str(port)]
+    command.extend(shlex.split(os.environ.get("NN_LLAMA_EXTRA_ARGS", DEFAULT_LLAMA_ARGS)))
+    try:
+        server = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=sys.stderr)
+    except OSError as error:
+        fail(f"llama-server failed to start: {error}")
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + worker_timeout()
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(f"{base_url}/health", timeout=1) as response:
+                    if response.status == 200:
+                        break
+            except (OSError, urllib.error.HTTPError):
+                time.sleep(0.1)
+        else:
+            fail("llama-server did not become ready")
+        for line in sys.stdin.buffer:
+            if not line.strip():
+                continue
+            try:
+                request = json.loads(line)
+                prompt = prompt_for(request)
+                body = json.dumps(
+                    {
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": float(os.environ.get("NN_DIALOGUE_TEMPERATURE", "0.35")),
+                        "max_tokens": MAX_OUTPUT_TOKENS,
+                        "stream": False,
+                    }
+                ).encode()
+                http_request = urllib.request.Request(
+                    f"{base_url}/v1/chat/completions",
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(http_request, timeout=worker_timeout()) as response:
+                    result = json.load(response)
+                content = result["choices"][0]["message"]["content"]
+                if not isinstance(content, str):
+                    fail("llama-server returned invalid dialogue content")
+                decoder = json.JSONDecoder()
+                dialogue = None
+                for index, character in enumerate(content):
+                    if character == "{":
+                        try:
+                            candidate, _ = decoder.raw_decode(content[index:])
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(candidate, dict) and set(candidate) == {"dialogue"}:
+                            dialogue = candidate["dialogue"]
+                if not isinstance(dialogue, str) or not dialogue.strip():
+                    fail("llama-server returned invalid dialogue JSON")
+                dialogue = dialogue.strip()
+                context = request.get("context")
+                requested_place = (
+                    context.get("requested_place", "the requested place")
+                    if isinstance(context, dict)
+                    else "the requested place"
+                )
+                if requested_place not in dialogue and profile_name(context) != "Rafi Alam":
+                    dialogue = f"I need to be connected to {requested_place}. {dialogue}"
+                if len(dialogue) > MAX_DIALOGUE_CHARS:
+                    fail("dialogue exceeded the bounded turn limit")
+                sys.stdout.write(json.dumps({"dialogue": dialogue}, ensure_ascii=False) + "\n")
+                sys.stdout.flush()
+            except Exception as error:  # noqa: BLE001 - worker reports runtime failures
+                fail(f"persistent dialogue synthesis failed: {error}")
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server.kill()
 
 
 def profile_name(context: object) -> str:

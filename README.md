@@ -52,6 +52,12 @@ arcade client described later.
 just backend-debug
 ```
 
+The default TTS engine is Qwen3-TTS. To use the CPU-only PocketTTS worker instead:
+
+```sh
+just backend-debug 127.0.0.1:7878 127.0.0.1:7879 pocket
+```
+
 This is the authoritative game backend. It listens on:
 
 - Game protocol: `127.0.0.1:7878`
@@ -98,6 +104,9 @@ Before the first real voice run, provision the local model assets:
 just voice-setup
 just voice-preflight
 ```
+
+`voice-setup` also downloads the PocketTTS voice prompt into the ignored
+`python/.models/` directory.
 
 Then start the daemon:
 

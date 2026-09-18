@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::env;
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::UdpSocket;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -1065,6 +1065,86 @@ impl DialogueGenerator for CommandDialogueGenerator {
     }
 }
 
+pub struct PersistentCommandDialogueGenerator {
+    child: Child,
+    input: ChildStdin,
+    output: BufReader<ChildStdout>,
+}
+
+impl PersistentCommandDialogueGenerator {
+    pub fn new(spec: CommandSpec) -> Result<Self, VoiceError> {
+        let mut command = Command::new(&spec.program);
+        command
+            .args(&spec.args)
+            .arg("--persistent")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        prepare_process_group(&mut command);
+        let mut child = command
+            .spawn()
+            .map_err(|error| VoiceError::new("dialogue_start_failed", error.to_string()))?;
+        let input = child.stdin.take().ok_or_else(|| {
+            VoiceError::new(
+                "dialogue_stdin_failed",
+                "persistent dialogue stdin unavailable",
+            )
+        })?;
+        let output = child.stdout.take().ok_or_else(|| {
+            VoiceError::new(
+                "dialogue_stdout_failed",
+                "persistent dialogue stdout unavailable",
+            )
+        })?;
+        Ok(Self {
+            child,
+            input,
+            output: BufReader::new(output),
+        })
+    }
+}
+
+impl DialogueGenerator for PersistentCommandDialogueGenerator {
+    fn generate(
+        &mut self,
+        context: &ResponseContext,
+        transcript: &str,
+    ) -> Result<SubscriberResponse, VoiceError> {
+        if worker_cancellation_requested() {
+            return Err(VoiceError::new(
+                "worker_cancelled",
+                "voice work was cancelled",
+            ));
+        }
+        let input = serde_json::to_string(&DialogueRequest {
+            context,
+            transcript,
+        })
+        .map_err(|error| VoiceError::new("dialogue_request_failed", error.to_string()))?;
+        self.input
+            .write_all(input.as_bytes())
+            .and_then(|_| self.input.write_all(b"\n"))
+            .and_then(|_| self.input.flush())
+            .map_err(|error| VoiceError::new("dialogue_request_send_failed", error.to_string()))?;
+        let mut line = String::new();
+        self.output
+            .read_line(&mut line)
+            .map_err(|error| VoiceError::new("dialogue_response_read_failed", error.to_string()))?;
+        serde_json::from_str::<DialogueResult>(&line)
+            .map(|result| SubscriberResponse {
+                dialogue: result.dialogue,
+            })
+            .map_err(|error| VoiceError::new("dialogue_invalid_output", error.to_string()))
+    }
+}
+
+impl Drop for PersistentCommandDialogueGenerator {
+    fn drop(&mut self) {
+        terminate_process_group(&mut self.child);
+        let _ = self.child.wait();
+    }
+}
+
 pub struct Qwen3TtsCommand {
     spec: CommandSpec,
 }
@@ -1077,8 +1157,8 @@ impl Qwen3TtsCommand {
 
 #[derive(Serialize)]
 struct TtsRequest<'a> {
-    engine: &'static str,
-    model: &'static str,
+    engine: &'a str,
+    model: &'a str,
     voice_id: &'a str,
     text: &'a str,
     sample_rate: u32,
@@ -1146,10 +1226,20 @@ pub struct PersistentQwen3TtsCommand {
     child: Child,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
+    engine: &'static str,
+    model: &'static str,
 }
 
 impl PersistentQwen3TtsCommand {
     pub fn new(spec: CommandSpec) -> Result<Self, VoiceError> {
+        Self::new_with_engine(spec, "qwen3-tts", "Qwen3-TTS-1.7B")
+    }
+
+    fn new_with_engine(
+        spec: CommandSpec,
+        engine: &'static str,
+        model: &'static str,
+    ) -> Result<Self, VoiceError> {
         let mut command = Command::new(&spec.program);
         command
             .args(&spec.args)
@@ -1171,6 +1261,8 @@ impl PersistentQwen3TtsCommand {
             child,
             input,
             output: BufReader::new(output),
+            engine,
+            model,
         })
     }
 }
@@ -1198,8 +1290,8 @@ impl TextToSpeech for PersistentQwen3TtsCommand {
             ));
         }
         let input = serde_json::to_string(&TtsRequest {
-            engine: "qwen3-tts",
-            model: "Qwen3-TTS-1.7B",
+            engine: self.engine,
+            model: self.model,
             voice_id,
             text,
             sample_rate: VOICE_AUDIO_SAMPLE_RATE,
@@ -1236,6 +1328,33 @@ impl TextToSpeech for PersistentQwen3TtsCommand {
             emit(&samples)?;
         }
         Ok(emitted)
+    }
+}
+
+pub struct PersistentPocketTtsCommand {
+    inner: PersistentQwen3TtsCommand,
+}
+
+impl PersistentPocketTtsCommand {
+    pub fn new(spec: CommandSpec) -> Result<Self, VoiceError> {
+        Ok(Self {
+            inner: PersistentQwen3TtsCommand::new_with_engine(spec, "pocket-tts", "PocketTTS")?,
+        })
+    }
+}
+
+impl TextToSpeech for PersistentPocketTtsCommand {
+    fn synthesize(&mut self, voice_id: &str, text: &str) -> Result<Vec<i16>, VoiceError> {
+        self.inner.synthesize(voice_id, text)
+    }
+
+    fn synthesize_stream(
+        &mut self,
+        voice_id: &str,
+        text: &str,
+        emit: &mut dyn FnMut(&[i16]) -> Result<(), VoiceError>,
+    ) -> Result<usize, VoiceError> {
+        self.inner.synthesize_stream(voice_id, text, emit)
     }
 }
 
@@ -1378,7 +1497,10 @@ pub struct CpalAudioPlayback {
     error: Arc<Mutex<Option<String>>>,
     output_rate: u32,
     timeout: Duration,
+    started: Arc<AtomicBool>,
 }
+
+const CPAL_STARTUP_BUFFER_MS: u64 = 120;
 
 impl CpalAudioPlayback {
     pub fn new(timeout: Duration) -> Result<Self, VoiceError> {
@@ -1401,6 +1523,8 @@ impl CpalAudioPlayback {
         let config = supported.config();
         let queue = Arc::new(Mutex::new(VecDeque::new()));
         let error = Arc::new(Mutex::new(None));
+        let started = Arc::new(AtomicBool::new(false));
+        let startup_samples = (output_rate as u64 * CPAL_STARTUP_BUFFER_MS / 1_000) as usize;
         let stream_error = Arc::clone(&error);
         let error_handler = move |stream_error_value: cpal::StreamError| {
             if let Ok(mut error) = stream_error.lock() {
@@ -1410,20 +1534,24 @@ impl CpalAudioPlayback {
         let stream = match supported.sample_format() {
             SampleFormat::F32 => {
                 let queue = Arc::clone(&queue);
+                let started = Arc::clone(&started);
                 device.build_output_stream(
                     &config,
-                    move |data: &mut [f32], _| fill_cpal_output(data, channels, &queue),
+                    move |data: &mut [f32], _| {
+                        fill_cpal_output(data, channels, &queue, &started, startup_samples)
+                    },
                     error_handler,
                     None,
                 )
             }
             SampleFormat::I16 => {
                 let queue = Arc::clone(&queue);
+                let started = Arc::clone(&started);
                 device.build_output_stream(
                     &config,
                     move |data: &mut [i16], _| {
                         let mut mono = vec![0.0; data.len() / channels.max(1)];
-                        fill_cpal_output(&mut mono, 1, &queue);
+                        fill_cpal_output(&mut mono, 1, &queue, &started, startup_samples);
                         for (frame, sample) in data.chunks_mut(channels).zip(mono) {
                             let value = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
                             frame.fill(value);
@@ -1435,11 +1563,12 @@ impl CpalAudioPlayback {
             }
             SampleFormat::U16 => {
                 let queue = Arc::clone(&queue);
+                let started = Arc::clone(&started);
                 device.build_output_stream(
                     &config,
                     move |data: &mut [u16], _| {
                         let mut mono = vec![0.0; data.len() / channels.max(1)];
-                        fill_cpal_output(&mut mono, 1, &queue);
+                        fill_cpal_output(&mut mono, 1, &queue, &started, startup_samples);
                         for (frame, sample) in data.chunks_mut(channels).zip(mono) {
                             let value = ((sample.clamp(-1.0, 1.0) + 1.0) * 32_767.5) as u16;
                             frame.fill(value);
@@ -1466,6 +1595,7 @@ impl CpalAudioPlayback {
             error,
             output_rate,
             timeout,
+            started,
         })
     }
 
@@ -1484,6 +1614,7 @@ impl CpalAudioPlayback {
     }
 
     fn finish(&mut self) -> Result<(), VoiceError> {
+        self.started.store(true, Ordering::Release);
         let deadline = Instant::now() + self.timeout;
         loop {
             self.check_error()?;
@@ -1530,11 +1661,22 @@ impl AudioPlayback for CommandAudioPlayback {
     }
 }
 
-fn fill_cpal_output(data: &mut [f32], channels: usize, queue: &Arc<Mutex<VecDeque<f32>>>) {
+fn fill_cpal_output(
+    data: &mut [f32],
+    channels: usize,
+    queue: &Arc<Mutex<VecDeque<f32>>>,
+    started: &Arc<AtomicBool>,
+    startup_samples: usize,
+) {
     let Ok(mut queue) = queue.lock() else {
         data.fill(0.0);
         return;
     };
+    if !started.load(Ordering::Acquire) && queue.len() < startup_samples {
+        data.fill(0.0);
+        return;
+    }
+    started.store(true, Ordering::Release);
     for frame in data.chunks_mut(channels.max(1)) {
         let sample = queue.pop_front().unwrap_or(0.0);
         frame.fill(sample);

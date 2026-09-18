@@ -5,7 +5,7 @@ The voice daemon is a separate Cabinet-side transport and recovery process. The 
 ```text
 PTT start -> daemon microphone capture -> PTT release -> PCM over UDP
            -> laptop STT -> bounded Response Context -> laptop dialogue
-           -> laptop Qwen3-TTS 1.7B -> RTP/L16 audio over UDP -> daemon speaker
+            -> laptop Qwen3-TTS or PocketTTS -> RTP/L16 audio over UDP -> daemon speaker
 ```
 
 The daemon never advances Routing or Story Graph state. The backend remains the sole authority. A worker failure emits `failed` status and a diagnostic; it does not create a Story Event or Routing.
@@ -26,7 +26,7 @@ The real path requires these local assets and dependencies:
 
 - a default audio input and output device exposed by the laptop audio stack;
 - the pacman-installed whisper.cpp `whisper-cli` and llama.cpp `llama-cli` runtimes;
-- the `python/pyproject.toml` uv environment, containing `torch`, `huggingface-hub`, and the official `qwen-tts` package;
+- the `python/pyproject.toml` uv environment, containing `torch`, `huggingface-hub`, `qwen-tts`, and `pocket-tts`;
 - the model assets downloaded by `just voice-setup` into `~/.local/share/north-neeladesh/models`.
 
 The target laptop profile is Linux with a local system audio device, roughly 16 GiB of system memory, and an NVIDIA GPU with about 8 GiB of VRAM. The dialogue worker defaults to a 4,096-token llama.cpp context, GPU offload, and no warmup; override these with `NN_LLAMA_EXTRA_ARGS` only when needed. Keep Qwen3-4B and Qwen3-TTS resident on the GPU when possible; the TTS worker is persistent for real daemon runs and uses PyTorch SDPA, which dispatches to the native CUDA flash-attention kernel when supported. The third-party `flash-attn` package is an optional extra because its released wheels do not currently match this Torch 2.14/CUDA 13 environment. Select the TTS device explicitly with `NN_QWEN3_TTS_DEVICE` (default `cuda:0`). The current laptop run is a local debug profile. The target Raspberry Pi deployment will run only the cpal audio edge: microphone capture and speaker playback stay on the Pi, while the backend on this laptop coordinates STT, dialogue, and Qwen3-TTS over the network. It will not require the Qwen model or Python ML environment on the Pi. `NN_WHISPER_EXTRA_ARGS` and `NN_VOICE_WORKER_TIMEOUT` allow a pinned local runtime to provide device/thread settings without changing the daemon contract.
@@ -49,10 +49,10 @@ used. The four-Shift story selects the authored Subscriber voice for each reques
 
 - the default Rust capture path records from the system audio input, converts it to bounded signed 16-bit mono PCM at 16 kHz, and resamples when the device uses another native rate;
 - `voice_workers.stt`: writes the supplied PCM to a temporary WAV, invokes local whisper.cpp `base.en`, and writes one final UTF-8 transcript.
-- `voice_workers.dialogue`: sends only the bounded Response Context and transcript to local Qwen3-4B-Instruct-2507 Q4_K_M through `llama-cli`, requests a dialogue-only JSON object, and rejects malformed or overlong output. It cannot emit a Story Event, Routing, or state mutation.
+- `voice_workers.dialogue`: starts one local `llama-server` when the backend starts, keeps Qwen3-4B-Instruct-2507 Q4_K_M resident in VRAM, and sends each bounded Response Context and transcript to that server. It requests a dialogue-only JSON object and rejects malformed or overlong output. It cannot emit a Story Event, Routing, or state mutation.
 - `voice_workers.tts`: accepts only the Qwen3-TTS 1.7B request contract, uses the Subscriber profile's Qwen3-TTS CustomVoice speaker, and writes framed signed 16-bit little-endian mono PCM at 24 kHz to the persistent daemon worker. It synthesizes sentence-sized chunks and flushes each completed chunk immediately. Qwen's current API simulates incremental text input but does not expose true decoder-frame streaming.
 
-The TTS adapter is intentionally named and validated as Qwen3-TTS 1.7B. Pocket TTS, Piper, and automatic fallback engines are not part of this daemon.
+The backend starts with `--tts qwen` or `--tts pocket`. Qwen3-TTS uses the GPU settings documented below. PocketTTS always runs on the CPU and uses twelve official precomputed English voice embeddings in `python/.models/`, one for each subscriber line. The embedding files are ignored by Git and are downloaded by `just voice-setup`. There is no runtime engine fallback.
 
 Each provider command has a bounded 30-second deadline. The Rust adapter bounds capture to 15 seconds by default, limits worker output, preserves stderr diagnostics, kills cancelled or timed-out process groups, rejects non-zero exits and malformed output, and emits `failed` or `cancelled` without changing authoritative state. The dialogue worker receives only the active Subscriber Profile, current goal and Call Premise, Story Beat direction, permitted knowledge, beliefs, Relationship Notes, selected Memories, and at most six recent conversation turns. The approximate dynamic context limit is 3,072 tokens.
 

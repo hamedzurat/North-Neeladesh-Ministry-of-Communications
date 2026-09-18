@@ -6,3 +6,4 @@ python/**/*.egg-info
 scripts/.venv
 scripts/**/__pycache__
 scripts/*.egg-info
+python/.models/

@@ -5,6 +5,7 @@ description = "Offline local voice workers for the North Neeladesh voice daemon"
 requires-python = ">=3.12"
 dependencies = [
     "qwen-tts",
+    "pocket-tts",
     "torch",
     "huggingface-hub",
 ]

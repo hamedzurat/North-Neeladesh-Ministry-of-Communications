@@ -3,6 +3,17 @@ use std::io;
 use std::net::{SocketAddr, TcpListener, UdpSocket};
 
 fn main() -> io::Result<()> {
+    let tts = argument_value("--tts").unwrap_or_else(|| "qwen".to_string());
+    let tts = match tts.as_str() {
+        "qwen" => exchange_backend::TtsEngine::Qwen,
+        "pocket" => exchange_backend::TtsEngine::Pocket,
+        other => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("unsupported TTS engine {other}; expected qwen or pocket"),
+            ));
+        }
+    };
     let bind = argument_value("--bind").unwrap_or_else(|| "127.0.0.1:7878".to_string());
     let voice_bind = argument_value("--voice-bind").unwrap_or_else(|| "127.0.0.1:7879".to_string());
     let debug_bind = argument_value("--debug-bind");
@@ -12,7 +23,12 @@ fn main() -> io::Result<()> {
         .as_deref()
         .map(bind_loopback_listener)
         .transpose()?;
-    exchange_backend::serve_with_voice_and_debug(listener, Some(voice_socket), debug_listener)
+    exchange_backend::serve_with_voice_and_debug_engine(
+        listener,
+        Some(voice_socket),
+        debug_listener,
+        tts,
+    )
 }
 
 fn bind_loopback_listener(address: &str) -> io::Result<TcpListener> {

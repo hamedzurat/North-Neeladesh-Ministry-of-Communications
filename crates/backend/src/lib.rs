@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::env;
 use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -18,9 +18,10 @@ use exchange_protocol::{
     decode_voice_input_audio, decode_voice_status, encode_voice_control, read_frame, write_frame,
 };
 use exchange_voice_daemon::{
-    CommandDialogueGenerator, CommandSpec, CommandSpeechToText, KnowledgeRecord, MicrophoneCapture,
-    OperatorSession, PersistentQwen3TtsCommand, Qwen3TtsCommand, RelationshipNote, ResponseContext,
-    SubscriberProfile, TextToSpeech, VoiceError, VoiceOutput,
+    CommandDialogueGenerator, CommandSpec, CommandSpeechToText, DialogueGenerator, KnowledgeRecord,
+    MicrophoneCapture, OperatorSession, PersistentCommandDialogueGenerator,
+    PersistentPocketTtsCommand, PersistentQwen3TtsCommand, Qwen3TtsCommand, RelationshipNote,
+    ResponseContext, SubscriberProfile, SubscriberResponse, TextToSpeech, VoiceError, VoiceOutput,
 };
 
 pub mod story;
@@ -36,6 +37,44 @@ const MAX_CORDS: usize = 8;
 const DEMO_SHIFT_DURATION_SECONDS: u64 = 8 * 60;
 const DEMO_SHIFT_START_SECONDS: u64 = 8 * 60 * 60;
 const SIMPLE_WAITING_PATIENCE_SECONDS: u64 = 30;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TtsEngine {
+    Qwen,
+    Pocket,
+}
+
+static PERSISTENT_DIALOGUE: OnceLock<
+    Result<Mutex<PersistentCommandDialogueGenerator>, VoiceError>,
+> = OnceLock::new();
+
+struct SharedDialogueGenerator;
+
+impl DialogueGenerator for SharedDialogueGenerator {
+    fn generate(
+        &mut self,
+        context: &ResponseContext,
+        transcript: &str,
+    ) -> Result<SubscriberResponse, VoiceError> {
+        let worker = PERSISTENT_DIALOGUE.get().ok_or_else(|| {
+            VoiceError::new(
+                "dialogue_not_started",
+                "persistent dialogue worker was not started",
+            )
+        })?;
+        worker
+            .as_ref()
+            .map_err(Clone::clone)?
+            .lock()
+            .map_err(|_| {
+                VoiceError::new(
+                    "dialogue_worker_lock_failed",
+                    "dialogue worker lock poisoned",
+                )
+            })?
+            .generate(context, transcript)
+    }
+}
 const SIMPLE_INTERACTED_PATIENCE_SECONDS: u64 = 120;
 const SIMPLE_SUBSCRIBER_LINES: u8 = 6;
 const RING_GENERATOR_LAMP_HOLD: Duration = Duration::from_secs(10);
@@ -3720,11 +3759,11 @@ fn has_exact_cords(cords: &[CordConnection], expected: &[(&PortId, &PortId)]) ->
 }
 
 pub fn serve(listener: TcpListener) -> io::Result<()> {
-    serve_with_voice_and_debug(listener, None, None)
+    serve_with_voice_and_debug_engine(listener, None, None, TtsEngine::Qwen)
 }
 
 pub fn serve_with_voice(listener: TcpListener, voice_socket: Option<UdpSocket>) -> io::Result<()> {
-    serve_with_voice_and_debug(listener, voice_socket, None)
+    serve_with_voice_and_debug_engine(listener, voice_socket, None, TtsEngine::Qwen)
 }
 
 pub fn serve_with_voice_and_debug(
@@ -3732,6 +3771,27 @@ pub fn serve_with_voice_and_debug(
     voice_socket: Option<UdpSocket>,
     debug_listener: Option<TcpListener>,
 ) -> io::Result<()> {
+    serve_with_voice_and_debug_engine(listener, voice_socket, debug_listener, TtsEngine::Qwen)
+}
+
+pub fn serve_with_voice_and_debug_engine(
+    listener: TcpListener,
+    voice_socket: Option<UdpSocket>,
+    debug_listener: Option<TcpListener>,
+    tts_engine: TtsEngine,
+) -> io::Result<()> {
+    if env::var_os("NN_VOICE_DIALOGUE_PERSISTENT").is_some() {
+        let command = env::var("NN_VOICE_DIALOGUE_COMMAND").map_err(|_| {
+            io::Error::new(
+                ErrorKind::InvalidInput,
+                "NN_VOICE_DIALOGUE_COMMAND is required for persistent dialogue",
+            )
+        })?;
+        let spec = CommandSpec::from_words(&command)
+            .map_err(|error| io::Error::new(ErrorKind::InvalidInput, error.to_string()))?;
+        PERSISTENT_DIALOGUE
+            .get_or_init(|| PersistentCommandDialogueGenerator::new(spec).map(Mutex::new));
+    }
     let backend = Arc::new(Mutex::new(Backend::new_north_neeladesh()));
     let voice_socket = voice_socket.map(Arc::new);
     if let Some(debug_listener) = debug_listener {
@@ -3753,7 +3813,7 @@ pub fn serve_with_voice_and_debug(
         let socket = voice_socket
             .try_clone()
             .map_err(|error| io::Error::other(format!("voice socket clone failed: {error}")))?;
-        thread::spawn(move || serve_voice(socket, backend));
+        thread::spawn(move || serve_voice(socket, backend, tts_engine));
     }
     for connection in listener.incoming() {
         let stream = connection?;
@@ -3831,8 +3891,12 @@ fn handle_debug_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) 
     }
 }
 
-pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
-    socket.set_read_timeout(Some(Duration::from_millis(50)))?;
+pub fn serve_voice(
+    socket: UdpSocket,
+    backend: Arc<Mutex<Backend>>,
+    tts_engine: TtsEngine,
+) -> io::Result<()> {
+    socket.set_read_timeout(Some(Duration::from_millis(5)))?;
     let mut datagram = [0_u8; 65_535];
     let mut next_audio_send = None;
     loop {
@@ -3891,6 +3955,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                     generation,
                     conversation_id,
                     backend,
+                    tts_engine,
                 )
             });
         }
@@ -4221,6 +4286,7 @@ fn run_voice_worker(
     generation: u64,
     conversation_id: u64,
     backend: Arc<Mutex<Backend>>,
+    tts_engine: TtsEngine,
 ) {
     let session_id = input.session_id;
     let turn_id = input.turn_id;
@@ -4237,6 +4303,7 @@ fn run_voice_worker(
         callee_line,
         operator_knowledge,
         output,
+        tts_engine,
     );
     if let Err(error) = result {
         let mut backend = backend
@@ -4286,6 +4353,7 @@ fn run_voice_worker_session(
     callee_line: Option<u8>,
     operator_knowledge: Vec<String>,
     output: Box<dyn VoiceOutput>,
+    tts_engine: TtsEngine,
 ) -> Result<(), VoiceError> {
     let stt = CommandSpec::from_words(&env::var("NN_VOICE_STT_COMMAND").map_err(|_| {
         VoiceError::new(
@@ -4306,18 +4374,30 @@ fn run_voice_worker_session(
             "NN_VOICE_TTS_COMMAND is not configured",
         )
     })?)?;
-    let tts: Box<dyn TextToSpeech> = if env::var_os("NN_VOICE_TTS_PERSISTENT").is_some() {
-        Box::new(PersistentQwen3TtsCommand::new(tts)?)
-    } else {
-        Box::new(Qwen3TtsCommand::new(tts))
+    let tts: Box<dyn TextToSpeech> = match tts_engine {
+        TtsEngine::Qwen if env::var_os("NN_VOICE_TTS_PERSISTENT").is_some() => {
+            Box::new(PersistentQwen3TtsCommand::new(tts)?)
+        }
+        TtsEngine::Qwen => Box::new(Qwen3TtsCommand::new(tts)),
+        TtsEngine::Pocket => Box::new(PersistentPocketTtsCommand::new(tts)?),
     };
+    let voice_id = match tts_engine {
+        TtsEngine::Qwen => voice_id,
+        TtsEngine::Pocket => format!("pocket-line-{subscriber_line}"),
+    };
+    let dialogue: Box<dyn DialogueGenerator> =
+        if env::var_os("NN_VOICE_DIALOGUE_PERSISTENT").is_some() {
+            Box::new(SharedDialogueGenerator)
+        } else {
+            Box::new(CommandDialogueGenerator::new(dialogue))
+        };
     let mut session = OperatorSession::new(
         input.session_id,
         input.state_revision,
         north_response_context(subscriber_line, callee_line, voice_id, operator_knowledge),
         Box::new(ReceivedCapture::new(input.samples)),
         Box::new(CommandSpeechToText::new(stt)),
-        Box::new(CommandDialogueGenerator::new(dialogue)),
+        dialogue,
         tts,
         output,
     )?;
