@@ -241,7 +241,7 @@
          ...call,
          status: 'active',
          phase: call.phase,
-         reason: call.patience_remaining_seconds === 0 ? 'patience expired' : 'in progress',
+         reason: call.phase === 'waiting' && call.patience_remaining_seconds === 0 ? 'patience expired' : 'in progress',
        }));
       const finishedCalls = (snapshot.call_history || []).map(call => ({
         caller_line: call.caller_line,

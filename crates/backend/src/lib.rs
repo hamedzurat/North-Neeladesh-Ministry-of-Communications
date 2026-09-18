@@ -641,6 +641,9 @@ impl Backend {
         if error.is_none() {
             error = self.advance(input, focused, selected);
         }
+        if error.is_none() {
+            self.connect_ready_direct_calls(input, selected);
+        }
         if error.is_some_and(|(code, _)| code == "wrong_destination")
             && let Some(line) = focused
             && let Some(index) = self.calls.iter().position(|call| call.caller == line)
@@ -1049,6 +1052,25 @@ impl Backend {
         });
         self.state.line_lamps = lamps(&self.calls);
         self.state.shift.active_call_count = self.calls.len() as u8;
+    }
+
+    fn connect_ready_direct_calls(&mut self, input: &InputState, selected: u16) {
+        let ready = self
+            .calls
+            .iter()
+            .enumerate()
+            .filter(|(_, call)| {
+                call.phase == CallPhase::Ringing
+                    && !input.ring
+                    && call.ring_started_at.is_some()
+                    && selected == u16::from(call.callee)
+                    && direct(&input.cord_topology, call.caller, call.callee)
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        for index in ready {
+            self.connect_call(index);
+        }
     }
 
     fn expire_calls(&mut self) {
