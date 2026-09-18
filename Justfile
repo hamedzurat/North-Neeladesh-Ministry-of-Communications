@@ -1,5 +1,5 @@
 backend-debug address="127.0.0.1:7878" voice_address="127.0.0.1:7879":
-    NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_DIALOGUE_PERSISTENT=1 NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.pocket_tts" NN_VOICE_TTS_PERSISTENT=1 cargo run --quiet -p exchange-backend --bin exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }} --debug-bind 127.0.0.1:7880
+    NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_DIALOGUE_PERSISTENT=1 NN_OLLAMA_MODEL="qwen3.5:4b" NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.pocket_tts" NN_VOICE_TTS_PERSISTENT=1 cargo run --quiet -p exchange-backend --bin exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }} --debug-bind 127.0.0.1:7880
 
 frontend-raylib:
     test -f /usr/lib/libraylib.so || (echo "missing /usr/lib/libraylib.so; install raylib 6.0" >&2 && exit 1)

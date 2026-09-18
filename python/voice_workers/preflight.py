@@ -2,11 +2,10 @@
 
 import os
 import shutil
+import subprocess
 from importlib import import_module
 
 from .common import (
-    DIALOGUE_MODEL,
-    LLAMA_BINARY,
     POCKET_VOICES,
     WHISPER_BINARY,
     WHISPER_MODEL,
@@ -36,21 +35,22 @@ def require_path_label(path: str, label: str, description: str) -> None:
 
 def main() -> int:
     require_command(os.environ.get("NN_WHISPER_CPP", str(WHISPER_BINARY)))
-    require_command(os.environ.get("NN_LLAMA_CPP", str(LLAMA_BINARY)))
+    require_command("ollama")
     whisper_model = os.environ.get("NN_WHISPER_MODEL", str(WHISPER_MODEL))
-    qwen_model = os.environ.get("NN_QWEN3_MODEL", str(DIALOGUE_MODEL))
     require_file(whisper_model, "whisper.cpp base.en model")
     require_path_label(whisper_model, "base.en", "whisper model path")
-    require_file(qwen_model, "Qwen3-4B-Instruct-2507 Q4_K_M model")
-    require_path_label(qwen_model, "Qwen3-4B-Instruct-2507", "dialogue model path")
-    require_path_label(qwen_model, "Q4_K_M", "dialogue model path")
+    ollama_model = os.environ.get("NN_OLLAMA_MODEL", "qwen3.5:4b")
+    try:
+        subprocess.run(["ollama", "show", ollama_model], check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as error:
+        fail(f"Ollama model is unavailable: {ollama_model}: {error.stderr.strip()}")
     for voice_path in POCKET_VOICES.values():
         require_file(str(voice_path), "PocketTTS voice file")
     try:
         import_module("torch")
         import_module("pocket_tts")
     except Exception as error:  # noqa: BLE001 - dependency imports have backend-specific failures
-        fail(f"offline PocketTTS dependency check failed: {error}")
+        fail(f"offline voice dependency check failed: {error}")
     print("offline voice worker preflight passed")
     return 0
 

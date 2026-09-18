@@ -25,11 +25,11 @@ just voice-smoke
 The real path requires these local assets and dependencies:
 
 - a default audio input and output device exposed by the laptop audio stack;
-- the pacman-installed whisper.cpp `whisper-cli` and llama.cpp `llama-cli` runtimes;
+- the pacman-installed whisper.cpp `whisper-cli` runtime and a local Ollama service;
 - the `python/pyproject.toml` uv environment, containing `torch`, `huggingface-hub`, `qwen-tts`, and `pocket-tts`;
 - the model assets downloaded by `just voice-setup` into `~/.local/share/north-neeladesh/models`.
 
-The target laptop profile is Linux with a local system audio device, roughly 16 GiB of system memory, and an NVIDIA GPU with about 8 GiB of VRAM. The dialogue worker defaults to a 4,096-token llama.cpp context, GPU offload, and no warmup; override these with `NN_LLAMA_EXTRA_ARGS` only when needed. Keep Qwen3-4B and Qwen3-TTS resident on the GPU when possible; the TTS worker is persistent for real daemon runs and uses PyTorch SDPA, which dispatches to the native CUDA flash-attention kernel when supported. The third-party `flash-attn` package is an optional extra because its released wheels do not currently match this Torch 2.14/CUDA 13 environment. Select the TTS device explicitly with `NN_QWEN3_TTS_DEVICE` (default `cuda:0`). The current laptop run is a local debug profile. The target Raspberry Pi deployment will run only the cpal audio edge: microphone capture and speaker playback stay on the Pi, while the backend on this laptop coordinates STT, dialogue, and Qwen3-TTS over the network. It will not require the Qwen model or Python ML environment on the Pi. `NN_WHISPER_EXTRA_ARGS` and `NN_VOICE_WORKER_TIMEOUT` allow a pinned local runtime to provide device/thread settings without changing the daemon contract.
+The target laptop profile is Linux with a local system audio device, roughly 16 GiB of system memory, and a GPU for Ollama. The dialogue worker keeps Ollama model `qwen3.5:4b` resident with `keep_alive: -1` and disables reasoning with `think: false`. PocketTTS remains persistent and CPU-only. The current laptop run is a local debug profile. The target Raspberry Pi deployment will run only the cpal audio edge: microphone capture and speaker playback stay on the Pi, while the backend on this laptop coordinates STT, Ollama dialogue, and PocketTTS over the network. `NN_WHISPER_EXTRA_ARGS` and `NN_VOICE_WORKER_TIMEOUT` allow a pinned local runtime to provide device/thread settings without changing the daemon contract.
 
 Model setup and offline launch:
 
@@ -49,7 +49,7 @@ used. The active neutral Call selects the subscriber voice context for each requ
 
 - the default Rust capture path records from the system audio input, converts it to bounded signed 16-bit mono PCM at 16 kHz, and resamples when the device uses another native rate;
 - `voice_workers.stt`: writes the supplied PCM to a temporary WAV, invokes local whisper.cpp `base.en`, and writes one final UTF-8 transcript.
-- `voice_workers.dialogue`: starts one local `llama-server` when the backend starts, keeps Qwen3-4B-Instruct-2507 Q4_K_M resident in VRAM, and sends each bounded Response Context and transcript to that server. It requests a dialogue-only JSON object and rejects malformed or overlong output. It cannot emit a Story Event, Routing, or state mutation.
+- `voice_workers.dialogue`: sends each bounded Response Context and transcript to local Ollama using `qwen3.5:4b`, `think: false`, JSON format, and `keep_alive: -1`. It requests a dialogue-only JSON object and rejects malformed or overlong output. It cannot emit a Story Event, Routing, or state mutation.
 - `voice_workers.tts`: accepts only the Qwen3-TTS 1.7B request contract, uses the Subscriber profile's Qwen3-TTS CustomVoice speaker, and writes framed signed 16-bit little-endian mono PCM at 24 kHz to the persistent daemon worker. It synthesizes sentence-sized chunks and flushes each completed chunk immediately. Qwen's current API simulates incremental text input but does not expose true decoder-frame streaming.
 
 PocketTTS always runs on the CPU and uses twelve official precomputed English voice embeddings in `python/.models/`, one for each subscriber line. The embedding files are ignored by Git and are downloaded by `just voice-setup`.
