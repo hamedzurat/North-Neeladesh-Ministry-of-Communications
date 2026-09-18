@@ -20,7 +20,10 @@ fn input(
         expected_state_revision: backend.debug_snapshot().run.state_revision,
         input: InputState {
             cord_topology: cords,
-            held_controls: HeldControls::default(),
+            held_controls: HeldControls {
+                ptt: true,
+                ..HeldControls::default()
+            },
             directory_digits: [0, 0, 0, directory_line],
             crank_rotation_timestamps: crank,
             tuning: TuningState::default(),
@@ -107,9 +110,28 @@ fn live_hardware_loop_keeps_two_calls_on_lines_zero_through_five() {
         Some("directory_selection_required")
     );
 
-    let ringing = backend.apply_input_message(input(
+    let premature = backend.apply_input_message(input(
         &backend,
         4,
+        vec![
+            cord(PortId::Subscriber(first.caller_line), PortId::Operator),
+            cord(
+                PortId::Subscriber(first.caller_line),
+                PortId::Subscriber(first.requested_callee_line),
+            ),
+        ],
+        first.requested_callee_line,
+        [0; 4],
+    ));
+    assert!(!premature.accepted);
+    assert_eq!(
+        premature.error.as_ref().map(|error| error.code.as_str()),
+        Some("premature_direct_routing")
+    );
+
+    let ringing = backend.apply_input_message(input(
+        &backend,
+        5,
         vec![
             cord(PortId::Subscriber(first.caller_line), PortId::Operator),
             cord(
@@ -123,9 +145,28 @@ fn live_hardware_loop_keeps_two_calls_on_lines_zero_through_five() {
     assert_eq!(ringing.output.call.unwrap().phase, CallPhase::Ringing);
     assert!(ringing.output.line_lamps[first.requested_callee_line as usize]);
 
+    thread::sleep(Duration::from_secs(2));
+    let sustained_ring = backend.apply_input_message(input(
+        &backend,
+        6,
+        vec![
+            cord(PortId::Subscriber(first.caller_line), PortId::Operator),
+            cord(
+                PortId::Subscriber(first.requested_callee_line),
+                PortId::RingGenerator,
+            ),
+        ],
+        first.requested_callee_line,
+        [0, 100, 200, 400],
+    ));
+    assert_eq!(
+        sustained_ring.output.call.unwrap().phase,
+        CallPhase::Ringing
+    );
+
     let connected = backend.apply_input_message(input(
         &backend,
-        5,
+        7,
         vec![cord(
             PortId::Subscriber(first.caller_line),
             PortId::Subscriber(first.requested_callee_line),
@@ -147,7 +188,7 @@ fn live_hardware_loop_keeps_two_calls_on_lines_zero_through_five() {
     thread::sleep(Duration::from_secs(3));
     let next = backend.apply_input_message(input(
         &backend,
-        6,
+        8,
         vec![cord(
             PortId::Subscriber(first.caller_line),
             PortId::Subscriber(first.requested_callee_line),

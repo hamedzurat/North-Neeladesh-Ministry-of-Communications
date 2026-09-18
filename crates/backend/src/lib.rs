@@ -1,4 +1,6 @@
-use std::io;
+use std::collections::VecDeque;
+use std::env;
+use std::io::{self, ErrorKind};
 use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -8,12 +10,19 @@ use exchange_protocol::{
     CallPhase, CallStatus, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION, DebugCommand,
     DebugCounters, DebugFrontendState, DebugRequest, DebugResponse, DebugRunState, DebugSnapshot,
     DebugStoryState, DebugSubscriberState, GamePhase, HeldControls, InputMessage, InputState,
-    OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, ShiftPhase, ShiftStatus,
-    StateMessage, StateOutput, TuningState, read_frame, write_frame,
+    OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, RtpL16Packet, ShiftPhase,
+    ShiftStatus, StateMessage, StateOutput, TuningState, VOICE_AUDIO_PACKET_SAMPLES,
+    VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl, VoiceStatus, VoiceStatusMessage,
+    decode_voice_control, encode_voice_status, read_frame, write_frame,
+};
+use exchange_voice_daemon::{
+    CommandSpec, PersistentPocketTtsCommand, PersistentQwen3TtsCommand, Qwen3TtsCommand,
+    TextToSpeech, VoiceError,
 };
 
 const LINES: u8 = 6;
 const MAX_CALLS: usize = 3;
+const MAX_AUDIO_PACKETS: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TtsEngine {
@@ -28,6 +37,10 @@ struct ActiveCall {
     phase: CallPhase,
     deadline: u64,
     connected_at: Option<Instant>,
+    ring_started_at: Option<u64>,
+    last_crank_timestamp: u64,
+    crank_samples: u8,
+    audio_duration_seconds: u64,
 }
 
 pub struct Backend {
@@ -51,6 +64,11 @@ pub struct Backend {
     run_generation: u64,
     last_request: Option<InputMessage>,
     last_response: Option<StateMessage>,
+    tts_engine: TtsEngine,
+    audio_queue: VecDeque<Vec<u8>>,
+    audio_sequence: u16,
+    audio_timestamp: u32,
+    pending_tts: Vec<(u8, u8)>,
 }
 
 impl Backend {
@@ -79,7 +97,13 @@ impl Backend {
             run_generation: 0,
             last_request: None,
             last_response: None,
+            tts_engine: TtsEngine::Qwen,
+            audio_queue: VecDeque::new(),
+            audio_sequence: 0,
+            audio_timestamp: 0,
+            pending_tts: Vec::new(),
         };
+        backend.quota = backend.random_quota();
         backend.refill_calls(MAX_CALLS);
         backend
     }
@@ -123,6 +147,11 @@ impl Backend {
         self.missed = 0;
         self.failed = 0;
         self.conversation_seconds = 0;
+        self.quota = self.random_quota();
+        self.audio_queue.clear();
+        self.audio_sequence = 0;
+        self.audio_timestamp = 0;
+        self.pending_tts.clear();
         self.refill_calls(self.call_target);
         self.state.calls = self
             .calls
@@ -206,7 +235,9 @@ impl Backend {
 
     pub fn apply_input_message(&mut self, message: InputMessage) -> StateMessage {
         if self.last_request.as_ref() == Some(&message) {
-            return self.last_response.clone().unwrap();
+            if let Some(response) = self.last_response.clone() {
+                return response;
+            }
         }
         let result = self.apply_input(message.clone());
         self.last_request = Some(message);
@@ -273,9 +304,31 @@ impl Backend {
                     "select the requested destination before routing",
                 ));
             }
+            if error.is_none() && has_wrong_direct_circuit(input, call.caller, call.callee) {
+                error = Some((
+                    "wrong_destination",
+                    "the direct circuit must use the requested destination line",
+                ));
+            }
+            if error.is_none()
+                && call.phase == CallPhase::Connected
+                && !valid_connected_circuit(input, call.caller, call.callee)
+            {
+                error = Some((
+                    "invalid_cord_topology",
+                    "a connected call permits only the direct circuit and optional Tap Bridge cords",
+                ));
+            }
         }
         if error.is_none() {
-            self.advance(input, focused, selected);
+            error = self.advance(input, focused, selected);
+        }
+        if error.is_some_and(|(code, _)| code == "wrong_destination") {
+            if let Some(line) = focused {
+                if let Some(index) = self.calls.iter().position(|call| call.caller == line) {
+                    self.fail_call(index);
+                }
+            }
         }
         self.revision = self.revision.wrapping_add(1);
         self.state.clock.elapsed_seconds = self.elapsed_seconds();
@@ -300,7 +353,9 @@ impl Backend {
         self.state.shift.active_call_count = self.calls.len() as u8;
         self.state.tap_bridge_monitoring = tap_monitor(input, &self.state);
         self.state.tap_bridge_audio_active = self.state.tap_bridge_monitoring.is_some();
-        self.state.game_phase = if self.state.shift.phase == ShiftPhase::Settled {
+        self.state.game_phase = if self.state.game_phase == GamePhase::Ended {
+            GamePhase::Ended
+        } else if self.state.shift.phase == ShiftPhase::Settled {
             GamePhase::Ready
         } else {
             GamePhase::Shift
@@ -324,12 +379,20 @@ impl Backend {
         }
     }
 
-    fn advance(&mut self, input: &InputState, focused: Option<u8>, selected: u16) {
-        let Some(line) = focused else { return };
+    fn advance(
+        &mut self,
+        input: &InputState,
+        focused: Option<u8>,
+        selected: u16,
+    ) -> Option<(&'static str, &'static str)> {
+        let Some(line) = focused else { return None };
         let Some(index) = self.calls.iter().position(|c| c.caller == line) else {
-            return;
+            return None;
         };
         let mut finish = false;
+        let mut connect = false;
+        let mut error = None;
+        let now = self.elapsed_seconds() as u64;
         let call = &mut self.calls[index];
         let operator = has_cord(input, PortId::Subscriber(line), PortId::Operator);
         let ring = has_cord(
@@ -339,30 +402,96 @@ impl Backend {
         );
         let direct_route = direct(&input.cord_topology, call.caller, call.callee);
         match call.phase {
-            CallPhase::Waiting if operator => call.phase = CallPhase::OperatorSession,
+            CallPhase::Waiting if operator && input.held_controls.ptt => {
+                call.phase = CallPhase::OperatorSession
+            }
+            CallPhase::Waiting if operator => {
+                error = Some((
+                    "ptt_required",
+                    "hold PTT while the caller is connected to the Operator",
+                ));
+            }
             CallPhase::OperatorSession | CallPhase::AwaitingRouting => {
                 if direct_route
                     && selected == u16::from(call.callee)
                     && call.phase == CallPhase::AwaitingRouting
                 {
-                    call.phase = CallPhase::Connected;
-                    call.connected_at = Some(Instant::now());
-                    self.earned += 0;
+                    error = Some((
+                        "premature_direct_routing",
+                        "ring the requested destination before connecting the caller directly",
+                    ));
+                } else if has_any_direct_circuit(input) {
+                    error = Some((
+                        "premature_direct_routing",
+                        "ring the requested destination before connecting the caller directly",
+                    ));
                 } else if ring && crank(input) {
-                    call.phase = CallPhase::Ringing;
+                    if exact_cords(
+                        &input.cord_topology,
+                        &[
+                            (PortId::Subscriber(call.caller), PortId::Operator),
+                            (PortId::Subscriber(call.callee), PortId::RingGenerator),
+                        ],
+                    ) {
+                        call.ring_started_at = Some(now);
+                        call.last_crank_timestamp = input.crank_rotation_timestamps[3];
+                        call.crank_samples = 1;
+                        call.phase = CallPhase::Ringing;
+                    } else {
+                        error = Some((
+                            "invalid_cord_topology",
+                            "ringing requires exactly the caller-to-Operator and callee-to-Ring Generator cords",
+                        ));
+                    }
                 } else if input.cord_topology.is_empty() {
                     call.phase = CallPhase::AwaitingRouting;
                 }
             }
+            CallPhase::Ringing if ring && crank(input) => {
+                let timestamp = input.crank_rotation_timestamps[3];
+                if timestamp > call.last_crank_timestamp {
+                    call.last_crank_timestamp = timestamp;
+                    call.crank_samples = call.crank_samples.saturating_add(1);
+                }
+            }
             CallPhase::Ringing if direct_route && selected == u16::from(call.callee) => {
-                call.phase = CallPhase::Connected;
-                call.connected_at = Some(Instant::now());
+                if ring {
+                    error = Some((
+                        "ring_generator_connected",
+                        "disconnect the Ring Generator before completing the direct circuit",
+                    ));
+                } else if call
+                    .ring_started_at
+                    .is_some_and(|started| now >= started + 2)
+                    && call.crank_samples >= 2
+                {
+                    if exact_cords(
+                        &input.cord_topology,
+                        &[(
+                            PortId::Subscriber(call.caller),
+                            PortId::Subscriber(call.callee),
+                        )],
+                    ) {
+                        connect = true;
+                    } else {
+                        error = Some((
+                            "invalid_cord_topology",
+                            "direct routing requires exactly one Caller-to-Callee cord",
+                        ));
+                    }
+                }
+            }
+            CallPhase::Ringing if direct_route => {
+                error = Some((
+                    "wrong_destination",
+                    "the direct circuit must use the requested destination line",
+                ));
             }
             CallPhase::Connected
                 if input.cord_topology.is_empty()
                     || (direct_route
                         && call.connected_at.is_some_and(|started| {
-                            started.elapsed() >= Duration::from_secs(2)
+                            started.elapsed() >= Duration::from_secs(call.audio_duration_seconds)
                         })) =>
             {
                 finish = true
@@ -375,6 +504,83 @@ impl Backend {
         if finish {
             self.finish_call(index, false);
         }
+        if connect {
+            self.connect_call(index);
+        }
+        error
+    }
+
+    fn connect_call(&mut self, index: usize) {
+        let Some((caller, callee)) = self.calls.get(index).map(|call| (call.caller, call.callee))
+        else {
+            return;
+        };
+        let Some(call) = self.calls.get_mut(index) else {
+            return;
+        };
+        call.phase = CallPhase::Connected;
+        call.connected_at = Some(Instant::now());
+        call.audio_duration_seconds = 2;
+        self.pending_tts.push((caller, callee));
+    }
+
+    fn install_generated_audio(&mut self, caller: u8, callee: u8, samples: Vec<i16>) {
+        let Some(call) = self.calls.iter_mut().find(|call| {
+            call.caller == caller && call.callee == callee && call.phase == CallPhase::Connected
+        }) else {
+            return;
+        };
+        let duration = (samples.len() as u64)
+            .div_ceil(u64::from(VOICE_AUDIO_SAMPLE_RATE))
+            .max(1);
+        call.audio_duration_seconds = duration;
+        let sequence = self.audio_sequence;
+        let timestamp = self.audio_timestamp;
+        for (index, chunk) in samples.chunks(VOICE_AUDIO_PACKET_SAMPLES).enumerate() {
+            if self.audio_queue.len() >= MAX_AUDIO_PACKETS {
+                self.audio_queue.pop_front();
+            }
+            self.audio_queue.push_back(
+                RtpL16Packet {
+                    marker: index == 0,
+                    sequence: sequence.wrapping_add(index as u16),
+                    timestamp: timestamp.wrapping_add((index * VOICE_AUDIO_PACKET_SAMPLES) as u32),
+                    ssrc: 0x4e45_5554,
+                    samples: chunk.to_vec(),
+                }
+                .encode(),
+            );
+        }
+        self.audio_sequence =
+            sequence.wrapping_add(samples.len().div_ceil(VOICE_AUDIO_PACKET_SAMPLES) as u16);
+        self.audio_timestamp = timestamp.wrapping_add(samples.len() as u32);
+    }
+
+    fn take_pending_tts(&mut self) -> Vec<(u8, u8)> {
+        std::mem::take(&mut self.pending_tts)
+    }
+
+    fn generate_call_audio(
+        engine: TtsEngine,
+        caller: u8,
+        callee: u8,
+    ) -> Result<Vec<i16>, VoiceError> {
+        let text = format!(
+            "{}: Please connect me to {}. {}: Of course, I am at {}.",
+            directory_user(caller).0,
+            simple_place(callee),
+            directory_user(callee).0,
+            simple_place(callee),
+        );
+        let mut tts = configured_tts(engine)?;
+        let samples = tts.synthesize(&format!("neutral-line-{caller}"), &text)?;
+        if samples.is_empty() {
+            return Err(VoiceError::new(
+                "tts_empty_output",
+                "TTS returned no audio samples",
+            ));
+        }
+        Ok(samples)
     }
 
     fn finish_call(&mut self, index: usize, missed: bool) {
@@ -386,9 +592,10 @@ impl Backend {
             self.money -= 2;
         } else {
             self.completed += 1;
-            self.conversation_seconds += 2;
-            self.earned += 2;
-            self.money += 2;
+            let seconds = call.audio_duration_seconds.max(1);
+            self.conversation_seconds += seconds;
+            self.earned += seconds as i32;
+            self.money += seconds as i32;
         }
         self.state.shift.completed_routings = self.completed;
         if self.resolved >= self.quota {
@@ -396,7 +603,29 @@ impl Backend {
         } else {
             self.refill_calls(self.call_target);
         }
-        let _ = call;
+    }
+
+    fn fail_call(&mut self, index: usize) {
+        self.calls.remove(index);
+        self.resolved = self.resolved.saturating_add(1);
+        self.failed += 1;
+        self.deductions += 2;
+        self.money -= 2;
+        if self.resolved >= self.quota {
+            self.settle_shift();
+        } else {
+            self.refill_calls(self.call_target);
+        }
+    }
+
+    fn fail_generated_call(&mut self, caller: u8, callee: u8) {
+        if let Some(index) = self
+            .calls
+            .iter()
+            .position(|call| call.caller == caller && call.callee == callee)
+        {
+            self.fail_call(index);
+        }
     }
 
     fn expire_calls(&mut self) {
@@ -450,6 +679,7 @@ impl Backend {
             self.state.shift.number = self.state.shift.number.saturating_add(1);
             self.state.clock.shift = self.state.shift.number;
             self.state.shift.phase = ShiftPhase::Ready;
+            self.state.shift.completed_routings = 0;
             self.resolved = 0;
             self.completed = 0;
             self.missed = 0;
@@ -457,6 +687,7 @@ impl Backend {
             self.earned = 0;
             self.deductions = 0;
             self.conversation_seconds = 0;
+            self.quota = self.random_quota();
         }
         while self.calls.len() < count.min(self.call_target) && self.state.shift.number <= 3 {
             let (caller, callee) = self.next_call();
@@ -467,6 +698,10 @@ impl Backend {
                 phase: CallPhase::Waiting,
                 deadline,
                 connected_at: None,
+                ring_started_at: None,
+                last_crank_timestamp: 0,
+                crank_samples: 0,
+                audio_duration_seconds: 2,
             });
         }
         self.state.shift.phase = ShiftPhase::Active;
@@ -496,6 +731,10 @@ impl Backend {
     fn random_patience(&mut self) -> u64 {
         self.rng = self.rng.wrapping_mul(6364136223846793005).wrapping_add(1);
         20 + self.rng % 41
+    }
+    fn random_quota(&mut self) -> u8 {
+        self.rng = self.rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+        4 + (self.rng % 3) as u8
     }
     fn elapsed_seconds(&self) -> u32 {
         (self.clock_started.elapsed().as_secs() + self.debug_elapsed).min(u32::MAX as u64) as u32
@@ -529,6 +768,10 @@ impl Backend {
                     phase: CallPhase::Waiting,
                     deadline: self.elapsed_seconds() as u64 + 30,
                     connected_at: None,
+                    ring_started_at: None,
+                    last_crank_timestamp: 0,
+                    crank_samples: 0,
+                    audio_duration_seconds: 2,
                 })
             }
             _ => {}
@@ -697,8 +940,46 @@ fn direct(cords: &[CordConnection], caller: u8, callee: u8) -> bool {
         PortId::Subscriber(callee),
     )
 }
+fn has_any_direct_circuit(input: &InputState) -> bool {
+    input.cord_topology.iter().any(|cord| {
+        matches!(cord.first, PortId::Subscriber(_)) && matches!(cord.second, PortId::Subscriber(_))
+    })
+}
+fn exact_cords(input: &[CordConnection], expected: &[(PortId, PortId)]) -> bool {
+    input.len() == expected.len()
+        && expected.iter().all(|(first, second)| {
+            input.iter().any(|cord| {
+                (&cord.first == first && &cord.second == second)
+                    || (&cord.first == second && &cord.second == first)
+            })
+        })
+}
+fn has_wrong_direct_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
+    input.cord_topology.iter().any(|cord| {
+        let (PortId::Subscriber(first), PortId::Subscriber(second)) = (&cord.first, &cord.second)
+        else {
+            return false;
+        };
+        !((*first == caller && *second == callee) || (*first == callee && *second == caller))
+    })
+}
 fn crank(input: &InputState) -> bool {
     input.crank_rotation_timestamps[3] > 0
+}
+fn configured_tts(engine: TtsEngine) -> Result<Box<dyn TextToSpeech>, VoiceError> {
+    let command = CommandSpec::from_words(&env::var("NN_VOICE_TTS_COMMAND").map_err(|_| {
+        VoiceError::new(
+            "voice_worker_not_configured",
+            "NN_VOICE_TTS_COMMAND is not configured",
+        )
+    })?)?;
+    match engine {
+        TtsEngine::Qwen if env::var_os("NN_VOICE_TTS_PERSISTENT").is_some() => {
+            Ok(Box::new(PersistentQwen3TtsCommand::new(command)?))
+        }
+        TtsEngine::Qwen => Ok(Box::new(Qwen3TtsCommand::new(command))),
+        TtsEngine::Pocket => Ok(Box::new(PersistentPocketTtsCommand::new(command)?)),
+    }
 }
 fn lamps(calls: &[ActiveCall]) -> [bool; 12] {
     let mut result = [false; 12];
@@ -716,34 +997,80 @@ fn lamps(calls: &[ActiveCall]) -> [bool; 12] {
     result
 }
 fn tap_monitor(input: &InputState, state: &StateOutput) -> Option<u8> {
-    for n in 1..=2 {
-        if has_cord(input, PortId::Subscriber(0), PortId::Tap(n))
-            && has_cord(input, PortId::Subscriber(1), PortId::Tap(n + 1))
-            && state.calls.iter().any(|c| c.phase == CallPhase::Connected)
-        {
-            return Some(n);
-        }
+    if !input.held_controls.tap {
+        return None;
     }
-    None
+    state.calls.iter().find_map(|call| {
+        if call.phase != CallPhase::Connected {
+            return None;
+        }
+        exact_cords(
+            &input.cord_topology,
+            &[
+                (
+                    PortId::Subscriber(call.caller_line),
+                    PortId::Subscriber(call.requested_callee_line),
+                ),
+                (PortId::Subscriber(call.caller_line), PortId::Tap(1)),
+                (
+                    PortId::Subscriber(call.requested_callee_line),
+                    PortId::Tap(2),
+                ),
+            ],
+        )
+        .then_some(1)
+    })
+}
+fn valid_connected_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
+    exact_cords(
+        &input.cord_topology,
+        &[(PortId::Subscriber(caller), PortId::Subscriber(callee))],
+    ) || exact_cords(
+        &input.cord_topology,
+        &[
+            (PortId::Subscriber(caller), PortId::Subscriber(callee)),
+            (PortId::Subscriber(caller), PortId::Tap(1)),
+            (PortId::Subscriber(callee), PortId::Tap(2)),
+        ],
+    )
 }
 
 pub fn serve_with_voice_and_debug_engine(
     listener: TcpListener,
-    _voice_socket: Option<UdpSocket>,
+    voice_socket: Option<UdpSocket>,
     debug_listener: Option<TcpListener>,
-    _tts: TtsEngine,
+    tts: TtsEngine,
 ) -> io::Result<()> {
-    let backend = Arc::new(Mutex::new(Backend::new_exchange()));
+    let mut initial = Backend::new_exchange();
+    initial.tts_engine = tts;
+    let backend = Arc::new(Mutex::new(initial));
+    if let Some(socket) = voice_socket {
+        let voice_backend = Arc::clone(&backend);
+        thread::spawn(move || {
+            let _ = serve_voice(socket, voice_backend, tts);
+        });
+    }
     if let Some(listener) = debug_listener {
         let debug_backend = Arc::clone(&backend);
         thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                let _ = handle_debug_connection(stream, Arc::clone(&debug_backend));
+                let connection_backend = Arc::clone(&debug_backend);
+                thread::spawn(move || {
+                    if let Err(error) = handle_debug_connection(stream, connection_backend) {
+                        eprintln!("debug connection closed with error: {error}");
+                    }
+                });
             }
         });
     }
     for stream in listener.incoming() {
-        handle_connection(stream?, Arc::clone(&backend))?;
+        let stream = stream?;
+        let connection_backend = Arc::clone(&backend);
+        thread::spawn(move || {
+            if let Err(error) = handle_connection(stream, connection_backend) {
+                eprintln!("frontend connection closed with error: {error}");
+            }
+        });
     }
     Ok(())
 }
@@ -754,29 +1081,104 @@ pub fn serve_with_voice(listener: TcpListener, voice: Option<UdpSocket>) -> io::
     serve_with_voice_and_debug_engine(listener, voice, None, TtsEngine::Qwen)
 }
 pub fn serve_voice(
-    _socket: UdpSocket,
-    _backend: Arc<Mutex<Backend>>,
+    socket: UdpSocket,
+    backend: Arc<Mutex<Backend>>,
     _tts: TtsEngine,
 ) -> io::Result<()> {
-    Ok(())
+    socket.set_read_timeout(Some(Duration::from_millis(10)))?;
+    let mut buffer = [0_u8; 65_535];
+    let mut peer = None;
+    let mut session = None;
+    loop {
+        match socket.recv_from(&mut buffer) {
+            Ok((length, address)) => {
+                if let Ok(control) = decode_voice_control(&buffer[..length]) {
+                    if peer.is_some_and(|known| known != address) {
+                        continue;
+                    }
+                    if session.is_some_and(|known| known != (control.session_id, control.turn_id)) {
+                        continue;
+                    }
+                    peer = Some(address);
+                    session = Some((control.session_id, control.turn_id));
+                    let status = VoiceStatusMessage {
+                        protocol_version: VOICE_PROTOCOL_VERSION,
+                        session_id: control.session_id,
+                        turn_id: control.turn_id,
+                        state_revision: control.state_revision,
+                        status: match control.control {
+                            VoiceControl::Cancel => VoiceStatus::Cancelled,
+                            VoiceControl::StartPtt | VoiceControl::ReleasePtt => VoiceStatus::Ready,
+                        },
+                        transcript: None,
+                        response_text: None,
+                        error: None,
+                    };
+                    let datagram = encode_voice_status(&status)
+                        .map_err(|error| io::Error::other(error.to_string()))?;
+                    socket.send_to(&datagram, address)?;
+                }
+            }
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(error) => return Err(error),
+        }
+        let packets = {
+            let mut state = backend
+                .lock()
+                .map_err(|_| io::Error::other("backend state lock poisoned"))?;
+            if state.state.tap_bridge_audio_active && peer.is_some() {
+                state.audio_queue.drain(..).collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            }
+        };
+        if let Some(address) = peer {
+            for packet in packets {
+                socket.send_to(&packet, address)?;
+            }
+        }
+    }
 }
 pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
     loop {
         let request: InputMessage = match read_frame(&mut stream) {
             Ok(request) => request,
-            Err(error) => return Err(io::Error::other(error.to_string())),
+            Err(error) => return Err(io::Error::new(ErrorKind::InvalidData, error.to_string())),
         };
-        let response = backend.lock().unwrap().apply_input_message(request);
-        write_frame(&mut stream, &response).map_err(|e| io::Error::other(e.to_string()))?;
+        let (response, pending_tts, tts_engine) = {
+            let mut state = backend
+                .lock()
+                .map_err(|_| io::Error::other("backend state lock poisoned"))?;
+            let response = state.apply_input_message(request);
+            (response, state.take_pending_tts(), state.tts_engine)
+        };
+        for (caller, callee) in pending_tts {
+            let worker_backend = Arc::clone(&backend);
+            thread::spawn(move || {
+                if let Ok(samples) = Backend::generate_call_audio(tts_engine, caller, callee) {
+                    if let Ok(mut state) = worker_backend.lock() {
+                        state.install_generated_audio(caller, callee, samples);
+                    }
+                } else if let Ok(mut state) = worker_backend.lock() {
+                    state.fail_generated_call(caller, callee);
+                }
+            });
+        }
+        write_frame(&mut stream, &response)
+            .map_err(|e| io::Error::other(format!("state response write failed: {e}")))?;
     }
 }
 fn handle_debug_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
     loop {
         let request: DebugRequest = match read_frame(&mut stream) {
             Ok(request) => request,
-            Err(error) => return Err(io::Error::other(error.to_string())),
+            Err(error) => return Err(io::Error::new(ErrorKind::InvalidData, error.to_string())),
         };
-        let response = backend.lock().unwrap().apply_debug_command(request);
-        write_frame(&mut stream, &response).map_err(|e| io::Error::other(e.to_string()))?;
+        let response = backend
+            .lock()
+            .map_err(|_| io::Error::other("backend state lock poisoned"))?
+            .apply_debug_command(request);
+        write_frame(&mut stream, &response)
+            .map_err(|e| io::Error::other(format!("debug response write failed: {e}")))?;
     }
 }
