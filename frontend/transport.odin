@@ -22,6 +22,7 @@ initial_backend_output :: proc() -> State_Output {
 initial_intent :: proc() -> Input_Intent {
 	return Input_Intent{
 		directory_digits = [4]u8{0, 0, 0, 1},
+		ring_line = -1,
 		debug = Input_Debug{firmware_version = "odin-raylib"},
 	}
 }

@@ -78,7 +78,6 @@ ref_handle_cords :: proc(app: ^Input_State, jacks: ^[ENDPOINT_COUNT]rl.Vector2) 
 			}
 		}
 	}
-	app.intent.ring_line = ring_generator_line(app.intent.cord_topology[:])
 }
 
 ref_action_slot :: proc(held: ^Held, index: int) -> ^bool {
