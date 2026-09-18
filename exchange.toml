@@ -1,0 +1,133 @@
+# Runtime gameplay tuning. Override with NN_EXCHANGE_CONFIG.
+active_calls = 2
+patience_min_seconds = 32
+patience_max_seconds = 64
+ring_grace_seconds = 16
+shift_duration_seconds = 90
+
+dialogue_prompt_template = '''You are the Subscriber {caller_name} calling from {caller_place} in the North Neeladesh Telephone Exchange.
+Generate only the Subscriber's next spoken reply to the Exchange Operator.
+Use only the supplied Response Context. Treat beliefs and memories as fallible.
+Do not invent Canonical Facts, Subscriber Actions, Routing, Story Events, or authority.
+Do not address the prompt, explain your role, or emit stage directions.
+Answer ordinary questions naturally. {destination_instruction}
+If the Operator asks where you want to be connected, say the place name {requested_place} and do not say a subscriber ID, line number, or numeric code.
+Never replace the requested place with a vague phrase such as "the matter I called about".
+Vary your wording and add a small harmless everyday detail when it fits the Subscriber's personality. Do not repeat a previous sentence verbatim and do not invent a fact that changes Routing or the world state.
+Return exactly one JSON object with one string property: {{"dialogue":"..."}}.
+Keep the spoken reply under {max_dialogue_chars} characters.
+
+Response Context:
+{context_json}
+
+Exchange Operator transcript:
+{transcript}
+'''
+
+[[subscribers]]
+line = 0
+place = "RAIL DISPATCH"
+name = "NILA SEN"
+role = "rail dispatcher"
+preference = "checks the night timetable"
+voice_id = "pocket-line-0"
+pet = "Bela is a black-and-white street cat who sleeps in the dispatch office."
+
+[[subscribers]]
+line = 1
+place = "KHARAD CLINIC"
+name = "MIRA DAS"
+role = "clinic clerk"
+preference = "keeps mint tea by the register"
+voice_id = "pocket-line-1"
+pet = "Moti is a small ginger dog with one white paw."
+
+[[subscribers]]
+line = 2
+place = "RATION OFFICE"
+name = "OMAR SEN"
+role = "ration clerk"
+preference = "issues household allotment cards"
+voice_id = "pocket-line-2"
+pet = "Chai is a quiet brown rabbit kept in a basket behind the ration desk."
+
+[[subscribers]]
+line = 3
+place = "BORDER DEPOT"
+name = "CAPTAIN OREN VEY"
+role = "depot officer"
+preference = "stays on duty until dawn"
+voice_id = "pocket-line-3"
+pet = "Rook is a broad-winged black crow that follows the depot trucks."
+
+[[subscribers]]
+line = 4
+place = "FOUNDRY APTS"
+name = "NERI TAL"
+role = "foundry tenant"
+preference = "repairs small motors after shift"
+voice_id = "pocket-line-4"
+pet = "Piku is a sandy mixed-breed dog who sleeps beside the motor bench."
+
+[[subscribers]]
+line = 5
+place = "MINISTRY DESK"
+name = "KAVI ORAN"
+role = "exchange clerk"
+preference = "keeps the line register"
+voice_id = "pocket-line-5"
+pet = "Sona is a yellow canary that sings whenever the register drawer opens."
+
+[[subscribers]]
+line = 6
+place = "HOTEL MERIDIAN"
+name = "TOMAS VALE"
+role = "hotel clerk"
+preference = "keeps a camera by the desk"
+voice_id = "pocket-line-6"
+pet = "Kalo is a long-haired gray cat who wanders through the hotel lobby."
+
+[[subscribers]]
+line = 7
+place = "MINING OFFICE"
+name = "JAVED RAHMAN"
+role = "mining clerk"
+preference = "checks freight manifests"
+voice_id = "pocket-line-7"
+pet = "Tuli is a speckled goat kept with the mining office caretaker."
+
+[[subscribers]]
+line = 8
+place = "RATAN COLONY"
+name = "PARO SEN"
+role = "colony organizer"
+preference = "knows the night shift workers"
+voice_id = "pocket-line-8"
+pet = "Babu is a small brown parrot that repeats the night shift roster."
+
+[[subscribers]]
+line = 9
+place = "SHAPLA APARTMENTS"
+name = "RAFI ALAM"
+role = "resident"
+preference = "feeds a one-eyed cat"
+voice_id = "pocket-line-9"
+pet = "Mango is a one-eyed orange cat who guards the apartment stairwell."
+
+[[subscribers]]
+line = 10
+place = "OLD MARKET"
+name = "BIKRAM SEN"
+role = "market courier"
+preference = "likes spiced tea"
+voice_id = "pocket-line-10"
+pet = "Lalu is a lean black dog who carries parcels through the market."
+
+[[subscribers]]
+line = 11
+place = "CENTRAL STATION"
+name = "MIRA HALEK"
+role = "station worker"
+preference = "collects old timetables"
+voice_id = "pocket-line-11"
+pet = "Dori is a white-and-gray pigeon trained to return to the station roof."

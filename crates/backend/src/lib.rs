@@ -1,10 +1,13 @@
 use std::collections::VecDeque;
 use std::env;
+use std::fs;
 use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use serde::Deserialize;
 
 use exchange_protocol::{
     CallPhase, CallStatus, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION, DebugCallRecord,
@@ -23,12 +26,149 @@ use exchange_voice_daemon::{
 };
 
 const LINES: u8 = 12;
-const MAX_CALLS: usize = 3;
 const MAX_AUDIO_PACKETS: usize = 4096;
-const RING_GRACE_SECONDS: u64 = 16;
 static DIALOGUE_WORKER: OnceLock<Mutex<Option<PersistentCommandDialogueGenerator>>> =
     OnceLock::new();
 static POCKET_TTS_WORKER: OnceLock<Mutex<Option<PersistentPocketTtsCommand>>> = OnceLock::new();
+
+#[derive(Debug, Clone, Deserialize)]
+struct GameConfig {
+    #[serde(default = "default_subscribers")]
+    subscribers: Vec<SubscriberConfig>,
+    active_calls: usize,
+    patience_min_seconds: u64,
+    patience_max_seconds: u64,
+    ring_grace_seconds: u64,
+    shift_duration_seconds: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SubscriberConfig {
+    line: u8,
+    place: String,
+    name: String,
+    role: String,
+    preference: String,
+    #[serde(default)]
+    voice_id: String,
+    #[serde(default)]
+    pet: String,
+}
+
+fn default_subscribers() -> Vec<SubscriberConfig> {
+    vec![
+        (
+            "RAIL DISPATCH",
+            "NILA SEN",
+            "rail dispatcher",
+            "checks the night timetable",
+        ),
+        (
+            "KHARAD CLINIC",
+            "MIRA DAS",
+            "clinic clerk",
+            "keeps mint tea by the register",
+        ),
+        (
+            "RATION OFFICE",
+            "OMAR SEN",
+            "ration clerk",
+            "issues household allotment cards",
+        ),
+        (
+            "BORDER DEPOT",
+            "CAPTAIN OREN VEY",
+            "depot officer",
+            "stays on duty until dawn",
+        ),
+        (
+            "FOUNDRY APTS",
+            "NERI TAL",
+            "foundry tenant",
+            "repairs small motors after shift",
+        ),
+        (
+            "MINISTRY DESK",
+            "KAVI ORAN",
+            "exchange clerk",
+            "keeps the line register",
+        ),
+        (
+            "HOTEL MERIDIAN",
+            "TOMAS VALE",
+            "hotel clerk",
+            "keeps a camera by the desk",
+        ),
+        (
+            "MINING OFFICE",
+            "JAVED RAHMAN",
+            "mining clerk",
+            "checks freight manifests",
+        ),
+        (
+            "RATAN COLONY",
+            "PARO SEN",
+            "colony organizer",
+            "knows the night shift workers",
+        ),
+        (
+            "SHAPLA APARTMENTS",
+            "RAFI ALAM",
+            "resident",
+            "feeds a one-eyed cat",
+        ),
+        (
+            "OLD MARKET",
+            "BIKRAM SEN",
+            "market courier",
+            "likes spiced tea",
+        ),
+        (
+            "CENTRAL STATION",
+            "MIRA HALEK",
+            "station worker",
+            "collects old timetables",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(line, (place, name, role, preference))| SubscriberConfig {
+        line: line as u8,
+        place: place.into(),
+        name: name.into(),
+        role: role.into(),
+        preference: preference.into(),
+        voice_id: format!("pocket-line-{line}"),
+        pet: format!("Pet {line} is a small mixed-breed dog."),
+    })
+    .collect()
+}
+
+impl Default for GameConfig {
+    fn default() -> Self {
+        Self {
+            subscribers: default_subscribers(),
+            active_calls: 2,
+            patience_min_seconds: 32,
+            patience_max_seconds: 64,
+            ring_grace_seconds: 16,
+            shift_duration_seconds: 90,
+        }
+    }
+}
+
+impl GameConfig {
+    fn load() -> Self {
+        let path = env::var("NN_EXCHANGE_CONFIG").unwrap_or_else(|_| "exchange.toml".into());
+        let Ok(contents) = fs::read_to_string(path) else {
+            return Self::default();
+        };
+        toml::from_str(&contents).unwrap_or_else(|error| {
+            eprintln!("exchange config ignored: {error}");
+            Self::default()
+        })
+    }
+}
 
 #[derive(Debug, Clone)]
 struct ActiveCall {
@@ -44,6 +184,7 @@ struct ActiveCall {
 }
 
 pub struct Backend {
+    config: GameConfig,
     state: StateOutput,
     revision: u64,
     sequence: Option<u64>,
@@ -54,7 +195,7 @@ pub struct Backend {
     call_history: Vec<DebugCallRecord>,
     line_limit: u8,
     call_target: usize,
-    quota: u8,
+    shift_started_elapsed_seconds: u64,
     resolved: u8,
     earned: i32,
     deductions: i32,
@@ -98,11 +239,21 @@ impl Default for Backend {
 }
 
 impl Backend {
+    fn subscriber(&self, line: u8) -> &SubscriberConfig {
+        self.config
+            .subscribers
+            .iter()
+            .find(|subscriber| subscriber.line == line)
+            .unwrap_or(&self.config.subscribers[0])
+    }
+
     pub fn new() -> Self {
         Self::new_exchange()
     }
     pub fn new_exchange() -> Self {
+        let config = GameConfig::load();
         let mut backend = Self {
+            config: config.clone(),
             state: initial_state(),
             revision: 0,
             sequence: None,
@@ -112,8 +263,8 @@ impl Backend {
             calls: Vec::new(),
             call_history: Vec::new(),
             line_limit: LINES,
-            call_target: MAX_CALLS,
-            quota: 4,
+            call_target: config.active_calls,
+            shift_started_elapsed_seconds: 0,
             resolved: 0,
             earned: 0,
             deductions: 0,
@@ -149,8 +300,7 @@ impl Backend {
             last_input_json: None,
             last_output_json: None,
         };
-        backend.quota = backend.random_quota();
-        backend.refill_calls(MAX_CALLS);
+        backend.refill_calls(backend.config.active_calls);
         backend
     }
     pub fn new_simple_hardware_demo() -> Self {
@@ -219,25 +369,31 @@ impl Backend {
     }
 
     fn voice_context(&self, caller: u8, callee: u8) -> ResponseContext {
-        let (name, role, preference) = directory_user(caller);
+        let caller_profile = self.subscriber(caller);
+        let callee_profile = self.subscriber(callee);
         ResponseContext {
             profile: SubscriberProfile {
                 subscriber_id: caller,
-                name: name.into(),
-                voice_id: format!("neutral-line-{caller}"),
-                personality: role.into(),
+                name: caller_profile.name.clone(),
+                voice_id: caller_profile.voice_id.clone(),
+                personality: caller_profile.role.clone(),
                 baseline_goals: vec![format!("Reach {}", simple_place(callee))],
                 initial_perspective: format!("Calling from {}", simple_place(caller)),
                 permitted_actions: vec!["request_routing".into()],
             },
-            caller_place: simple_place(caller).into(),
-            requested_place: simple_place(callee).into(),
-            known_places: (0..LINES).map(simple_place).map(str::to_string).collect(),
-            subscriber_goal: format!("Reach {}", simple_place(callee)),
-            call_premise: format!("Request a connection to {}.", simple_place(callee)),
+            caller_place: caller_profile.place.clone(),
+            requested_place: callee_profile.place.clone(),
+            known_places: self
+                .config
+                .subscribers
+                .iter()
+                .map(|s| s.place.clone())
+                .collect(),
+            subscriber_goal: format!("Reach {}", callee_profile.place),
+            call_premise: format!("Request a connection to {}.", callee_profile.place),
             call_guidance: format!(
-                "Answer the Operator's question naturally. State the requested place when asked. You enjoy {}.",
-                preference
+                "Answer the Operator's question naturally. State the requested place when asked. You enjoy {}. Pet detail: {}",
+                caller_profile.preference, caller_profile.pet
             ),
             permitted_knowledge: vec![],
             recent_conversation: vec![],
@@ -262,7 +418,7 @@ impl Backend {
         self.missed = 0;
         self.failed = 0;
         self.conversation_seconds = 0;
-        self.quota = self.random_quota();
+        self.shift_started_elapsed_seconds = 0;
         self.audio_queue.clear();
         self.audio_call = None;
         self.audio_sequence = 0;
@@ -302,16 +458,16 @@ impl Backend {
         let subscribers = (0..LINES)
             .map(|line| {
                 let active = self.state.line_lamps[line as usize];
-                let (name, role, _) = directory_user(line);
+                let subscriber = self.subscriber(line);
                 DebugSubscriberState {
                     id: format!("line_{line}"),
-                    name: name.into(),
+                    name: subscriber.name.clone(),
                     line: Some(line),
                     status: if active { "off_hook" } else { "on_hook" }.into(),
                     availability: if active { "off_hook" } else { "on_hook" }.into(),
                     pressure: u32::from(active),
                     current_goal: None,
-                    status_flags: vec![role.into()],
+                    status_flags: vec![subscriber.role.clone()],
                 }
             })
             .collect();
@@ -419,6 +575,12 @@ impl Backend {
             self.refill_calls(self.call_target);
         }
         self.expire_calls();
+        if self.state.shift.phase == ShiftPhase::Active
+            && self.elapsed_seconds() as u64
+                >= self.shift_started_elapsed_seconds + self.config.shift_duration_seconds
+        {
+            self.settle_shift();
+        }
         let selected = directory_id(input.directory_digits);
         let focused = operator_line(&input.cord_topology)
             .or_else(|| self.state.call.as_ref().map(|call| call.caller_line));
@@ -533,8 +695,8 @@ impl Backend {
             self.next_voice_turn_id = self.next_voice_turn_id.wrapping_add(1);
         }
         let voice_id = caller
-            .map(|line| format!("pocket-line-{line}"))
-            .unwrap_or_else(|| "pocket-line-0".into());
+            .map(|line| self.subscriber(line).voice_id.clone())
+            .unwrap_or_else(|| self.config.subscribers[0].voice_id.clone());
         self.pending_voice_control = Some(VoiceControlMessage {
             protocol_version: VOICE_PROTOCOL_VERSION,
             session_id: 1,
@@ -653,7 +815,7 @@ impl Backend {
             CallPhase::Ringing if !ring && !direct_route => {
                 if call
                     .ring_started_at
-                    .is_none_or(|started| now > started + RING_GRACE_SECONDS)
+                    .is_none_or(|started| now > started + self.config.ring_grace_seconds)
                 {
                     call.phase = CallPhase::AwaitingRouting;
                     call.ring_started_at = None;
@@ -749,19 +911,37 @@ impl Backend {
         std::mem::take(&mut self.pending_tts)
     }
 
-    fn generate_call_audio(caller: u8, callee: u8) -> Result<Vec<i16>, VoiceError> {
+    fn generate_call_audio(
+        config: GameConfig,
+        caller: u8,
+        callee: u8,
+    ) -> Result<Vec<i16>, VoiceError> {
+        let caller_profile = config
+            .subscribers
+            .iter()
+            .find(|subscriber| subscriber.line == caller)
+            .ok_or_else(|| {
+                VoiceError::new("subscriber_not_configured", "caller is not configured")
+            })?;
+        let callee_profile = config
+            .subscribers
+            .iter()
+            .find(|subscriber| subscriber.line == callee)
+            .ok_or_else(|| {
+                VoiceError::new("subscriber_not_configured", "callee is not configured")
+            })?;
         let text = format!(
-            "{}: Please connect me to {}. {}: Of course, I am at {}. {}: We can talk about {} while we wait.",
-            directory_user(caller).0,
-            simple_place(callee),
-            directory_user(callee).0,
-            simple_place(callee),
-            directory_user(caller).0,
-            directory_user(caller).2,
+            "{}: Please connect me to {}. {}: Of course, I am at {}. {}: We can talk about {} while we wait. My pet is {}.",
+            caller_profile.name,
+            callee_profile.place,
+            callee_profile.name,
+            callee_profile.place,
+            caller_profile.name,
+            caller_profile.preference,
+            caller_profile.pet,
         );
-        let samples = with_persistent_pocket_tts(|tts| {
-            tts.synthesize(&format!("pocket-line-{caller}"), &text)
-        })?;
+        let samples =
+            with_persistent_pocket_tts(|tts| tts.synthesize(&caller_profile.voice_id, &text))?;
         if samples.is_empty() {
             return Err(VoiceError::new(
                 "tts_empty_output",
@@ -806,11 +986,7 @@ impl Backend {
             self.money += seconds as i32;
         }
         self.state.shift.completed_routings = self.completed;
-        if self.resolved >= self.quota {
-            self.settle_shift();
-        } else {
-            self.refill_calls(self.call_target);
-        }
+        self.refill_calls(self.call_target);
     }
 
     fn fail_call(&mut self, index: usize, reason: &str) {
@@ -827,11 +1003,7 @@ impl Backend {
         self.failed += 1;
         self.deductions += 2;
         self.money -= 2;
-        if self.resolved >= self.quota {
-            self.settle_shift();
-        } else {
-            self.refill_calls(self.call_target);
-        }
+        self.refill_calls(self.call_target);
     }
 
     fn fail_generated_call(&mut self, caller: u8, callee: u8) {
@@ -867,7 +1039,7 @@ impl Backend {
                 requested_callee_line: call.callee,
                 final_phase: call.phase,
                 outcome: "shift_ended".into(),
-                reason: "shift quota reached before this Call resolved".into(),
+                reason: "shift duration ended before this Call resolved".into(),
                 finished_elapsed_seconds,
             });
         }
@@ -903,6 +1075,7 @@ impl Backend {
     }
 
     fn refill_calls(&mut self, count: usize) {
+        let starting_shift = self.state.shift.phase != ShiftPhase::Active;
         if self.state.shift.phase == ShiftPhase::Settled {
             self.state.shift.number = self.state.shift.number.saturating_add(1);
             self.state.clock.shift = self.state.shift.number;
@@ -915,7 +1088,9 @@ impl Backend {
             self.earned = 0;
             self.deductions = 0;
             self.conversation_seconds = 0;
-            self.quota = self.random_quota();
+        }
+        if starting_shift {
+            self.shift_started_elapsed_seconds = self.elapsed_seconds() as u64;
         }
         while self.calls.len() < count.min(self.call_target) && self.state.shift.number <= 3 {
             let (caller, callee) = self.next_call();
@@ -958,11 +1133,8 @@ impl Backend {
     }
     fn random_patience(&mut self) -> u64 {
         self.rng = self.rng.wrapping_mul(6364136223846793005).wrapping_add(1);
-        16 + self.rng % 17
-    }
-    fn random_quota(&mut self) -> u8 {
-        self.rng = self.rng.wrapping_mul(6364136223846793005).wrapping_add(1);
-        4 + (self.rng % 3) as u8
+        self.config.patience_min_seconds
+            + self.rng % (self.config.patience_max_seconds - self.config.patience_min_seconds + 1)
     }
     fn elapsed_seconds(&self) -> u32 {
         (self.clock_started.elapsed().as_secs() + self.debug_elapsed).min(u32::MAX as u64) as u32
@@ -1676,17 +1848,18 @@ pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) ->
             }
             Err(error) => return Err(io::Error::new(ErrorKind::InvalidData, error.to_string())),
         };
-        let (response, pending_tts) = {
+        let (response, pending_tts, config) = {
             let mut state = backend
                 .lock()
                 .map_err(|_| io::Error::other("backend state lock poisoned"))?;
             let response = state.apply_input_message(request);
-            (response, state.take_pending_tts())
+            (response, state.take_pending_tts(), state.config.clone())
         };
         for (caller, callee) in pending_tts {
             let worker_backend = Arc::clone(&backend);
+            let call_config = config.clone();
             thread::spawn(move || {
-                if let Ok(samples) = Backend::generate_call_audio(caller, callee) {
+                if let Ok(samples) = Backend::generate_call_audio(call_config, caller, callee) {
                     if let Ok(mut state) = worker_backend.lock() {
                         state.install_generated_audio(caller, callee, samples);
                     }

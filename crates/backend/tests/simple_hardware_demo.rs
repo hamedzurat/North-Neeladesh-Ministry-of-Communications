@@ -224,7 +224,7 @@ fn simple_hardware_failure_prints_a_cost() {
     assert_eq!(waiting.output.calls.len(), 2);
     backend.apply_debug_command(exchange_protocol::DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
-        command: DebugCommand::AdvanceTime { seconds: 31 },
+        command: DebugCommand::AdvanceTime { seconds: 65 },
     });
     let failed = backend.apply_input_message(input(&backend, 2, vec![], 1, [0; 4]));
 

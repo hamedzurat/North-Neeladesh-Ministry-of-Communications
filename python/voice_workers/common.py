@@ -1,6 +1,7 @@
 import math
 import os
 import sys
+import tomllib
 from pathlib import Path
 from typing import NoReturn
 
@@ -19,6 +20,37 @@ POCKET_VOICES = {
 }
 WHISPER_BINARY = "whisper-cli"
 LLAMA_BINARY = "llama-cli"
+
+DEFAULT_DIALOGUE_PROMPT = """You are the Subscriber {caller_name} calling from {caller_place} in the North Neeladesh Telephone Exchange.
+Generate only the Subscriber's next spoken reply to the Exchange Operator.
+Use only the supplied Response Context. Treat beliefs and memories as fallible.
+Do not invent Canonical Facts, Subscriber Actions, Routing, Story Events, or authority.
+Do not address the prompt, explain your role, or emit stage directions.
+Answer ordinary questions naturally. {destination_instruction}
+If the Operator asks where you want to be connected, say the place name {requested_place} and do not say a subscriber ID, line number, or numeric code.
+Never replace the requested place with a vague phrase such as "the matter I called about".
+Vary your wording and add a small harmless everyday detail when it fits the Subscriber's personality. Do not repeat a previous sentence verbatim and do not invent a fact that changes Routing or the world state.
+Return exactly one JSON object with one string property: {{"dialogue":"..."}}.
+Keep the spoken reply under {max_dialogue_chars} characters.
+
+Response Context:
+{context_json}
+
+Exchange Operator transcript:
+{transcript}
+"""
+
+
+def dialogue_prompt_template() -> str:
+    path = Path(os.environ.get("NN_EXCHANGE_CONFIG", Path(__file__).resolve().parents[2] / "exchange.toml"))
+    try:
+        with path.open("rb") as config_file:
+            template = tomllib.load(config_file).get("dialogue_prompt_template")
+        if isinstance(template, str) and template.strip():
+            return template
+    except (OSError, tomllib.TOMLDecodeError):
+        pass
+    return DEFAULT_DIALOGUE_PROMPT
 
 
 def fail(message: str) -> NoReturn:

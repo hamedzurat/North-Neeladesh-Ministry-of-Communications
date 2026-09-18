@@ -9,6 +9,8 @@ exchange-protocol = { path = "../protocol" }
 exchange-voice-daemon = { path = "../voice-daemon" }
 thiserror.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+toml.workspace = true
 
 [[bin]]
 name = "exchange-backend"

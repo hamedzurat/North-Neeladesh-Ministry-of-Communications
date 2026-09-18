@@ -18,6 +18,9 @@ Install or make available:
 
 Run all commands from the repository root.
 
+Gameplay tuning and Subscriber profiles live in [`exchange.toml`](exchange.toml).
+Set `NN_EXCHANGE_CONFIG` to use another configuration file.
+
 ## First Check
 
 Run the automated checks before starting the GUI:
