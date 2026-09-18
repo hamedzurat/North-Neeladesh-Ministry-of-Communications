@@ -2866,6 +2866,7 @@ impl Backend {
     ) -> Option<(
         VoiceInputAudioMessage,
         String,
+        bool,
         u8,
         Option<u8>,
         Vec<String>,
@@ -2891,6 +2892,7 @@ impl Backend {
         Some((
             input,
             self.voice_id.clone().unwrap_or_else(|| "Ryan".to_string()),
+            self.simple_hardware_mode,
             self.voice_subscriber_line.unwrap_or(0),
             self.voice_callee_line,
             self.operator_knowledge.clone(),
@@ -4122,6 +4124,7 @@ pub fn serve_voice(
         if let Some((
             input,
             voice_id,
+            neutral_mode,
             subscriber_line,
             callee_line,
             operator_knowledge,
@@ -4134,6 +4137,7 @@ pub fn serve_voice(
                 run_voice_worker(
                     input,
                     voice_id,
+                    neutral_mode,
                     subscriber_line,
                     callee_line,
                     operator_knowledge,
@@ -4465,6 +4469,7 @@ impl VoiceOutput for BackendVoiceOutput {
 fn run_voice_worker(
     input: VoiceInputAudioMessage,
     voice_id: String,
+    neutral_mode: bool,
     subscriber_line: u8,
     callee_line: Option<u8>,
     operator_knowledge: Vec<String>,
@@ -4489,6 +4494,7 @@ fn run_voice_worker(
         operator_knowledge,
         output,
         tts_engine,
+        neutral_mode,
     );
     if let Err(error) = result {
         let mut backend = backend
@@ -4539,6 +4545,7 @@ fn run_voice_worker_session(
     operator_knowledge: Vec<String>,
     output: Box<dyn VoiceOutput>,
     tts_engine: TtsEngine,
+    neutral_mode: bool,
 ) -> Result<(), VoiceError> {
     let stt = CommandSpec::from_words(&env::var("NN_VOICE_STT_COMMAND").map_err(|_| {
         VoiceError::new(
@@ -4576,7 +4583,7 @@ fn run_voice_worker_session(
         } else {
             Box::new(CommandDialogueGenerator::new(dialogue))
         };
-    let response_context = if voice_id.starts_with("neutral-line-") {
+    let response_context = if neutral_mode {
         neutral_response_context(subscriber_line, callee_line, voice_id, operator_knowledge)
     } else {
         north_response_context(subscriber_line, callee_line, voice_id, operator_knowledge)
@@ -5173,7 +5180,7 @@ mod tests {
             assert!(state.apply_voice_datagram(
                 &exchange_protocol::encode_voice_input_audio(&input).unwrap()
             ));
-            let (_, _, _, _, _, generation, conversation_id) = state.take_voice_input().unwrap();
+            let (_, _, _, _, _, _, generation, conversation_id) = state.take_voice_input().unwrap();
             drop(state);
 
             let mut output = BackendVoiceOutput {
