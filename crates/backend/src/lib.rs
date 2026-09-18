@@ -921,6 +921,7 @@ impl Backend {
         call.phase = CallPhase::Connected;
         call.connected_at = Some(Instant::now());
         call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
+        self.sync_call_state();
         self.audio_call = Some((caller, callee));
         let sequence = self.audio_sequence;
         let timestamp = self.audio_timestamp;
@@ -1053,6 +1054,28 @@ impl Backend {
         {
             self.fail_call(index, "tts_generation_failed");
         }
+    }
+
+    fn sync_call_state(&mut self) {
+        let focused_caller = self.state.call.as_ref().map(|call| call.caller_line);
+        self.state.calls = self
+            .calls
+            .iter()
+            .map(|call| CallStatus {
+                caller_line: call.caller,
+                requested_callee_line: call.callee,
+                phase: call.phase.clone(),
+            })
+            .collect();
+        self.state.call = focused_caller.and_then(|caller| {
+            self.state
+                .calls
+                .iter()
+                .find(|call| call.caller_line == caller)
+                .cloned()
+        });
+        self.state.line_lamps = lamps(&self.calls);
+        self.state.shift.active_call_count = self.calls.len() as u8;
     }
 
     fn expire_calls(&mut self) {
