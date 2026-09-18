@@ -2200,18 +2200,8 @@ impl Backend {
         base + self.simple_rng_state % span
     }
 
-    fn simple_conversation_seconds(caller: u8, callee: u8) -> u64 {
-        let dialogue = Self::simple_conversation_dialogue(caller, callee);
-        let _dialogue_length = dialogue.len();
+    fn simple_conversation_seconds() -> u64 {
         2
-    }
-
-    fn simple_conversation_dialogue(caller: u8, callee: u8) -> String {
-        let (caller_name, _, _) = simple_directory_user(caller);
-        let destination = simple_place_for_line(callee);
-        format!(
-            "{caller_name}: I am calling about an ordinary matter.\n{caller_name}: Please connect me to {destination}."
-        )
     }
 
     fn simple_connected_callers_ready(&self) -> Vec<u8> {
@@ -2221,11 +2211,7 @@ impl Backend {
             .filter(|call| {
                 call.phase == exchange_protocol::CallPhase::Connected
                     && self.simple_connected_at[call.caller_line as usize].is_some_and(|started| {
-                        started.elapsed().as_secs()
-                            >= Self::simple_conversation_seconds(
-                                call.caller_line,
-                                call.requested_callee_line,
-                            )
+                        started.elapsed().as_secs() >= Self::simple_conversation_seconds()
                     })
             })
             .map(|call| call.caller_line)
@@ -2279,18 +2265,7 @@ impl Backend {
             .iter()
             .filter(|line| {
                 self.simple_connected_at[**line as usize].is_some_and(|started| {
-                    let duration = self
-                        .state
-                        .calls
-                        .iter()
-                        .find(|call| call.caller_line == **line)
-                        .map_or(2, |call| {
-                            Self::simple_conversation_seconds(
-                                call.caller_line,
-                                call.requested_callee_line,
-                            )
-                        });
-                    started.elapsed().as_secs() >= duration
+                    started.elapsed().as_secs() >= Self::simple_conversation_seconds()
                 })
             })
             .count() as u8;
@@ -2423,16 +2398,7 @@ impl Backend {
                 transition.routing_receipt.take()
             };
             if newly_connected {
-                let duration = transition
-                    .calls
-                    .iter()
-                    .find(|call| call.phase == exchange_protocol::CallPhase::Connected)
-                    .map_or(2, |call| {
-                        Self::simple_conversation_seconds(
-                            call.caller_line,
-                            call.requested_callee_line,
-                        )
-                    });
+                let duration = Self::simple_conversation_seconds();
                 self.simple_conversation_seconds =
                     self.simple_conversation_seconds.saturating_add(duration);
                 let earnings = duration.min(u64::from(u32::MAX)) as u32;
