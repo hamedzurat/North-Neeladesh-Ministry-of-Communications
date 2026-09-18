@@ -325,7 +325,7 @@ impl Backend {
                 phase: call.phase.clone(),
             })
             .collect();
-        backend.state.line_lamps = lamps(&backend.calls);
+        backend.state.line_lamps = lamps(&backend.calls, -1);
         backend.state.shift.active_call_count = backend.calls.len() as u8;
         backend
     }
@@ -455,7 +455,7 @@ impl Backend {
                 phase: call.phase.clone(),
             })
             .collect();
-        self.state.line_lamps = lamps(&self.calls);
+        self.state.line_lamps = lamps(&self.calls, -1);
         self.state.shift.active_call_count = self.calls.len() as u8;
         self.state.game_phase = GamePhase::Shift;
     }
@@ -670,7 +670,7 @@ impl Backend {
                 .find(|c| c.caller_line == line)
                 .cloned()
         });
-        self.state.line_lamps = lamps(&self.calls);
+        self.state.line_lamps = lamps(&self.calls, input.ring_line);
         self.state.shift.active_call_count = self.calls.len() as u8;
         self.state.tap_bridge_monitoring = tap_monitor(input, &self.state);
         self.state.tap_bridge_audio_active = self.state.tap_bridge_monitoring.is_some();
@@ -758,12 +758,7 @@ impl Backend {
         let now = self.elapsed_seconds() as u64;
         let call = &mut self.calls[index];
         let operator = has_cord(input, PortId::Subscriber(line), PortId::Operator);
-        let ring = input.ring
-            && has_cord(
-                input,
-                PortId::Subscriber(call.callee),
-                PortId::RingGenerator,
-            );
+        let ring = input.ring_line == i16::from(call.callee);
         let direct_route = direct(&input.cord_topology, call.caller, call.callee);
         match call.phase {
             CallPhase::Waiting if operator => {
@@ -812,7 +807,7 @@ impl Backend {
                 } else {
                     error = Some((
                         "premature_direct_routing",
-                        "keep ringing until the destination has been rung for two seconds",
+                        "ring the requested destination before connecting the Caller",
                     ));
                 }
             }
@@ -1043,7 +1038,7 @@ impl Backend {
                 .find(|call| call.caller_line == caller)
                 .cloned()
         });
-        self.state.line_lamps = lamps(&self.calls);
+        self.state.line_lamps = lamps(&self.calls, -1);
         self.state.shift.active_call_count = self.calls.len() as u8;
     }
 
@@ -1054,11 +1049,7 @@ impl Backend {
             .enumerate()
             .filter(|(_, call)| {
                 call.phase == CallPhase::Ringing
-                    && !has_cord(
-                        input,
-                        PortId::Subscriber(call.callee),
-                        PortId::RingGenerator,
-                    )
+                    && input.ring_line < 0
                     && call.ring_started_at.is_some()
                     && valid_direct_circuit(input, call.caller, call.callee)
             })
@@ -1420,7 +1411,7 @@ fn has_cord(input: &InputState, a: PortId, b: PortId) -> bool {
 }
 fn valid_ringing_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
     has_cord(input, PortId::Subscriber(caller), PortId::Operator)
-        && has_cord(input, PortId::Subscriber(callee), PortId::RingGenerator)
+        && input.ring_line == i16::from(callee)
 }
 fn valid_direct_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
     direct(&input.cord_topology, caller, callee)
@@ -1447,7 +1438,7 @@ fn direct(cords: &[CordConnection], caller: u8, callee: u8) -> bool {
             cord_topology: cords.to_vec(),
             held_controls: HeldControls::default(),
             directory_digits: [0; 4],
-            ring: false,
+            ring_line: -1,
             tuning: TuningState::default(),
             debug: Default::default(),
         },
@@ -1533,8 +1524,11 @@ fn with_persistent_dialogue<T>(
     }
     result
 }
-fn lamps(calls: &[ActiveCall]) -> [bool; 12] {
+fn lamps(calls: &[ActiveCall], ring_line: i16) -> [bool; 12] {
     let mut result = [false; 12];
+    if (0..12).contains(&ring_line) {
+        result[ring_line as usize] = true;
+    }
     for c in calls {
         if !matches!(
             c.phase,

@@ -14,9 +14,13 @@ fn input(
     directory_line: u8,
     _crank: [u64; 4],
 ) -> InputMessage {
-    let ring = cords
+    let ring_line = cords
         .iter()
-        .any(|cord| cord.first == PortId::RingGenerator || cord.second == PortId::RingGenerator);
+        .find_map(|cord| match (&cord.first, &cord.second) {
+            (PortId::RingGenerator, PortId::Subscriber(line))
+            | (PortId::Subscriber(line), PortId::RingGenerator) => Some(i16::from(*line)),
+            _ => None,
+        });
     InputMessage {
         protocol_version: PROTOCOL_VERSION,
         input_sequence: sequence,
@@ -28,7 +32,7 @@ fn input(
                 ..HeldControls::default()
             },
             directory_digits: [0, 0, 0, directory_line],
-            ring,
+            ring_line: ring_line.unwrap_or(-1),
             tuning: TuningState::default(),
             debug: InputDebug::default(),
         },

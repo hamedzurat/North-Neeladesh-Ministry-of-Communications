@@ -14,7 +14,7 @@ input_to_cbor :: proc(input: Input_Intent, input_sequence, expected_state_revisi
 		entry("cord_topology", cords_to_cbor(input.cord_topology[:])),
 		entry("held_controls", held_to_cbor(input.held_controls)),
 		entry("directory_digits", digits_to_cbor(input.directory_digits)),
-		entry("ring", input.ring),
+		entry("ring_line", input.ring_line),
 		entry("tuning", cbor_map({entry("coarse", input.tuning.coarse), entry("fine", input.tuning.fine)})),
 		entry("debug", debug),
 	})

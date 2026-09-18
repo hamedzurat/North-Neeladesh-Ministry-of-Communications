@@ -38,7 +38,7 @@ Input_Intent :: struct {
 	cord_topology: [dynamic]Cord,
 	held_controls: Held,
 	directory_digits: [4]u8,
-	ring: bool,
+	ring_line: i16,
 	tuning: Tuning,
 	debug: Input_Debug,
 }

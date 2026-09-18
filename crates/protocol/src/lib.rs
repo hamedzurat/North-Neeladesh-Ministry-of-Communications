@@ -128,7 +128,7 @@ pub struct InputState {
     pub cord_topology: Vec<CordConnection>,
     pub held_controls: HeldControls,
     pub directory_digits: [u8; 4],
-    pub ring: bool,
+    pub ring_line: i16,
     pub tuning: TuningState,
     pub debug: InputDebug,
 }

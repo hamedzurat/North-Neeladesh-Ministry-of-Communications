@@ -32,11 +32,16 @@ ref_remove_cord :: proc(app: ^Input_State, index: int) {
 	resize(&app.intent.cord_topology, len(app.intent.cord_topology) - 1)
 }
 
-ring_generator_connected :: proc(cords: []Cord) -> bool {
+ring_generator_line :: proc(cords: []Cord) -> i16 {
 	for cord in cords {
-		if cord.first.kind == .Ring_Generator || cord.second.kind == .Ring_Generator do return true
+		if cord.first.kind == .Ring_Generator && cord.second.kind == .Subscriber {
+			return i16(cord.second.index)
+		}
+		if cord.second.kind == .Ring_Generator && cord.first.kind == .Subscriber {
+			return i16(cord.first.index)
+		}
 	}
-	return false
+	return -1
 }
 
 ref_handle_cords :: proc(app: ^Input_State, jacks: ^[ENDPOINT_COUNT]rl.Vector2) {
@@ -73,7 +78,7 @@ ref_handle_cords :: proc(app: ^Input_State, jacks: ^[ENDPOINT_COUNT]rl.Vector2) 
 			}
 		}
 	}
-	app.intent.ring = ring_generator_connected(app.intent.cord_topology[:])
+	app.intent.ring_line = ring_generator_line(app.intent.cord_topology[:])
 }
 
 ref_action_slot :: proc(held: ^Held, index: int) -> ^bool {

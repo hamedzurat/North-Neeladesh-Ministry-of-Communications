@@ -207,10 +207,16 @@ fn physical_message(
 ) -> InputMessage {
     let mut message = message(sequence, revision, [0, 0, 0, 2]);
     message.input.cord_topology = cord_topology;
-    message.input.ring =
-        message.input.cord_topology.iter().any(|cord| {
-            cord.first == PortId::RingGenerator || cord.second == PortId::RingGenerator
-        });
+    message.input.ring_line = message
+        .input
+        .cord_topology
+        .iter()
+        .find_map(|cord| match (&cord.first, &cord.second) {
+            (PortId::RingGenerator, PortId::Subscriber(line))
+            | (PortId::Subscriber(line), PortId::RingGenerator) => Some(i16::from(*line)),
+            _ => None,
+        })
+        .unwrap_or(-1);
     message
 }
 
@@ -226,7 +232,7 @@ fn message(sequence: u64, revision: u64, digits: [u8; 4]) -> InputMessage {
                 ..HeldControls::default()
             },
             directory_digits: digits,
-            ring: false,
+            ring_line: -1,
             tuning: TuningState::default(),
             debug: InputDebug {
                 firmware_version: Some("harness".to_string()),
