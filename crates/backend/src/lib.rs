@@ -148,6 +148,7 @@ pub struct Backend {
     simple_rng_state: u64,
     simple_pending_calls: VecDeque<(u8, u8)>,
     simple_connected_at: [Option<Instant>; 12],
+    simple_audio_duration: [Option<u64>; 12],
     simple_call_deadlines: [Option<u64>; 12],
     simple_call_interacted: [bool; 12],
     simple_shift_quota: u8,
@@ -341,6 +342,7 @@ impl Backend {
             simple_rng_state: 0x4e45_454c_4144_4553,
             simple_pending_calls: VecDeque::new(),
             simple_connected_at: [None; 12],
+            simple_audio_duration: [None; 12],
             simple_call_deadlines: [None; 12],
             simple_call_interacted: [false; 12],
             simple_shift_quota: 4 + (0x4e45_454c_4144_4553_u64 as u8 % 3),
@@ -1129,6 +1131,7 @@ impl Backend {
         self.tap_bridge_listen_frames = 0;
         self.simple_pending_calls.clear();
         self.simple_connected_at = [None; 12];
+        self.simple_audio_duration = [None; 12];
         self.simple_call_deadlines = [None; 12];
         self.simple_call_interacted = [false; 12];
         self.simple_shift_quota = 4;
@@ -2218,6 +2221,10 @@ impl Backend {
         2
     }
 
+    fn simple_duration_for_line(&self, line: u8) -> u64 {
+        self.simple_audio_duration[line as usize].unwrap_or_else(Self::simple_conversation_seconds)
+    }
+
     fn simple_connected_callers_ready(&self) -> Vec<u8> {
         self.state
             .calls
@@ -2225,7 +2232,8 @@ impl Backend {
             .filter(|call| {
                 call.phase == exchange_protocol::CallPhase::Connected
                     && self.simple_connected_at[call.caller_line as usize].is_some_and(|started| {
-                        started.elapsed().as_secs() >= Self::simple_conversation_seconds()
+                        started.elapsed().as_secs()
+                            >= self.simple_duration_for_line(call.caller_line)
                     })
             })
             .map(|call| call.caller_line)
@@ -2279,7 +2287,7 @@ impl Backend {
             .iter()
             .filter(|line| {
                 self.simple_connected_at[**line as usize].is_some_and(|started| {
-                    started.elapsed().as_secs() >= Self::simple_conversation_seconds()
+                    started.elapsed().as_secs() >= self.simple_duration_for_line(**line)
                 })
             })
             .count() as u8;
@@ -2294,6 +2302,23 @@ impl Backend {
             self.shift_cost = self
                 .shift_cost
                 .saturating_add(u32::from(missed) * 2 + u32::from(failed) * 3);
+            let earnings = previous_connected
+                .iter()
+                .filter(|line| {
+                    self.simple_connected_at[**line as usize].is_some_and(|started| {
+                        started.elapsed().as_secs() >= self.simple_duration_for_line(**line)
+                    })
+                })
+                .map(|line| {
+                    self.simple_duration_for_line(*line)
+                        .min(u64::from(u32::MAX)) as u32
+                })
+                .sum::<u32>();
+            self.shift_earned = self.shift_earned.saturating_add(earnings);
+            self.simple_money += i32::try_from(earnings).unwrap_or(i32::MAX);
+            self.simple_conversation_seconds = self
+                .simple_conversation_seconds
+                .saturating_add(u64::from(earnings));
         }
 
         transition.calls.retain(|call| {
@@ -2420,12 +2445,6 @@ impl Backend {
                     self.pending_neutral_conversation =
                         Some((call.caller_line, call.requested_callee_line));
                 }
-                let duration = Self::simple_conversation_seconds();
-                self.simple_conversation_seconds =
-                    self.simple_conversation_seconds.saturating_add(duration);
-                let earnings = duration.min(u64::from(u32::MAX)) as u32;
-                self.shift_earned = self.shift_earned.saturating_add(earnings);
-                self.simple_money += i32::try_from(earnings).unwrap_or(i32::MAX);
             }
         }
         transition.line_lamps = lamps_for_calls(&transition.calls);
@@ -4522,13 +4541,32 @@ fn generate_neutral_conversation_audio(
     let Ok(samples) = tts.synthesize(&format!("neutral-line-{caller_line}"), &text) else {
         return;
     };
+    let duration_seconds = (samples.len() as u64)
+        .saturating_add(u64::from(VOICE_AUDIO_SAMPLE_RATE) - 1)
+        / u64::from(VOICE_AUDIO_SAMPLE_RATE);
+    let (sequence_start, timestamp_start) = if let Ok(mut backend) = backend.lock() {
+        backend.simple_audio_duration[caller_line as usize] = Some(duration_seconds.max(1));
+        let sequence = backend.neutral_audio_sequence;
+        let timestamp = backend.neutral_audio_timestamp;
+        backend.neutral_audio_sequence = sequence.wrapping_add(
+            samples
+                .len()
+                .div_ceil(VOICE_AUDIO_PACKET_SAMPLES)
+                .min(usize::from(u16::MAX)) as u16,
+        );
+        backend.neutral_audio_timestamp = timestamp.wrapping_add(samples.len() as u32);
+        (sequence, timestamp)
+    } else {
+        return;
+    };
     let mut packets = Vec::new();
     for (index, chunk) in samples.chunks(VOICE_AUDIO_PACKET_SAMPLES).enumerate() {
         packets.push(
             RtpL16Packet {
                 marker: index == 0,
-                sequence: index as u16,
-                timestamp: (index * VOICE_AUDIO_PACKET_SAMPLES) as u32,
+                sequence: sequence_start.wrapping_add(index as u16),
+                timestamp: timestamp_start
+                    .wrapping_add((index * VOICE_AUDIO_PACKET_SAMPLES) as u32),
                 ssrc: 0x4e45_5554,
                 samples: chunk.to_vec(),
             }
