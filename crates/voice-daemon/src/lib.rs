@@ -1312,7 +1312,17 @@ impl PersistentPocketTtsCommand {
 
 impl TextToSpeech for PersistentPocketTtsCommand {
     fn synthesize(&mut self, voice_id: &str, text: &str) -> Result<Vec<i16>, VoiceError> {
-        self.inner.synthesize(voice_id, text)
+        let mut output = Vec::new();
+        for chunk in pocket_tts_chunks(text) {
+            output.extend(self.inner.synthesize(voice_id, &chunk)?);
+        }
+        if output.is_empty() {
+            return Err(VoiceError::new(
+                "tts_empty_output",
+                "PocketTTS returned no audio samples",
+            ));
+        }
+        Ok(output)
     }
 
     fn synthesize_stream(
@@ -1321,8 +1331,40 @@ impl TextToSpeech for PersistentPocketTtsCommand {
         text: &str,
         emit: &mut dyn FnMut(&[i16]) -> Result<(), VoiceError>,
     ) -> Result<usize, VoiceError> {
-        self.inner.synthesize_stream(voice_id, text, emit)
+        let mut emitted = 0;
+        for chunk in pocket_tts_chunks(text) {
+            emitted += self.inner.synthesize_stream(voice_id, &chunk, emit)?;
+        }
+        if emitted == 0 {
+            return Err(VoiceError::new(
+                "tts_empty_output",
+                "PocketTTS returned no audio samples",
+            ));
+        }
+        Ok(emitted)
     }
+}
+
+const POCKET_TTS_MAX_CHARS: usize = 96;
+
+fn pocket_tts_chunks(text: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let would_exceed = !current.is_empty()
+            && current.chars().count() + 1 + word.chars().count() > POCKET_TTS_MAX_CHARS;
+        if would_exceed {
+            chunks.push(std::mem::take(&mut current));
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
 }
 
 impl Drop for PersistentQwen3TtsCommand {
@@ -2143,6 +2185,20 @@ mod tests {
     use exchange_protocol::RtpL16Packet;
 
     struct FakeCapture;
+
+    #[test]
+    fn pocket_tts_chunks_long_replies_without_losing_words() {
+        let text = "I'd like to be connected to SHAPLA APARTMENTS. By the way, I keep a camera by my desk at the hotel—just in case someone needs to see the room during a late-night check-in.";
+        let chunks = pocket_tts_chunks(text);
+        assert!(chunks.len() > 1);
+        assert!(
+            chunks
+                .iter()
+                .all(|chunk| chunk.chars().count() <= POCKET_TTS_MAX_CHARS)
+        );
+        assert_eq!(chunks.join(" "), text);
+    }
+
     impl MicrophoneCapture for FakeCapture {
         fn start(&mut self) -> Result<(), VoiceError> {
             Ok(())
