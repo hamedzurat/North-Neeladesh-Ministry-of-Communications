@@ -1540,7 +1540,10 @@ fn lamps(calls: &[ActiveCall]) -> [bool; 12] {
             CallPhase::Missed | CallPhase::Failed | CallPhase::Completed
         ) {
             result[c.caller as usize] = true;
-            if matches!(c.phase, CallPhase::Ringing | CallPhase::Connected) {
+            if matches!(
+                c.phase,
+                CallPhase::Ringing | CallPhase::Held | CallPhase::Connected
+            ) {
                 result[c.callee as usize] = true;
             }
         }
