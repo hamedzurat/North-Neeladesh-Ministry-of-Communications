@@ -123,7 +123,19 @@ impl Backend {
         self.missed = 0;
         self.failed = 0;
         self.conversation_seconds = 0;
-        self.refill_calls(MAX_CALLS);
+        self.refill_calls(self.call_target);
+        self.state.calls = self
+            .calls
+            .iter()
+            .map(|call| CallStatus {
+                caller_line: call.caller,
+                requested_callee_line: call.callee,
+                phase: call.phase.clone(),
+            })
+            .collect();
+        self.state.line_lamps = lamps(&self.calls);
+        self.state.shift.active_call_count = self.calls.len() as u8;
+        self.state.game_phase = GamePhase::Shift;
     }
 
     pub fn debug_snapshot(&self) -> DebugSnapshot {
@@ -236,6 +248,12 @@ impl Backend {
         self.sequence = Some(message.input_sequence);
         let input = &message.input;
         self.debug_elapsed = self.debug_elapsed.saturating_add(0);
+        if self.state.shift.phase == ShiftPhase::Settled
+            && self.state.shift.number < 3
+            && self.state.game_phase != GamePhase::Ended
+        {
+            self.refill_calls(self.call_target);
+        }
         self.expire_calls();
         let selected = directory_id(input.directory_digits);
         let focused = operator_line(&input.cord_topology)
@@ -372,6 +390,7 @@ impl Backend {
             self.earned += 2;
             self.money += 2;
         }
+        self.state.shift.completed_routings = self.completed;
         if self.resolved >= self.quota {
             self.settle_shift();
         } else {
@@ -382,12 +401,15 @@ impl Backend {
 
     fn expire_calls(&mut self) {
         let now = self.elapsed_seconds() as u64;
-        let expired = self
+        while let Some(index) = self
             .calls
             .iter()
-            .position(|c| c.deadline <= now && c.phase != CallPhase::Connected);
-        if let Some(index) = expired {
+            .position(|c| c.deadline <= now && c.phase != CallPhase::Connected)
+        {
             self.finish_call(index, true);
+            if self.state.game_phase == GamePhase::Ended {
+                break;
+            }
         }
     }
 
@@ -426,6 +448,7 @@ impl Backend {
     fn refill_calls(&mut self, count: usize) {
         if self.state.shift.phase == ShiftPhase::Settled {
             self.state.shift.number = self.state.shift.number.saturating_add(1);
+            self.state.clock.shift = self.state.shift.number;
             self.state.shift.phase = ShiftPhase::Ready;
             self.resolved = 0;
             self.completed = 0;
