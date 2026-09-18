@@ -571,14 +571,8 @@ impl Backend {
         );
         let direct_route = direct(&input.cord_topology, call.caller, call.callee);
         match call.phase {
-            CallPhase::Waiting if operator && input.held_controls.ptt => {
-                call.phase = CallPhase::OperatorSession
-            }
             CallPhase::Waiting if operator => {
-                error = Some((
-                    "ptt_required",
-                    "hold PTT while the caller is connected to the Operator",
-                ));
+                call.phase = CallPhase::OperatorSession;
             }
             CallPhase::OperatorSession | CallPhase::AwaitingRouting => {
                 if (direct_route
@@ -849,7 +843,7 @@ impl Backend {
         while let Some(index) = self
             .calls
             .iter()
-            .position(|c| c.deadline <= now && c.phase != CallPhase::Connected)
+            .position(|c| c.deadline <= now && c.phase == CallPhase::Waiting)
         {
             self.finish_call(index, true);
             if self.state.game_phase == GamePhase::Ended {
