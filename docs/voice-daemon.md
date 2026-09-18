@@ -8,11 +8,11 @@ PTT start -> daemon microphone capture -> PTT release -> PCM over UDP
             -> laptop Qwen3-TTS or PocketTTS -> RTP/L16 audio over UDP -> daemon speaker
 ```
 
-The daemon never advances Routing or Story Graph state. The backend remains the sole authority. A worker failure emits `failed` status and a diagnostic; it does not create a Story Event or Routing.
+The daemon never advances Routing state. The backend remains the sole authority. A worker failure emits `failed` status and a diagnostic; it does not create a routing decision.
 
 ## Worker contracts
 
-`just voice-daemon` runs relay-only mode. It does not load STT, dialogue, or Qwen3-TTS and it does not decide a Routing or Story Graph transition. `just backend-debug` configures those workers on the laptop. The relay reports capture/playback failures as typed voice status messages and stays alive so the backend can recover or retry the session.
+`just voice-daemon` runs relay-only mode. It does not load STT, dialogue, or Qwen3-TTS and it does not decide a Routing transition. `just backend-debug` configures those workers on the laptop. The relay reports capture/playback failures as typed voice status messages and stays alive so the backend can recover or retry the session.
 
 The backend uses the checked-in real worker adapters. Audio capture and playback on the relay use the Rust `cpal` audio library; the backend STT and dialogue invoke the pacman-installed whisper.cpp and llama.cpp runtimes. The Python workers run from the `python/` uv project; `--no-sync` prevents the backend from installing packages or downloading a model at runtime. Install the runtimes with `sudo pacman -S llama-cpp ggml-cuda whisper-cpp`, provision the model assets with `just voice-setup`, then run `just voice-preflight` before the first session.
 
@@ -43,7 +43,7 @@ The paths above are automatic defaults. `NN_VOICE_MODEL_ROOT`, `NN_WHISPER_MODEL
 `NN_QWEN3_MODEL`, and `NN_QWEN3_TTS_MODEL` remain optional overrides for a different
 installation. Each `SubscriberProfile.voice_id` is the Qwen3-TTS CustomVoice speaker
 name directly, such as `Ryan` or `Vivian`; no voice mapping environment variable is
-used. The four-Shift story selects the authored Subscriber voice for each request.
+used. The active neutral Call selects the subscriber voice context for each request.
 
 `python/voice_workers/` contains the real model adapters. They are launched by the laptop backend as `python -m voice_workers.<worker>` inside the uv environment. The backend includes the selected Qwen3-TTS CustomVoice `voice_id` in each PTT control message. The relay sends captured PCM to the backend and plays the backend's RTP/L16 output locally. Their required stdin/stdout contracts are:
 

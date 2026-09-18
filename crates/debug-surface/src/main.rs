@@ -156,8 +156,6 @@ struct UiCommand {
     seconds: Option<u32>,
     caller_line: Option<u8>,
     callee_line: Option<u8>,
-    id: Option<String>,
-    enabled: Option<bool>,
 }
 
 impl UiCommand {
@@ -171,18 +169,6 @@ impl UiCommand {
             "inject_call" => Ok(DebugCommand::InjectCall {
                 caller_line: self.caller_line.ok_or("caller_line is required")?,
                 callee_line: self.callee_line.ok_or("callee_line is required")?,
-            }),
-            "force_story_event" => Ok(DebugCommand::ForceStoryEvent {
-                event_id: self.id.ok_or("id is required")?,
-            }),
-            "select_story_path" => Ok(DebugCommand::SelectStoryPath {
-                node_id: self.id.ok_or("id is required")?,
-            }),
-            "godmode" => Ok(DebugCommand::SetGodmode {
-                enabled: self.enabled.ok_or("enabled is required")?,
-            }),
-            "bypass_restrictions" => Ok(DebugCommand::SetBypassRestrictions {
-                enabled: self.enabled.ok_or("enabled is required")?,
             }),
             action => Err(format!("unknown action {action}")),
         }

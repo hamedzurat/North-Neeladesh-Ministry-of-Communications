@@ -74,23 +74,21 @@ just debug-surface
 
 Open <http://127.0.0.1:7881> in a browser. The dashboard is an observer and
 development-control surface, not the gameplay UI. It shows the authoritative
-Run, Shift, Calls, Story Graph, exact frontend wire state, Cabinet status,
+Run, Shift, Calls, exact frontend wire state, Cabinet status,
 diagnostics, and retained voice evidence.
 
 Before playing:
 
 1. Confirm the dashboard says `BACKEND CONNECTED`.
-2. Confirm the current node is `run_start` and Directory starts at `0001`.
-3. Confirm `Godmode` and `Bypass Restrictions` are disabled.
-4. Click `Reset run` once so the test starts from a known state.
+2. Confirm the exchange starts with active Calls.
+3. Click `Reset run` once so the test starts from a known state.
 
 During the test, use the dashboard to verify that Odin input changes the
-authoritative state. Do not use `Inject call`, `Force event`, `Select path`,
-`Godmode`, or `Bypass Restrictions` for the normal gameplay proof. Those
-controls are for isolated backend/debug checks.
+authoritative state. Use debug controls only for isolated backend checks, not as
+a substitute for the physical routing flow.
 
 At the end, click `Reset run` and verify that Calls, counters, elapsed time,
-printer output, Story Graph state, and retained voice evidence return to the
+printer output, and retained voice evidence return to the
 start state.
 
 ### Terminal 3: voice daemon

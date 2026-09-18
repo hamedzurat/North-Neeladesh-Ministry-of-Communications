@@ -62,7 +62,7 @@ backend-tests:
     cargo test -p exchange-backend
 
 content-validation:
-    cargo test -p exchange-backend --test story_graph
+    cargo test -p exchange-backend --test neutral_exchange --test simple_hardware_demo
 
 frontend-checks:
     /bin/odin check frontend

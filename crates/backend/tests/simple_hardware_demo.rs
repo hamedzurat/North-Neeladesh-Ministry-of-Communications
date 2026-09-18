@@ -171,7 +171,10 @@ fn simple_hardware_failure_prints_a_cost() {
     let mut backend = Backend::new_simple_hardware_demo();
     let waiting = backend.apply_input_message(input(&backend, 1, vec![], 1, [0; 4]));
     assert_eq!(waiting.output.calls.len(), 2);
-    backend.apply_debug_command(DebugCommand::AdvanceTime { seconds: 31 });
+    backend.apply_debug_command(exchange_protocol::DebugRequest {
+        protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
+        command: DebugCommand::AdvanceTime { seconds: 31 },
+    });
     let failed = backend.apply_input_message(input(&backend, 2, vec![], 1, [0; 4]));
 
     assert!(
