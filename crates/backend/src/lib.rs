@@ -642,7 +642,7 @@ impl Backend {
             error = self.advance(input, focused, selected);
         }
         if error.is_none() {
-            self.connect_ready_direct_calls(input, selected);
+            self.connect_ready_direct_calls(input);
         }
         if error.is_some_and(|(code, _)| code == "wrong_destination")
             && let Some(line) = focused
@@ -1047,7 +1047,7 @@ impl Backend {
         self.state.shift.active_call_count = self.calls.len() as u8;
     }
 
-    fn connect_ready_direct_calls(&mut self, input: &InputState, selected: u16) {
+    fn connect_ready_direct_calls(&mut self, input: &InputState) {
         let ready = self
             .calls
             .iter()
@@ -1060,7 +1060,6 @@ impl Backend {
                         PortId::RingGenerator,
                     )
                     && call.ring_started_at.is_some()
-                    && selected == u16::from(call.callee)
                     && valid_direct_circuit(input, call.caller, call.callee)
             })
             .map(|(index, _)| index)
