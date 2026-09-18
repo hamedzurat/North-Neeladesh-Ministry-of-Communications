@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::env;
 use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -17,7 +17,7 @@ use exchange_protocol::{
     encode_voice_control, encode_voice_status, read_frame, write_frame,
 };
 use exchange_voice_daemon::{
-    CommandDialogueGenerator, CommandSpec, CommandSpeechToText, DialogueGenerator,
+    CommandSpec, CommandSpeechToText, DialogueGenerator, PersistentCommandDialogueGenerator,
     PersistentPocketTtsCommand, ResponseContext, SpeechToText, SubscriberProfile, TextToSpeech,
     VoiceError,
 };
@@ -25,6 +25,9 @@ use exchange_voice_daemon::{
 const LINES: u8 = 12;
 const MAX_CALLS: usize = 3;
 const MAX_AUDIO_PACKETS: usize = 4096;
+static DIALOGUE_WORKER: OnceLock<Mutex<Option<PersistentCommandDialogueGenerator>>> =
+    OnceLock::new();
+static POCKET_TTS_WORKER: OnceLock<Mutex<Option<PersistentPocketTtsCommand>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 struct ActiveCall {
@@ -741,8 +744,9 @@ impl Backend {
             directory_user(caller).0,
             directory_user(caller).2,
         );
-        let mut tts = configured_tts()?;
-        let samples = tts.synthesize(&format!("pocket-line-{caller}"), &text)?;
+        let samples = with_persistent_pocket_tts(|tts| {
+            tts.synthesize(&format!("pocket-line-{caller}"), &text)
+        })?;
         if samples.is_empty() {
             return Err(VoiceError::new(
                 "tts_empty_output",
@@ -1178,14 +1182,55 @@ fn crank(input: &InputState) -> bool {
             .zip(timestamps.first())
             .is_some_and(|(latest, earliest)| latest.saturating_sub(*earliest) <= 16_000)
 }
-fn configured_tts() -> Result<Box<dyn TextToSpeech>, VoiceError> {
-    let command = CommandSpec::from_words(&env::var("NN_VOICE_TTS_COMMAND").map_err(|_| {
+fn with_persistent_pocket_tts<T>(
+    operation: impl FnOnce(&mut PersistentPocketTtsCommand) -> Result<T, VoiceError>,
+) -> Result<T, VoiceError> {
+    let worker = POCKET_TTS_WORKER.get_or_init(|| Mutex::new(None));
+    let mut worker = worker
+        .lock()
+        .map_err(|_| VoiceError::new("tts_worker_lock_failed", "PocketTTS worker lock poisoned"))?;
+    if worker.is_none() {
+        let command =
+            CommandSpec::from_words(&env::var("NN_VOICE_TTS_COMMAND").map_err(|_| {
+                VoiceError::new(
+                    "voice_worker_not_configured",
+                    "NN_VOICE_TTS_COMMAND is not configured",
+                )
+            })?)?;
+        *worker = Some(PersistentPocketTtsCommand::new(command)?);
+    }
+    let result = operation(worker.as_mut().expect("PocketTTS worker was initialized"));
+    if result.is_err() {
+        *worker = None;
+    }
+    result
+}
+
+fn with_persistent_dialogue<T>(
+    operation: impl FnOnce(&mut PersistentCommandDialogueGenerator) -> Result<T, VoiceError>,
+) -> Result<T, VoiceError> {
+    let worker = DIALOGUE_WORKER.get_or_init(|| Mutex::new(None));
+    let mut worker = worker.lock().map_err(|_| {
         VoiceError::new(
-            "voice_worker_not_configured",
-            "NN_VOICE_TTS_COMMAND is not configured",
+            "dialogue_worker_lock_failed",
+            "dialogue worker lock poisoned",
         )
-    })?)?;
-    Ok(Box::new(PersistentPocketTtsCommand::new(command)?))
+    })?;
+    if worker.is_none() {
+        let command =
+            CommandSpec::from_words(&env::var("NN_VOICE_DIALOGUE_COMMAND").map_err(|_| {
+                VoiceError::new(
+                    "voice_worker_not_configured",
+                    "NN_VOICE_DIALOGUE_COMMAND is not configured",
+                )
+            })?)?;
+        *worker = Some(PersistentCommandDialogueGenerator::new(command)?);
+    }
+    let result = operation(worker.as_mut().expect("dialogue worker was initialized"));
+    if result.is_err() {
+        *worker = None;
+    }
+    result
 }
 fn lamps(calls: &[ActiveCall]) -> [bool; 12] {
     let mut result = [false; 12];
@@ -1473,27 +1518,14 @@ fn generate_operator_response(
                 "NN_VOICE_STT_COMMAND is not configured",
             )
         })?)?;
-    let dialogue_command =
-        CommandSpec::from_words(&env::var("NN_VOICE_DIALOGUE_COMMAND").map_err(|_| {
-            VoiceError::new(
-                "voice_worker_not_configured",
-                "NN_VOICE_DIALOGUE_COMMAND is not configured",
-            )
-        })?)?;
     let mut stt = CommandSpeechToText::new(stt_command);
     let transcript = stt.transcribe(&samples)?;
     transcript_sink(&transcript);
-    let mut dialogue = CommandDialogueGenerator::new(dialogue_command);
-    let response = dialogue.generate(&context, &transcript)?.dialogue;
-    let tts_command =
-        CommandSpec::from_words(&env::var("NN_VOICE_TTS_COMMAND").map_err(|_| {
-            VoiceError::new(
-                "voice_worker_not_configured",
-                "NN_VOICE_TTS_COMMAND is not configured",
-            )
-        })?)?;
-    let mut tts = PersistentPocketTtsCommand::new(tts_command)?;
-    let audio = tts.synthesize(&format!("pocket-line-{caller}"), &response)?;
+    let response =
+        with_persistent_dialogue(|dialogue| dialogue.generate(&context, &transcript))?.dialogue;
+    let audio = with_persistent_pocket_tts(|tts| {
+        tts.synthesize(&format!("pocket-line-{caller}"), &response)
+    })?;
     if audio.is_empty() {
         return Err(VoiceError::new(
             "tts_empty_output",
