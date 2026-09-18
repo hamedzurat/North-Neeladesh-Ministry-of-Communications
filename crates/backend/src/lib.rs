@@ -7,14 +7,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use exchange_protocol::{
-    CallPhase, CallStatus, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION, DebugCommand,
-    DebugCounters, DebugFrontendState, DebugRequest, DebugResponse, DebugRunState, DebugSnapshot,
-    DebugStoryState, DebugSubscriberState, FrameError, GamePhase, HeldControls, InputMessage,
-    InputState, OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, RtpL16Packet,
-    ShiftPhase, ShiftStatus, StateMessage, StateOutput, TuningState, VOICE_AUDIO_PACKET_SAMPLES,
-    VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl, VoiceControlMessage,
-    VoiceStatus, VoiceStatusMessage, decode_voice_input_audio, decode_voice_status,
-    encode_voice_control, encode_voice_status, read_frame, write_frame,
+    CallPhase, CallStatus, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION, DebugCallRecord,
+    DebugCommand, DebugCounters, DebugFrontendState, DebugRequest, DebugResponse, DebugRunState,
+    DebugSnapshot, DebugStoryState, DebugSubscriberState, FrameError, GamePhase, HeldControls,
+    InputMessage, InputState, OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError,
+    RtpL16Packet, ShiftPhase, ShiftStatus, StateMessage, StateOutput, TuningState,
+    VOICE_AUDIO_PACKET_SAMPLES, VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl,
+    VoiceControlMessage, VoiceStatus, VoiceStatusMessage, decode_voice_input_audio,
+    decode_voice_status, encode_voice_control, encode_voice_status, read_frame, write_frame,
 };
 use exchange_voice_daemon::{
     CommandSpec, CommandSpeechToText, DialogueGenerator, PersistentCommandDialogueGenerator,
@@ -51,6 +51,7 @@ pub struct Backend {
     debug_elapsed: u64,
     rng: u64,
     calls: Vec<ActiveCall>,
+    call_history: Vec<DebugCallRecord>,
     line_limit: u8,
     call_target: usize,
     quota: u8,
@@ -107,6 +108,7 @@ impl Backend {
             debug_elapsed: 0,
             rng: 0x4e45_454c_4144_4553,
             calls: Vec::new(),
+            call_history: Vec::new(),
             line_limit: LINES,
             call_target: MAX_CALLS,
             quota: 4,
@@ -247,6 +249,7 @@ impl Backend {
         self.clock_started = Instant::now();
         self.debug_elapsed = 0;
         self.calls.clear();
+        self.call_history.clear();
         self.resolved = 0;
         self.earned = 0;
         self.deductions = 0;
@@ -317,6 +320,7 @@ impl Backend {
             },
             shift: self.state.shift.clone(),
             calls,
+            call_history: self.call_history.clone(),
             subscribers,
             story: DebugStoryState {
                 current_node_id: "neutral_exchange".into(),
@@ -764,6 +768,17 @@ impl Backend {
 
     fn finish_call(&mut self, index: usize, missed: bool) {
         let call = self.calls.remove(index);
+        self.call_history.push(DebugCallRecord {
+            caller_line: call.caller,
+            requested_callee_line: call.callee,
+            final_phase: if missed {
+                CallPhase::Missed
+            } else {
+                CallPhase::Completed
+            },
+            outcome: if missed { "missed" } else { "completed" }.into(),
+            finished_elapsed_seconds: self.elapsed_seconds(),
+        });
         if self.audio_call == Some((call.caller, call.callee)) {
             self.audio_queue.clear();
             self.audio_call = None;
@@ -789,7 +804,14 @@ impl Backend {
     }
 
     fn fail_call(&mut self, index: usize) {
-        self.calls.remove(index);
+        let call = self.calls.remove(index);
+        self.call_history.push(DebugCallRecord {
+            caller_line: call.caller,
+            requested_callee_line: call.callee,
+            final_phase: CallPhase::Failed,
+            outcome: "failed".into(),
+            finished_elapsed_seconds: self.elapsed_seconds(),
+        });
         self.resolved = self.resolved.saturating_add(1);
         self.failed += 1;
         self.deductions += 2;

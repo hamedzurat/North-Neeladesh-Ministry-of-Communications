@@ -362,12 +362,23 @@ pub struct DebugSnapshot {
     pub run: DebugRunState,
     pub shift: ShiftStatus,
     pub calls: Vec<CallStatus>,
+    pub call_history: Vec<DebugCallRecord>,
     pub subscribers: Vec<DebugSubscriberState>,
     pub story: DebugStoryState,
     pub counters: DebugCounters,
     pub voice: DebugVoiceState,
     pub frontend: DebugFrontendState,
     pub recent_errors: Vec<BackendDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugCallRecord {
+    pub caller_line: u8,
+    pub requested_callee_line: u8,
+    pub final_phase: CallPhase,
+    pub outcome: String,
+    pub finished_elapsed_seconds: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -237,7 +237,18 @@
       document.getElementById('voice-response').textContent = voice.response_text || '-';
       document.getElementById('errors').innerHTML = failures.length ? failures.map(error => `<div class="conversation failed"><div><div class="conversation-id">${esc(error.code)}</div><span class="badge failed">failure</span></div><div class="conversation-copy"><p>${esc(error.message)}</p></div><div class="muted">backend diagnostic</div></div>`).join('') : '<div class="empty">No failures retained.</div>';
       document.getElementById('voice-history').innerHTML = conversations.length ? [...conversations].reverse().map(conversationCard).join('') : '<div class="empty">No voice conversations retained.</div>';
-      document.getElementById('calls').innerHTML = table(snapshot.calls, ['caller_line', 'requested_callee_line', 'phase']);
+      const activeCalls = (snapshot.calls || []).map(call => ({...call, status: 'active'}));
+      const finishedCalls = (snapshot.call_history || []).map(call => ({
+        caller_line: call.caller_line,
+        requested_callee_line: call.requested_callee_line,
+        phase: call.final_phase,
+        status: call.outcome,
+        finished_elapsed_seconds: call.finished_elapsed_seconds,
+      }));
+      document.getElementById('calls').innerHTML = table(
+        [...finishedCalls.reverse(), ...activeCalls],
+        ['caller_line', 'requested_callee_line', 'phase', 'status', 'finished_elapsed_seconds'],
+      );
        document.getElementById('subscribers').innerHTML = table(snapshot.subscribers, ['id', 'name', 'line', 'status', 'availability', 'pressure', 'current_goal', 'status_flags']);
      }
 
