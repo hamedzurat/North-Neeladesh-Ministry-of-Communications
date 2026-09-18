@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use exchange_protocol::{
     CallPhase, CallStatus, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION, DebugCommand,
     DebugCounters, DebugFrontendState, DebugRequest, DebugResponse, DebugRunState, DebugSnapshot,
-    DebugStoryState, DebugSubscriberState, GamePhase, HeldControls, InputMessage, InputState,
-    OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, RtpL16Packet, ShiftPhase,
-    ShiftStatus, StateMessage, StateOutput, TuningState, VOICE_AUDIO_PACKET_SAMPLES,
+    DebugStoryState, DebugSubscriberState, FrameError, GamePhase, HeldControls, InputMessage,
+    InputState, OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, RtpL16Packet,
+    ShiftPhase, ShiftStatus, StateMessage, StateOutput, TuningState, VOICE_AUDIO_PACKET_SAMPLES,
     VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl, VoiceStatus, VoiceStatusMessage,
     decode_voice_control, encode_voice_status, read_frame, write_frame,
 };
@@ -69,6 +69,12 @@ pub struct Backend {
     audio_sequence: u16,
     audio_timestamp: u32,
     pending_tts: Vec<(u8, u8)>,
+}
+
+impl Default for Backend {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Backend {
@@ -234,10 +240,10 @@ impl Backend {
     }
 
     pub fn apply_input_message(&mut self, message: InputMessage) -> StateMessage {
-        if self.last_request.as_ref() == Some(&message) {
-            if let Some(response) = self.last_response.clone() {
-                return response;
-            }
+        if self.last_request.as_ref() == Some(&message)
+            && let Some(response) = self.last_response.clone()
+        {
+            return response;
         }
         let result = self.apply_input(message.clone());
         self.last_request = Some(message);
@@ -323,12 +329,11 @@ impl Backend {
         if error.is_none() {
             error = self.advance(input, focused, selected);
         }
-        if error.is_some_and(|(code, _)| code == "wrong_destination") {
-            if let Some(line) = focused {
-                if let Some(index) = self.calls.iter().position(|call| call.caller == line) {
-                    self.fail_call(index);
-                }
-            }
+        if error.is_some_and(|(code, _)| code == "wrong_destination")
+            && let Some(line) = focused
+            && let Some(index) = self.calls.iter().position(|call| call.caller == line)
+        {
+            self.fail_call(index);
         }
         self.revision = self.revision.wrapping_add(1);
         self.state.clock.elapsed_seconds = self.elapsed_seconds();
@@ -385,10 +390,8 @@ impl Backend {
         focused: Option<u8>,
         selected: u16,
     ) -> Option<(&'static str, &'static str)> {
-        let Some(line) = focused else { return None };
-        let Some(index) = self.calls.iter().position(|c| c.caller == line) else {
-            return None;
-        };
+        let line = focused?;
+        let index = self.calls.iter().position(|c| c.caller == line)?;
         let mut finish = false;
         let mut connect = false;
         let mut error = None;
@@ -412,15 +415,11 @@ impl Backend {
                 ));
             }
             CallPhase::OperatorSession | CallPhase::AwaitingRouting => {
-                if direct_route
+                if (direct_route
                     && selected == u16::from(call.callee)
-                    && call.phase == CallPhase::AwaitingRouting
+                    && call.phase == CallPhase::AwaitingRouting)
+                    || has_any_direct_circuit(input)
                 {
-                    error = Some((
-                        "premature_direct_routing",
-                        "ring the requested destination before connecting the caller directly",
-                    ));
-                } else if has_any_direct_circuit(input) {
                     error = Some((
                         "premature_direct_routing",
                         "ring the requested destination before connecting the caller directly",
@@ -1143,6 +1142,14 @@ pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) ->
     loop {
         let request: InputMessage = match read_frame(&mut stream) {
             Ok(request) => request,
+            Err(FrameError::Io(error))
+                if matches!(
+                    error.kind(),
+                    ErrorKind::UnexpectedEof | ErrorKind::ConnectionReset
+                ) =>
+            {
+                return Ok(());
+            }
             Err(error) => return Err(io::Error::new(ErrorKind::InvalidData, error.to_string())),
         };
         let (response, pending_tts, tts_engine) = {
@@ -1172,6 +1179,14 @@ fn handle_debug_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) 
     loop {
         let request: DebugRequest = match read_frame(&mut stream) {
             Ok(request) => request,
+            Err(FrameError::Io(error))
+                if matches!(
+                    error.kind(),
+                    ErrorKind::UnexpectedEof | ErrorKind::ConnectionReset
+                ) =>
+            {
+                return Ok(());
+            }
             Err(error) => return Err(io::Error::new(ErrorKind::InvalidData, error.to_string())),
         };
         let response = backend

@@ -77,7 +77,6 @@ pub struct SubscriberProfile {
     pub personality: String,
     pub baseline_goals: Vec<String>,
     pub initial_perspective: String,
-    pub relationships: Vec<RelationshipNote>,
     pub permitted_actions: Vec<String>,
 }
 
@@ -94,23 +93,6 @@ pub struct KnowledgeRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct BeliefRecord {
-    pub proposition: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct RelationshipNote {
-    pub subject: String,
-    pub note: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct MemoryRecord {
-    pub summary: String,
-    pub source: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ResponseContext {
     pub profile: SubscriberProfile,
     pub caller_place: String,
@@ -118,11 +100,8 @@ pub struct ResponseContext {
     pub known_places: Vec<String>,
     pub subscriber_goal: String,
     pub call_premise: String,
-    pub story_beat_direction: String,
+    pub call_guidance: String,
     pub permitted_knowledge: Vec<KnowledgeRecord>,
-    pub beliefs: Vec<BeliefRecord>,
-    pub relationship_notes: Vec<RelationshipNote>,
-    pub memories: Vec<MemoryRecord>,
     pub recent_conversation: Vec<ConversationTurn>,
     pub current_input: Option<String>,
 }
@@ -161,29 +140,17 @@ fn approximate_tokens(context: &ResponseContext) -> usize {
         + context.profile.personality.len()
         + context.subscriber_goal.len()
         + context.call_premise.len()
-        + context.story_beat_direction.len();
+        + context.call_guidance.len();
     for goal in &context.profile.baseline_goals {
         chars += goal.len();
     }
     chars += context.profile.initial_perspective.len();
     chars += context.known_places.iter().map(String::len).sum::<usize>();
-    for relationship in &context.profile.relationships {
-        chars += relationship.subject.len() + relationship.note.len();
-    }
     for action in &context.profile.permitted_actions {
         chars += action.len();
     }
     for value in &context.permitted_knowledge {
         chars += value.fact.len() + value.learned_from.len();
-    }
-    for value in &context.beliefs {
-        chars += value.proposition.len();
-    }
-    for value in &context.relationship_notes {
-        chars += value.subject.len() + value.note.len();
-    }
-    for value in &context.memories {
-        chars += value.summary.len() + value.source.len();
     }
     for turn in &context.recent_conversation {
         chars += turn.speaker.len() + turn.text.len();
@@ -728,13 +695,13 @@ impl MicrophoneCapture for CommandMicrophone {
                 format!("capture exceeded {} samples", self.max_samples),
             ));
         }
-        if let Some(status) = status {
-            if !status.success() {
-                return Err(VoiceError::new(
-                    "capture_failed",
-                    format!("capture failed: capture exited with {status}"),
-                ));
-            }
+        if let Some(status) = status
+            && !status.success()
+        {
+            return Err(VoiceError::new(
+                "capture_failed",
+                format!("capture failed: capture exited with {status}"),
+            ));
         }
         Ok(samples)
     }
@@ -798,11 +765,11 @@ impl CommandMicrophone {
 impl Drop for CommandMicrophone {
     fn drop(&mut self) {
         self.active.store(false, Ordering::Release);
-        if let Some(child) = self.child.take() {
-            if let Ok(mut child) = child.lock() {
-                terminate_process_group(&mut child);
-                let _ = child.wait();
-            }
+        if let Some(child) = self.child.take()
+            && let Ok(mut child) = child.lock()
+        {
+            terminate_process_group(&mut child);
+            let _ = child.wait();
         }
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
@@ -1313,7 +1280,7 @@ impl TextToSpeech for PersistentQwen3TtsCommand {
             if length == 0 {
                 break;
             }
-            if length > MAX_WORKER_OUTPUT_BYTES || length % 2 != 0 {
+            if length > MAX_WORKER_OUTPUT_BYTES || !length.is_multiple_of(2) {
                 return Err(VoiceError::new(
                     "invalid_pcm",
                     "persistent Qwen3-TTS returned an invalid PCM frame",
@@ -1879,14 +1846,14 @@ fn encode_pcm16(samples: &[i16]) -> Vec<u8> {
 }
 
 fn decode_pcm16(bytes: &[u8]) -> Result<Vec<i16>, VoiceError> {
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(VoiceError::new(
             "invalid_pcm",
             "PCM output must contain an even number of bytes",
         ));
     }
     Ok(bytes
-        .chunks_exact(2)
+        .chunks(2)
         .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
         .collect())
 }
@@ -2068,14 +2035,14 @@ fn run_command_stream(
     });
     let stderr_thread =
         thread::spawn(move || read_bounded(stderr, 16 * 1024, "worker_stderr_failed"));
-    if let Some(mut stdin) = child.stdin.take() {
-        if let Err(error) = stdin.write_all(input) {
-            terminate_process_group(&mut child);
-            let _ = child.wait();
-            let _ = stdout_thread.join();
-            let _ = stderr_thread.join();
-            return Err(VoiceError::new("worker_stdin_failed", error.to_string()));
-        }
+    if let Some(mut stdin) = child.stdin.take()
+        && let Err(error) = stdin.write_all(input)
+    {
+        terminate_process_group(&mut child);
+        let _ = child.wait();
+        let _ = stdout_thread.join();
+        let _ = stderr_thread.join();
+        return Err(VoiceError::new("worker_stdin_failed", error.to_string()));
     }
     let deadline = Instant::now() + spec.timeout;
     let mut total = 0;
@@ -2244,10 +2211,6 @@ mod tests {
                 personality: "precise railway dispatcher".to_string(),
                 baseline_goals: vec!["Keep the railway moving".to_string()],
                 initial_perspective: "The exchange is under observation".to_string(),
-                relationships: vec![RelationshipNote {
-                    subject: "Vira Dhal".to_string(),
-                    note: "A trusted records clerk".to_string(),
-                }],
                 permitted_actions: vec!["request_routing".to_string()],
             },
             caller_place: "RAIL DISPATCH".to_string(),
@@ -2255,14 +2218,11 @@ mod tests {
             known_places: vec!["RAIL DISPATCH".to_string(), "KHARAD CLINIC".to_string()],
             subscriber_goal: "Reach the requested Callee".to_string(),
             call_premise: "A railway dispatch is waiting".to_string(),
-            story_beat_direction: "Ask for an ordinary connection".to_string(),
+            call_guidance: "Ask for an ordinary connection".to_string(),
             permitted_knowledge: vec![KnowledgeRecord {
                 fact: "The directory lists Vira Dhal".to_string(),
                 learned_from: "directory_terminal".to_string(),
             }],
-            beliefs: Vec::new(),
-            relationship_notes: Vec::new(),
-            memories: Vec::new(),
             recent_conversation: Vec::new(),
             current_input: None,
         }
@@ -2370,10 +2330,7 @@ mod tests {
     #[test]
     fn response_context_rejects_unbounded_context() {
         let mut context = context();
-        context.memories.push(MemoryRecord {
-            summary: "x".repeat(MAX_RESPONSE_CONTEXT_TOKENS * 4),
-            source: "test".to_string(),
-        });
+        context.current_input = Some("x".repeat(MAX_RESPONSE_CONTEXT_TOKENS * 4));
         assert_eq!(
             context.validate().unwrap_err().code,
             "response_context_too_large"

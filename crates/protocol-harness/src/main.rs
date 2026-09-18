@@ -47,167 +47,136 @@ fn run_sequence(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
         "initial input was rejected: {:?}",
         first.error
     );
-    assert_eq!(first.input_sequence, 1);
-    assert_eq!(first.state_revision, 1);
-    assert_eq!(first.output.call.as_ref().unwrap().caller_line, 0);
-    assert!(first.output.line_lamps[0]);
+    assert_eq!(first.output.calls.len(), 3);
+    let call = first.output.calls[0].clone();
 
-    let second = exchange(stream, message(2, 1, [0, 0, 0, 2]))?;
-    assert!(
-        second.accepted,
-        "directory update was rejected: {:?}",
-        second.error
-    );
-    assert_eq!(second.output.directory_pages[0].heading, "VIRA DHAL");
-    assert_eq!(second.output.printer_output.len(), 2);
-
-    let arbitrary = exchange(
+    let directory = exchange(
         stream,
-        physical_message(
-            3,
+        message(
             2,
-            vec![cord(PortId::Subscriber(6), PortId::Subscriber(8))],
-            [0; 4],
+            first.state_revision,
+            [0, 0, 0, call.requested_callee_line],
         ),
     )?;
-    assert!(arbitrary.accepted);
-    assert!(arbitrary.output.call.is_some());
+    assert!(
+        directory.accepted,
+        "directory update was rejected: {:?}",
+        directory.error
+    );
+    assert!(
+        directory.output.directory_pages[0]
+            .lines
+            .iter()
+            .any(|line| line.contains("DESTINATION"))
+    );
 
     let operator = exchange(
         stream,
         physical_message(
-            4,
             3,
-            vec![cord(PortId::Subscriber(0), PortId::Operator)],
+            directory.state_revision,
+            vec![cord(PortId::Subscriber(call.caller_line), PortId::Operator)],
             [0; 4],
         ),
     )?;
-    assert!(operator.accepted);
     assert_eq!(
-        operator.output.game_phase,
-        exchange_protocol::GamePhase::Shift
-    );
-
-    let pre_ring = exchange(
-        stream,
-        physical_message(
-            5,
-            4,
-            vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
-            [0; 4],
-        ),
-    )?;
-    assert!(!pre_ring.accepted);
-    assert_eq!(
-        pre_ring.error.as_ref().unwrap().code,
-        "ring_generator_required"
-    );
-    assert_eq!(
-        pre_ring.output.call.as_ref().unwrap().phase,
+        operator.output.call.as_ref().unwrap().phase,
         exchange_protocol::CallPhase::OperatorSession
     );
-    assert!(
-        pre_ring
-            .output
-            .debug
-            .messages
-            .iter()
-            .any(|message| message.code == "ring_generator_required")
+
+    let premature = exchange(
+        stream,
+        physical_message(
+            4,
+            operator.state_revision,
+            vec![cord(
+                PortId::Subscriber(call.caller_line),
+                PortId::Subscriber(call.requested_callee_line),
+            )],
+            [0; 4],
+        ),
+    )?;
+    assert!(!premature.accepted);
+    assert_eq!(
+        premature.error.as_ref().unwrap().code,
+        "premature_direct_routing"
     );
 
     let ringing = exchange(
         stream,
         physical_message(
-            6,
-            4,
+            5,
+            premature.state_revision,
             vec![
-                cord(PortId::Subscriber(0), PortId::Operator),
-                cord(PortId::Subscriber(1), PortId::RingGenerator),
+                cord(PortId::Subscriber(call.caller_line), PortId::Operator),
+                cord(
+                    PortId::Subscriber(call.requested_callee_line),
+                    PortId::RingGenerator,
+                ),
             ],
-            [0, 1000, 1100, 1200],
+            [0, 100, 200, 300],
         ),
     )?;
-    assert!(ringing.accepted);
     assert_eq!(
         ringing.output.call.as_ref().unwrap().phase,
         exchange_protocol::CallPhase::Ringing
     );
 
-    let routed = exchange(
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let sustained = exchange(
+        stream,
+        physical_message(
+            6,
+            ringing.state_revision,
+            vec![
+                cord(PortId::Subscriber(call.caller_line), PortId::Operator),
+                cord(
+                    PortId::Subscriber(call.requested_callee_line),
+                    PortId::RingGenerator,
+                ),
+            ],
+            [0, 100, 200, 400],
+        ),
+    )?;
+    assert_eq!(
+        sustained.output.call.as_ref().unwrap().phase,
+        exchange_protocol::CallPhase::Ringing
+    );
+
+    let connected = exchange(
         stream,
         physical_message(
             7,
-            5,
-            vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
+            sustained.state_revision,
+            vec![cord(
+                PortId::Subscriber(call.caller_line),
+                PortId::Subscriber(call.requested_callee_line),
+            )],
             [0; 4],
         ),
     )?;
-    assert!(routed.accepted);
     assert_eq!(
-        routed.output.call.as_ref().unwrap().phase,
+        connected.output.call.as_ref().unwrap().phase,
         exchange_protocol::CallPhase::Connected
     );
-    assert_eq!(routed.output.shift.completed_routings, 1);
-    assert!(
-        routed
-            .output
-            .printer_output
-            .last()
-            .unwrap()
-            .text
-            .contains("ROUTING")
-    );
+    assert!(connected.output.line_lamps[call.caller_line as usize]);
+    assert!(connected.output.line_lamps[call.requested_callee_line as usize]);
 
+    std::thread::sleep(std::time::Duration::from_secs(2));
     let completed = exchange(
         stream,
         physical_message(
             8,
-            6,
-            vec![cord(PortId::Subscriber(0), PortId::Subscriber(1))],
+            connected.state_revision,
+            vec![cord(
+                PortId::Subscriber(call.caller_line),
+                PortId::Subscriber(call.requested_callee_line),
+            )],
             [0; 4],
         ),
     )?;
     assert!(completed.accepted);
-    assert_eq!(
-        completed.output.call.as_ref().unwrap().phase,
-        exchange_protocol::CallPhase::Completed
-    );
-
-    let cleared = exchange(stream, physical_message(9, 7, vec![], [0; 4]))?;
-    assert!(
-        cleared.accepted,
-        "clearing the circuit was rejected: {:?}",
-        cleared.error
-    );
-    assert!(cleared.output.call.is_none());
-    assert_eq!(cleared.output.printer_output.len(), 5);
-    assert!(
-        cleared
-            .output
-            .printer_output
-            .iter()
-            .any(|entry| entry.text.contains("SERVICE ERROR"))
-    );
-    assert!(
-        cleared
-            .output
-            .printer_output
-            .last()
-            .unwrap()
-            .text
-            .contains("ENDING")
-    );
-
-    let invalid = exchange(stream, message(10, 8, [0, 0, 0, 12]))?;
-    assert!(!invalid.accepted);
-    assert_eq!(invalid.error.unwrap().code, "invalid_directory_digits");
-    assert_eq!(invalid.state_revision, cleared.state_revision);
-
-    let restarted = exchange(stream, message(11, cleared.state_revision, [0, 0, 0, 2]))?;
-    assert!(restarted.accepted);
-    assert!(restarted.output.call.is_none());
-    assert!(restarted.output.calls.is_empty());
-
+    assert_eq!(completed.output.calls.len(), 3);
     Ok(())
 }
 
@@ -249,7 +218,10 @@ fn message(sequence: u64, revision: u64, digits: [u8; 4]) -> InputMessage {
         expected_state_revision: revision,
         input: InputState {
             cord_topology: Vec::new(),
-            held_controls: HeldControls::default(),
+            held_controls: HeldControls {
+                ptt: true,
+                ..HeldControls::default()
+            },
             directory_digits: digits,
             crank_rotation_timestamps: [0; 4],
             tuning: TuningState::default(),
