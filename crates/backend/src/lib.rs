@@ -608,6 +608,11 @@ impl Backend {
                             "ringing requires exactly the caller-to-Operator and callee-to-Ring Generator cords",
                         ));
                     }
+                } else if ring {
+                    error = Some((
+                        "crank_required",
+                        "turn the crank twice within sixteen seconds before routing",
+                    ));
                 } else if input.cord_topology.is_empty() {
                     call.phase = CallPhase::AwaitingRouting;
                 }
