@@ -1480,7 +1480,7 @@ fn crank(input: &InputState) -> bool {
         .copied()
         .filter(|timestamp| *timestamp > 0)
         .collect::<Vec<_>>();
-    timestamps.len() >= 2
+    !timestamps.is_empty()
         && timestamps.windows(2).all(|pair| pair[1] > pair[0])
         && timestamps
             .last()

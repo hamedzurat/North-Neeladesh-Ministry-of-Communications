@@ -99,7 +99,7 @@ fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
             ),
         ],
         (first.requested_callee_line + 1) % 6,
-        [0, 100, 200, 300],
+        [0, 0, 0, 100],
     ));
     assert!(wrong_directory.accepted);
     assert_eq!(
@@ -154,12 +154,13 @@ fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
             ),
         ],
         first.requested_callee_line,
-        [0, 100, 200, 400],
+        [0, 0, 100, 200],
     ));
     assert_eq!(
         sustained_ring.output.call.unwrap().phase,
         CallPhase::Ringing
     );
+    assert_eq!(backend.debug_snapshot().active_calls[0].crank_samples, 2);
 
     let grace = backend.apply_input_message(input(
         &backend,
