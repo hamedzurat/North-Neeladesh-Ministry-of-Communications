@@ -146,6 +146,9 @@ pub struct Backend {
     simple_connected_at: [Option<Instant>; 12],
     simple_call_deadlines: [Option<u64>; 12],
     simple_call_interacted: [bool; 12],
+    simple_shift_quota: u8,
+    simple_resolved_calls: u8,
+    simple_money: i32,
     shift_earned: u32,
     shift_cost: u32,
     north_state: Option<NorthNeeladeshState>,
@@ -215,6 +218,15 @@ impl Backend {
 
     pub fn new_simple_hardware_demo() -> Self {
         Self::new_simple_hardware_demo_with_printer_stress(false)
+    }
+
+    /// Construct the neutral telephone exchange used by the production server.
+    ///
+    /// The old authored constructors remain available for compatibility with
+    /// development fixtures, but the live game must not start in the Story
+    /// Graph runtime.
+    pub fn new_exchange() -> Self {
+        Self::new_simple_hardware_demo()
     }
 
     pub fn new_simple_hardware_demo_with_printer_stress(printer_stress: bool) -> Self {
@@ -317,6 +329,9 @@ impl Backend {
             simple_connected_at: [None; 12],
             simple_call_deadlines: [None; 12],
             simple_call_interacted: [false; 12],
+            simple_shift_quota: 4 + (0x4e45_454c_4144_4553_u64 as u8 % 3),
+            simple_resolved_calls: 0,
+            simple_money: 0,
             shift_earned: 0,
             shift_cost: 0,
             north_state: north_story.then(NorthNeeladeshState::default),
@@ -337,6 +352,12 @@ impl Backend {
 
     pub fn frontend_state(&self) -> &StateOutput {
         &self.state
+    }
+
+    /// Current exchange balance.  The balance is deliberately independent of
+    /// the compatibility protocol's legacy story/debug fields.
+    pub fn money(&self) -> i32 {
+        self.simple_money
     }
 
     /// Accept an untrusted dialogue proposal. Only the bounded intent and a
@@ -1089,6 +1110,9 @@ impl Backend {
         self.simple_connected_at = [None; 12];
         self.simple_call_deadlines = [None; 12];
         self.simple_call_interacted = [false; 12];
+        self.simple_shift_quota = 4;
+        self.simple_resolved_calls = 0;
+        self.simple_money = 0;
         self.shift_earned = 0;
         self.shift_cost = 0;
     }
@@ -1464,6 +1488,22 @@ impl Backend {
             }
         };
         let interference_level = interference_level(&self.story_node_id, &input.tuning);
+        if self.simple_hardware_mode
+            && self.state.shift.phase == ShiftPhase::Settled
+            && self.state.shift.number < 3
+        {
+            self.state.shift.number += 1;
+            self.state.shift.phase = ShiftPhase::Ready;
+            self.state.shift.active_call_count = 0;
+            self.state.shift.completed_routings = 0;
+            self.simple_resolved_calls = 0;
+            self.simple_shift_quota = 4 + (self.simple_rng_state as u8 % 3);
+            let shift_number = self.state.shift.number;
+            append_printer(
+                &mut self.state,
+                &format!("SHIFT {shift_number} START // TELEPHONE EXCHANGE READY"),
+            );
+        }
         let mut next_state = self.state.clone();
         next_state.interference_level = interference_level;
         let final_standoff = self.story_node_id == "ending_civil_war";
@@ -1591,7 +1631,7 @@ impl Backend {
                 self.simple_hardware_mode,
                 (self.is_four_shift_story() || self.simple_hardware_mode)
                     .then_some(connected_callers_ready.as_slice()),
-                self.is_four_shift_story(),
+                self.story.node("final_choice").is_none(),
             )
         };
         if self.is_four_shift_story()
@@ -1609,6 +1649,31 @@ impl Backend {
         }
         if self.simple_hardware_mode {
             self.apply_simple_call_lifecycle(&mut transition);
+            if self.simple_resolved_calls >= self.simple_shift_quota {
+                let shift_number = self.state.shift.number;
+                append_printer(
+                    &mut next_state,
+                    &format!(
+                        "SHIFT {shift_number} SUMMARY\nCOMPLETED CALLS // {}\nEARNED +${}\nDEDUCTIONS -${}\nCURRENT MONEY // ${}",
+                        self.state.shift.completed_routings,
+                        self.shift_earned,
+                        self.shift_cost,
+                        self.simple_money
+                    ),
+                );
+                transition.calls.clear();
+                transition.call = None;
+                transition.line_lamps = [false; 12];
+                transition.shift.active_call_count = 0;
+                transition.shift.phase = ShiftPhase::Settled;
+                transition.game_phase = if shift_number >= 3 {
+                    GamePhase::Ended
+                } else {
+                    GamePhase::Ready
+                };
+                self.shift_earned = 0;
+                self.shift_cost = 0;
+            }
         } else if let Some(mut outcome) = transition.story_outcome {
             let pending_action = self.pending_operator_action;
             if self.north_state.is_some()
@@ -2044,7 +2109,11 @@ impl Backend {
     }
 
     fn ensure_simple_pending_calls(&mut self, active_callers: &[u8]) {
-        while self.simple_pending_calls.len() < 2 {
+        // With six subscriber lines, two active calls can leave room for only
+        // one conflict-free queued call.  Asking for two here would spin
+        // forever once all remaining endpoints are occupied.
+        let target = if active_callers.is_empty() { 2 } else { 1 };
+        while self.simple_pending_calls.len() < target {
             let next = self.next_simple_call(active_callers);
             if self
                 .simple_pending_calls
@@ -2058,6 +2127,18 @@ impl Backend {
     }
 
     fn next_simple_call(&mut self, active_callers: &[u8]) -> (u8, u8) {
+        let occupied = self
+            .state
+            .calls
+            .iter()
+            .filter(|call| active_callers.contains(&call.caller_line))
+            .flat_map(|call| [call.caller_line, call.requested_callee_line])
+            .chain(
+                self.simple_pending_calls
+                    .iter()
+                    .flat_map(|(caller, callee)| [*caller, *callee]),
+            )
+            .collect::<Vec<_>>();
         loop {
             self.simple_rng_state = self
                 .simple_rng_state
@@ -2065,7 +2146,11 @@ impl Backend {
                 .wrapping_add(1_442_695_040_888_963_407);
             let caller = (self.simple_rng_state % u64::from(SIMPLE_SUBSCRIBER_LINES)) as u8;
             let callee = ((self.simple_rng_state >> 3) % u64::from(SIMPLE_SUBSCRIBER_LINES)) as u8;
-            if caller != callee && !active_callers.contains(&caller) {
+            if caller != callee
+                && !active_callers.contains(&caller)
+                && !occupied.contains(&caller)
+                && !occupied.contains(&callee)
+            {
                 return (caller, callee);
             }
         }
@@ -2078,7 +2163,7 @@ impl Backend {
             .filter(|call| {
                 call.phase == exchange_protocol::CallPhase::Connected
                     && self.simple_connected_at[call.caller_line as usize]
-                        .is_some_and(|started| started.elapsed() >= Duration::from_secs(3))
+                        .is_some_and(|started| started.elapsed() >= Duration::from_secs(2))
             })
             .map(|call| call.caller_line)
             .collect()
@@ -2112,6 +2197,38 @@ impl Backend {
                 exchange_protocol::CallPhase::Misrouted | exchange_protocol::CallPhase::Failed
             )
         });
+        let missed = transition
+            .calls
+            .iter()
+            .filter(|call| call.phase == exchange_protocol::CallPhase::Missed)
+            .count() as u8;
+        let failed = transition
+            .calls
+            .iter()
+            .filter(|call| {
+                matches!(
+                    call.phase,
+                    exchange_protocol::CallPhase::Misrouted | exchange_protocol::CallPhase::Failed
+                )
+            })
+            .count() as u8;
+        let completed = previous_connected
+            .iter()
+            .filter(|line| {
+                self.simple_connected_at[**line as usize]
+                    .is_some_and(|started| started.elapsed() >= Duration::from_secs(2))
+            })
+            .count() as u8;
+        if completed > 0 || missed > 0 || failed > 0 {
+            self.simple_resolved_calls = self
+                .simple_resolved_calls
+                .saturating_add(completed.saturating_add(missed).saturating_add(failed));
+            self.simple_money -= i32::from(missed) * 2;
+            self.simple_money -= i32::from(failed) * 3;
+            self.shift_cost = self
+                .shift_cost
+                .saturating_add(u32::from(missed) * 2 + u32::from(failed) * 3);
+        }
 
         transition.calls.retain(|call| {
             matches!(
@@ -2230,6 +2347,7 @@ impl Backend {
             };
             if newly_connected {
                 self.shift_earned += 5;
+                self.simple_money += 5;
             }
             if misrouted {
                 self.shift_cost += 3;
@@ -2434,19 +2552,6 @@ impl Backend {
                 expired_callers.push(call.caller_line);
                 call.phase = exchange_protocol::CallPhase::Missed;
             }
-        }
-        if !expired_callers.is_empty() {
-            let cost = expired_callers
-                .iter()
-                .map(|line| {
-                    if self.simple_call_interacted[*line as usize] {
-                        3
-                    } else {
-                        2
-                    }
-                })
-                .sum::<usize>();
-            self.shift_cost += cost as u32;
         }
         if let Some(call) = &mut self.state.call
             && expired_callers.contains(&call.caller_line)
@@ -3284,10 +3389,11 @@ fn advance_single_call(
         }
         exchange_protocol::CallPhase::Connected => {
             if auto_complete_connected && direct_circuit && connected_call_ready {
+                next_call.phase = exchange_protocol::CallPhase::Completed;
                 next_shift.active_call_count = 0;
                 return SingleCallTransition {
-                    call: None,
-                    line_lamps: [false; 12],
+                    call: Some(next_call.clone()),
+                    line_lamps: lamps_for_call(Some(&next_call)),
                     game_phase: next_game_phase,
                     shift: next_shift,
                     routing_receipt: None,
@@ -3792,7 +3898,7 @@ pub fn serve_with_voice_and_debug_engine(
         PERSISTENT_DIALOGUE
             .get_or_init(|| PersistentCommandDialogueGenerator::new(spec).map(Mutex::new));
     }
-    let backend = Arc::new(Mutex::new(Backend::new_north_neeladesh()));
+    let backend = Arc::new(Mutex::new(Backend::new_exchange()));
     let voice_socket = voice_socket.map(Arc::new);
     if let Some(debug_listener) = debug_listener {
         let backend = Arc::clone(&backend);
