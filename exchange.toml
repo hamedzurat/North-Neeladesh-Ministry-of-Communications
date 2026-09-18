@@ -1,9 +1,10 @@
 # Runtime gameplay tuning. Override with NN_EXCHANGE_CONFIG.
-active_calls = 2
+active_calls = 1
 patience_min_seconds = 32
 patience_max_seconds = 64
 ring_grace_seconds = 16
 shift_duration_seconds = 90
+call_arrival_interval_seconds = 8
 
 dialogue_prompt_template = '''You are the Subscriber {caller_name} calling from {caller_place} in the North Neeladesh Telephone Exchange.
 Generate only the Subscriber's next spoken reply to the Exchange Operator.

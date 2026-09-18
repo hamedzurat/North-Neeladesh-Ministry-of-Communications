@@ -10,14 +10,15 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 
 use exchange_protocol::{
-    CallPhase, CallStatus, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION, DebugCallRecord,
-    DebugCommand, DebugCounters, DebugFrontendState, DebugRequest, DebugResponse, DebugRunState,
-    DebugSnapshot, DebugStoryState, DebugSubscriberState, DebugVoiceConversation, FrameError,
-    GamePhase, HeldControls, InputMessage, InputState, OutputDebug, PROTOCOL_VERSION, PortId,
-    PrinterEntry, ProtocolError, RtpL16Packet, ShiftPhase, ShiftStatus, StateMessage, StateOutput,
-    TuningState, VOICE_AUDIO_PACKET_SAMPLES, VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION,
-    VoiceControl, VoiceControlMessage, VoiceStatus, VoiceStatusMessage, decode_voice_input_audio,
-    decode_voice_status, encode_voice_control, encode_voice_status, read_frame, write_frame,
+    CallPhase, CallStatus, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION, DebugActiveCall,
+    DebugCallRecord, DebugCommand, DebugCounters, DebugFrontendState, DebugRequest, DebugResponse,
+    DebugRunState, DebugSnapshot, DebugStoryState, DebugSubscriberState, DebugVoiceConversation,
+    FrameError, GamePhase, HeldControls, InputMessage, InputState, OutputDebug, PROTOCOL_VERSION,
+    PortId, PrinterEntry, ProtocolError, RtpL16Packet, ShiftPhase, ShiftStatus, StateMessage,
+    StateOutput, TuningState, VOICE_AUDIO_PACKET_SAMPLES, VOICE_AUDIO_SAMPLE_RATE,
+    VOICE_PROTOCOL_VERSION, VoiceControl, VoiceControlMessage, VoiceStatus, VoiceStatusMessage,
+    decode_voice_input_audio, decode_voice_status, encode_voice_control, encode_voice_status,
+    read_frame, write_frame,
 };
 use exchange_voice_daemon::{
     CommandSpec, CommandSpeechToText, DialogueGenerator, PersistentCommandDialogueGenerator,
@@ -40,6 +41,7 @@ struct GameConfig {
     patience_max_seconds: u64,
     ring_grace_seconds: u64,
     shift_duration_seconds: u64,
+    call_arrival_interval_seconds: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -148,11 +150,12 @@ impl Default for GameConfig {
     fn default() -> Self {
         Self {
             subscribers: default_subscribers(),
-            active_calls: 2,
+            active_calls: 1,
             patience_min_seconds: 32,
             patience_max_seconds: 64,
             ring_grace_seconds: 16,
             shift_duration_seconds: 90,
+            call_arrival_interval_seconds: 8,
         }
     }
 }
@@ -176,7 +179,9 @@ struct ActiveCall {
     callee: u8,
     phase: CallPhase,
     deadline: u64,
+    started_elapsed_seconds: u64,
     connected_at: Option<Instant>,
+    connected_elapsed_seconds: Option<u64>,
     ring_started_at: Option<u64>,
     last_crank_timestamp: u64,
     crank_samples: u8,
@@ -196,6 +201,7 @@ pub struct Backend {
     line_limit: u8,
     call_target: usize,
     shift_started_elapsed_seconds: u64,
+    next_call_arrival_elapsed_seconds: u64,
     resolved: u8,
     earned: i32,
     deductions: i32,
@@ -252,7 +258,7 @@ impl Backend {
     }
     pub fn new_exchange() -> Self {
         let config = GameConfig::load();
-        let mut backend = Self {
+        let backend = Self {
             config: config.clone(),
             state: initial_state(),
             revision: 0,
@@ -265,6 +271,7 @@ impl Backend {
             line_limit: LINES,
             call_target: config.active_calls,
             shift_started_elapsed_seconds: 0,
+            next_call_arrival_elapsed_seconds: 0,
             resolved: 0,
             earned: 0,
             deductions: 0,
@@ -300,15 +307,16 @@ impl Backend {
             last_input_json: None,
             last_output_json: None,
         };
-        backend.refill_calls(backend.config.active_calls);
         backend
     }
     pub fn new_simple_hardware_demo() -> Self {
         let mut backend = Self::new_exchange();
-        backend.call_target = 2;
+        backend.call_target = backend.config.active_calls;
         backend.line_limit = 6;
         backend.tts_prepared = true;
         backend.calls.clear();
+        backend.next_call_arrival_elapsed_seconds = backend.elapsed_seconds() as u64;
+        backend.config.call_arrival_interval_seconds = 0;
         backend.refill_calls(2);
         backend.state.calls = backend
             .calls
@@ -419,6 +427,7 @@ impl Backend {
         self.failed = 0;
         self.conversation_seconds = 0;
         self.shift_started_elapsed_seconds = 0;
+        self.next_call_arrival_elapsed_seconds = 0;
         self.audio_queue.clear();
         self.audio_call = None;
         self.audio_sequence = 0;
@@ -455,6 +464,24 @@ impl Backend {
 
     pub fn debug_snapshot(&self) -> DebugSnapshot {
         let calls = self.state.calls.clone();
+        let now = self.elapsed_seconds() as u64;
+        let active_calls = self
+            .calls
+            .iter()
+            .map(|call| DebugActiveCall {
+                caller_line: call.caller,
+                requested_callee_line: call.callee,
+                phase: call.phase.clone(),
+                started_elapsed_seconds: call.started_elapsed_seconds,
+                patience_deadline_elapsed_seconds: call.deadline,
+                patience_remaining_seconds: call.deadline.saturating_sub(now),
+                ring_started_elapsed_seconds: call.ring_started_at,
+                last_crank_timestamp: call.last_crank_timestamp,
+                crank_samples: call.crank_samples,
+                connected_elapsed_seconds: call.connected_elapsed_seconds,
+                audio_duration_seconds: call.audio_duration_seconds,
+            })
+            .collect();
         let subscribers = (0..LINES)
             .map(|line| {
                 let active = self.state.line_lamps[line as usize];
@@ -482,6 +509,7 @@ impl Backend {
             },
             shift: self.state.shift.clone(),
             calls,
+            active_calls,
             call_history: self.call_history.clone(),
             subscribers,
             story: DebugStoryState {
@@ -568,6 +596,9 @@ impl Backend {
         self.sequence = Some(message.input_sequence);
         let input = &message.input;
         self.debug_elapsed = self.debug_elapsed.saturating_add(0);
+        if self.state.shift.phase == ShiftPhase::Ready && self.calls.is_empty() {
+            self.refill_calls(self.call_target);
+        }
         if self.state.shift.phase == ShiftPhase::Settled
             && self.state.shift.number < 3
             && self.state.game_phase != GamePhase::Ended
@@ -575,6 +606,7 @@ impl Backend {
             self.refill_calls(self.call_target);
         }
         self.expire_calls();
+        self.refill_calls(self.call_target);
         if self.state.shift.phase == ShiftPhase::Active
             && self.elapsed_seconds() as u64
                 >= self.shift_started_elapsed_seconds + self.config.shift_duration_seconds
@@ -619,6 +651,7 @@ impl Backend {
         {
             self.fail_call(index, "wrong_destination");
         }
+        self.refill_calls(self.call_target);
         self.revision = self.revision.wrapping_add(1);
         self.state.clock.elapsed_seconds = self.elapsed_seconds();
         self.state.directory_pages = directory_pages(input.directory_digits);
@@ -853,6 +886,7 @@ impl Backend {
     }
 
     fn connect_call(&mut self, index: usize) {
+        let connected_elapsed_seconds = self.elapsed_seconds() as u64;
         let Some((caller, callee)) = self.calls.get(index).map(|call| (call.caller, call.callee))
         else {
             return;
@@ -863,6 +897,7 @@ impl Backend {
         if self.tts_prepared {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
+            call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
             call.audio_duration_seconds = 2;
         } else {
             call.phase = CallPhase::Held;
@@ -873,6 +908,7 @@ impl Backend {
     }
 
     fn install_generated_audio(&mut self, caller: u8, callee: u8, samples: Vec<i16>) {
+        let connected_elapsed_seconds = self.elapsed_seconds() as u64;
         let Some(call) = self.calls.iter_mut().find(|call| {
             call.caller == caller && call.callee == callee && call.phase == CallPhase::Held
         }) else {
@@ -884,6 +920,7 @@ impl Backend {
         call.audio_duration_seconds = duration;
         call.phase = CallPhase::Connected;
         call.connected_at = Some(Instant::now());
+        call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
         self.audio_call = Some((caller, callee));
         let sequence = self.audio_sequence;
         let timestamp = self.audio_timestamp;
@@ -956,6 +993,8 @@ impl Backend {
         self.call_history.push(DebugCallRecord {
             caller_line: call.caller,
             requested_callee_line: call.callee,
+            started_elapsed_seconds: call.started_elapsed_seconds,
+            patience_deadline_elapsed_seconds: call.deadline,
             final_phase: if missed {
                 CallPhase::Missed
             } else {
@@ -986,7 +1025,6 @@ impl Backend {
             self.money += seconds as i32;
         }
         self.state.shift.completed_routings = self.completed;
-        self.refill_calls(self.call_target);
     }
 
     fn fail_call(&mut self, index: usize, reason: &str) {
@@ -994,6 +1032,8 @@ impl Backend {
         self.call_history.push(DebugCallRecord {
             caller_line: call.caller,
             requested_callee_line: call.callee,
+            started_elapsed_seconds: call.started_elapsed_seconds,
+            patience_deadline_elapsed_seconds: call.deadline,
             final_phase: CallPhase::Failed,
             outcome: "failed".into(),
             reason: reason.into(),
@@ -1003,7 +1043,6 @@ impl Backend {
         self.failed += 1;
         self.deductions += 2;
         self.money -= 2;
-        self.refill_calls(self.call_target);
     }
 
     fn fail_generated_call(&mut self, caller: u8, callee: u8) {
@@ -1037,6 +1076,8 @@ impl Backend {
             self.call_history.push(DebugCallRecord {
                 caller_line: call.caller,
                 requested_callee_line: call.callee,
+                started_elapsed_seconds: call.started_elapsed_seconds,
+                patience_deadline_elapsed_seconds: call.deadline,
                 final_phase: call.phase,
                 outcome: "shift_ended".into(),
                 reason: "shift duration ended before this Call resolved".into(),
@@ -1091,21 +1132,30 @@ impl Backend {
         }
         if starting_shift {
             self.shift_started_elapsed_seconds = self.elapsed_seconds() as u64;
+            self.next_call_arrival_elapsed_seconds = self.shift_started_elapsed_seconds;
         }
-        while self.calls.len() < count.min(self.call_target) && self.state.shift.number <= 3 {
+        let now = self.elapsed_seconds() as u64;
+        while self.calls.len() < count.min(self.call_target)
+            && self.state.shift.number <= 3
+            && now >= self.next_call_arrival_elapsed_seconds
+        {
             let (caller, callee) = self.next_call();
-            let deadline = self.elapsed_seconds() as u64 + self.random_patience();
+            let deadline = now + self.random_patience();
             self.calls.push(ActiveCall {
                 caller,
                 callee,
                 phase: CallPhase::Waiting,
                 deadline,
+                started_elapsed_seconds: now,
                 connected_at: None,
+                connected_elapsed_seconds: None,
                 ring_started_at: None,
                 last_crank_timestamp: 0,
                 crank_samples: 0,
                 audio_duration_seconds: 2,
             });
+            self.next_call_arrival_elapsed_seconds =
+                now.saturating_add(self.config.call_arrival_interval_seconds);
         }
         self.state.shift.phase = ShiftPhase::Active;
         self.state.game_phase = GamePhase::Shift;
@@ -1156,7 +1206,9 @@ impl Backend {
         match request.command {
             DebugCommand::ResetRun => self.reset_run(),
             DebugCommand::AdvanceTime { seconds } => {
-                self.debug_elapsed = self.debug_elapsed.saturating_add(u64::from(seconds))
+                self.debug_elapsed = self.debug_elapsed.saturating_add(u64::from(seconds));
+                self.expire_calls();
+                self.refill_calls(self.call_target);
             }
             DebugCommand::InjectCall {
                 caller_line,
@@ -1178,7 +1230,9 @@ impl Backend {
                         callee: callee_line,
                         phase: CallPhase::Waiting,
                         deadline: self.elapsed_seconds() as u64 + 30,
+                        started_elapsed_seconds: self.elapsed_seconds() as u64,
                         connected_at: None,
+                        connected_elapsed_seconds: None,
                         ring_started_at: None,
                         last_crank_timestamp: 0,
                         crank_samples: 0,

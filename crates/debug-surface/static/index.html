@@ -237,19 +237,26 @@
       document.getElementById('voice-response').textContent = voice.response_text || '-';
       document.getElementById('errors').innerHTML = failures.length ? failures.map(error => `<div class="conversation failed"><div><div class="conversation-id">${esc(error.code)}</div><span class="badge failed">failure</span></div><div class="conversation-copy"><p>${esc(error.message)}</p></div><div class="muted">backend diagnostic</div></div>`).join('') : '<div class="empty">No failures retained.</div>';
       document.getElementById('voice-history').innerHTML = conversations.length ? [...conversations].reverse().map(conversationCard).join('') : '<div class="empty">No voice conversations retained.</div>';
-      const activeCalls = (snapshot.calls || []).map(call => ({...call, status: 'active'}));
+       const activeCalls = (snapshot.active_calls || snapshot.calls || []).map(call => ({
+         ...call,
+         status: 'active',
+         phase: call.phase,
+         reason: call.patience_remaining_seconds === 0 ? 'patience expired' : 'in progress',
+       }));
       const finishedCalls = (snapshot.call_history || []).map(call => ({
         caller_line: call.caller_line,
         requested_callee_line: call.requested_callee_line,
         phase: call.final_phase,
         status: call.outcome,
         reason: call.reason,
-        finished_elapsed_seconds: call.finished_elapsed_seconds,
-      }));
-      document.getElementById('calls').innerHTML = table(
-        [...finishedCalls.reverse(), ...activeCalls],
-        ['caller_line', 'requested_callee_line', 'phase', 'status', 'reason', 'finished_elapsed_seconds'],
-      );
+         finished_elapsed_seconds: call.finished_elapsed_seconds,
+         started_elapsed_seconds: call.started_elapsed_seconds,
+         patience_deadline_elapsed_seconds: call.patience_deadline_elapsed_seconds,
+       }));
+       document.getElementById('calls').innerHTML = table(
+         [...finishedCalls.reverse(), ...activeCalls],
+         ['caller_line', 'requested_callee_line', 'phase', 'status', 'reason', 'started_elapsed_seconds', 'patience_deadline_elapsed_seconds', 'patience_remaining_seconds', 'ring_started_elapsed_seconds', 'last_crank_timestamp', 'crank_samples', 'connected_elapsed_seconds', 'audio_duration_seconds', 'finished_elapsed_seconds'],
+       );
        document.getElementById('subscribers').innerHTML = table(snapshot.subscribers, ['id', 'name', 'line', 'status', 'availability', 'pressure', 'current_goal', 'status_flags']);
      }
 
