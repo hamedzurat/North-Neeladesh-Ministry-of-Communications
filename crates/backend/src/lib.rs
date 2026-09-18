@@ -1480,7 +1480,8 @@ impl Backend {
         } else {
             (None, None)
         };
-        let monitoring_story = self.story_node_id == "shift_3_call"
+        let monitoring_story = self.simple_hardware_mode
+            || self.story_node_id == "shift_3_call"
             || self.story_node_id.starts_with("intercepted_signal")
             || self.story_node_id.starts_with("hardware_demo");
         let ptt = input.held_controls.ptt;
@@ -2673,6 +2674,9 @@ impl Backend {
     }
 
     fn voice_id_for_line(&self, line: u8) -> String {
+        if self.simple_hardware_mode {
+            return format!("neutral-line-{line}");
+        }
         self.story
             .subscriber_id_for_line(line)
             .map_or_else(|| "Ryan".to_string(), select_voice_id)
@@ -4572,10 +4576,15 @@ fn run_voice_worker_session(
         } else {
             Box::new(CommandDialogueGenerator::new(dialogue))
         };
+    let response_context = if voice_id.starts_with("neutral-line-") {
+        neutral_response_context(subscriber_line, callee_line, voice_id, operator_knowledge)
+    } else {
+        north_response_context(subscriber_line, callee_line, voice_id, operator_knowledge)
+    };
     let mut session = OperatorSession::new(
         input.session_id,
         input.state_revision,
-        north_response_context(subscriber_line, callee_line, voice_id, operator_knowledge),
+        response_context,
         Box::new(ReceivedCapture::new(input.samples)),
         Box::new(CommandSpeechToText::new(stt)),
         dialogue,
@@ -4584,6 +4593,56 @@ fn run_voice_worker_session(
     )?;
     session.start_ptt()?;
     session.release_ptt().map(|_| ())
+}
+
+fn neutral_response_context(
+    subscriber_line: u8,
+    callee_line: Option<u8>,
+    voice_id: String,
+    operator_knowledge: Vec<String>,
+) -> ResponseContext {
+    let (name, role, note) = simple_directory_user(subscriber_line);
+    let caller_place = simple_place_for_line(subscriber_line);
+    let requested_place = callee_line
+        .map(simple_place_for_line)
+        .unwrap_or("the requested place");
+    let mut permitted_knowledge = vec![KnowledgeRecord {
+        fact: format!("{name} is calling from {caller_place}"),
+        learned_from: "neutral_exchange".to_string(),
+    }];
+    permitted_knowledge.extend(operator_knowledge.into_iter().map(|fact| KnowledgeRecord {
+        fact,
+        learned_from: "tap_bridge_monitoring".to_string(),
+    }));
+    ResponseContext {
+        profile: SubscriberProfile {
+            subscriber_id: subscriber_line,
+            name: name.to_string(),
+            voice_id,
+            personality: format!("{role}; {note}"),
+            baseline_goals: vec![format!("Reach {requested_place}")],
+            initial_perspective: "An ordinary subscriber using the telephone exchange".to_string(),
+            relationships: Vec::new(),
+            permitted_actions: vec!["request_routing".to_string()],
+        },
+        caller_place: caller_place.to_string(),
+        requested_place: requested_place.to_string(),
+        known_places: (0..SIMPLE_SUBSCRIBER_LINES)
+            .map(simple_place_for_line)
+            .map(str::to_string)
+            .collect(),
+        subscriber_goal: format!("Reach {requested_place}"),
+        call_premise: format!(
+            "Ask the Exchange Operator to connect you to {requested_place}. Answer destination, identity, and harmless personal questions plainly."
+        ),
+        story_beat_direction: "This is flavour dialogue only. Do not invent consequences, flags, factions, or story state.".to_string(),
+        permitted_knowledge,
+        beliefs: Vec::new(),
+        relationship_notes: Vec::new(),
+        memories: Vec::new(),
+        recent_conversation: Vec::new(),
+        current_input: None,
+    }
 }
 
 fn north_response_context(
