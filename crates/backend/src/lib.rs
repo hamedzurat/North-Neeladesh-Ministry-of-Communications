@@ -860,6 +860,19 @@ impl Backend {
 
     fn settle_shift(&mut self) {
         let shift_number = self.state.shift.number;
+        let finished_elapsed_seconds = self.elapsed_seconds();
+        for call in self.calls.drain(..) {
+            self.call_history.push(DebugCallRecord {
+                caller_line: call.caller,
+                requested_callee_line: call.callee,
+                final_phase: call.phase,
+                outcome: "shift_ended".into(),
+                reason: "shift quota reached before this Call resolved".into(),
+                finished_elapsed_seconds,
+            });
+        }
+        self.audio_queue.clear();
+        self.audio_call = None;
         append_printer(
             &mut self.state,
             &format!(
@@ -884,7 +897,6 @@ impl Backend {
             self.state.game_phase = GamePhase::Ended;
         }
         self.state.shift.phase = ShiftPhase::Settled;
-        self.calls.clear();
         self.state.calls.clear();
         self.state.call = None;
         self.state.line_lamps = [false; 12];
