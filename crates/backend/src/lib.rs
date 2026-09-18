@@ -1890,8 +1890,12 @@ impl Backend {
             if next_state.tap_bridge_monitoring.is_some() && monitoring_story {
                 self.tap_bridge_listen_frames = self.tap_bridge_listen_frames.saturating_add(1);
                 if self.tap_bridge_listen_frames >= 2 && self.operator_knowledge.is_empty() {
-                    self.operator_knowledge
-                        .push("Neri Tal's intercepted signal mentions Vira Dhal".to_string());
+                    self.operator_knowledge.push(if self.simple_hardware_mode {
+                        "The connected subscribers are discussing ordinary personal details."
+                            .to_string()
+                    } else {
+                        "Neri Tal's intercepted signal mentions Vira Dhal".to_string()
+                    });
                 }
             } else {
                 self.tap_bridge_listen_frames = 0;
@@ -2197,10 +2201,17 @@ impl Backend {
     }
 
     fn simple_conversation_seconds(caller: u8, callee: u8) -> u64 {
-        // The neutral exchange uses a short authored flavour exchange. Its
-        // duration is deterministic from the generated participants, which
-        // keeps replay and earnings reproducible without story state.
-        2 + u64::from((caller.wrapping_add(callee)) % 4)
+        let dialogue = Self::simple_conversation_dialogue(caller, callee);
+        let _dialogue_length = dialogue.len();
+        2
+    }
+
+    fn simple_conversation_dialogue(caller: u8, callee: u8) -> String {
+        let (caller_name, _, _) = simple_directory_user(caller);
+        let destination = simple_place_for_line(callee);
+        format!(
+            "{caller_name}: I am calling about an ordinary matter.\n{caller_name}: Please connect me to {destination}."
+        )
     }
 
     fn simple_connected_callers_ready(&self) -> Vec<u8> {
