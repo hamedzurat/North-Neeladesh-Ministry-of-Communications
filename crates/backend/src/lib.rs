@@ -455,7 +455,7 @@ impl Backend {
             && let Some(line) = focused
             && let Some(index) = self.calls.iter().position(|call| call.caller == line)
         {
-            self.fail_call(index);
+            self.fail_call(index, "wrong_destination");
         }
         self.revision = self.revision.wrapping_add(1);
         self.state.clock.elapsed_seconds = self.elapsed_seconds();
@@ -782,6 +782,11 @@ impl Backend {
                 CallPhase::Completed
             },
             outcome: if missed { "missed" } else { "completed" }.into(),
+            reason: if missed {
+                "caller patience expired".into()
+            } else {
+                "direct circuit completed".into()
+            },
             finished_elapsed_seconds: self.elapsed_seconds(),
         });
         if self.audio_call == Some((call.caller, call.callee)) {
@@ -808,13 +813,14 @@ impl Backend {
         }
     }
 
-    fn fail_call(&mut self, index: usize) {
+    fn fail_call(&mut self, index: usize, reason: &str) {
         let call = self.calls.remove(index);
         self.call_history.push(DebugCallRecord {
             caller_line: call.caller,
             requested_callee_line: call.callee,
             final_phase: CallPhase::Failed,
             outcome: "failed".into(),
+            reason: reason.into(),
             finished_elapsed_seconds: self.elapsed_seconds(),
         });
         self.resolved = self.resolved.saturating_add(1);
@@ -834,7 +840,7 @@ impl Backend {
             .iter()
             .position(|call| call.caller == caller && call.callee == callee)
         {
-            self.fail_call(index);
+            self.fail_call(index, "tts_generation_failed");
         }
     }
 

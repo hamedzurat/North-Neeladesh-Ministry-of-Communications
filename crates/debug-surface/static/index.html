@@ -243,11 +243,12 @@
         requested_callee_line: call.requested_callee_line,
         phase: call.final_phase,
         status: call.outcome,
+        reason: call.reason,
         finished_elapsed_seconds: call.finished_elapsed_seconds,
       }));
       document.getElementById('calls').innerHTML = table(
         [...finishedCalls.reverse(), ...activeCalls],
-        ['caller_line', 'requested_callee_line', 'phase', 'status', 'finished_elapsed_seconds'],
+        ['caller_line', 'requested_callee_line', 'phase', 'status', 'reason', 'finished_elapsed_seconds'],
       );
        document.getElementById('subscribers').innerHTML = table(snapshot.subscribers, ['id', 'name', 'line', 'status', 'availability', 'pressure', 'current_goal', 'status_flags']);
      }

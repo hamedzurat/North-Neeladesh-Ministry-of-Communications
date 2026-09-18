@@ -378,6 +378,7 @@ pub struct DebugCallRecord {
     pub requested_callee_line: u8,
     pub final_phase: CallPhase,
     pub outcome: String,
+    pub reason: String,
     pub finished_elapsed_seconds: u32,
 }
 
