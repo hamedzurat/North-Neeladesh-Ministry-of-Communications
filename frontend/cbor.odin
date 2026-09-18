@@ -14,7 +14,7 @@ input_to_cbor :: proc(input: Input_Intent, input_sequence, expected_state_revisi
 		entry("cord_topology", cords_to_cbor(input.cord_topology[:])),
 		entry("held_controls", held_to_cbor(input.held_controls)),
 		entry("directory_digits", digits_to_cbor(input.directory_digits)),
-		entry("ring_line", input.ring_line),
+		entry("ring_line", ring_line_to_cbor(input.ring_line)),
 		entry("tuning", cbor_map({entry("coarse", input.tuning.coarse), entry("fine", input.tuning.fine)})),
 		entry("debug", debug),
 	})
@@ -24,6 +24,11 @@ input_to_cbor :: proc(input: Input_Intent, input_sequence, expected_state_revisi
 		entry("expected_state_revision", expected_state_revision),
 		entry("input", input_state),
 	})
+}
+
+ring_line_to_cbor :: proc(line: i16) -> cbor.Value {
+	if line < 0 do return cbor.Negative_U8(u8(-1 - line))
+	return u8(line)
 }
 
 held_to_cbor :: proc(held: Held) -> cbor.Value {
