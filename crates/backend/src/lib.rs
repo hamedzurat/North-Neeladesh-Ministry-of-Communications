@@ -941,7 +941,7 @@ impl Backend {
     }
     fn random_patience(&mut self) -> u64 {
         self.rng = self.rng.wrapping_mul(6364136223846793005).wrapping_add(1);
-        20 + self.rng % 41
+        16 + self.rng % 17
     }
     fn random_quota(&mut self) -> u8 {
         self.rng = self.rng.wrapping_mul(6364136223846793005).wrapping_add(1);
