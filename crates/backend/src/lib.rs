@@ -150,12 +150,12 @@ impl Default for GameConfig {
     fn default() -> Self {
         Self {
             subscribers: default_subscribers(),
-            active_calls: 1,
+            active_calls: 3,
             patience_min_seconds: 32,
             patience_max_seconds: 64,
             ring_grace_seconds: 16,
             shift_duration_seconds: 90,
-            call_arrival_interval_seconds: 8,
+            call_arrival_interval_seconds: 0,
         }
     }
 }

@@ -37,10 +37,10 @@ fn cord(first: PortId, second: PortId) -> CordConnection {
 }
 
 #[test]
-fn live_hardware_loop_keeps_calls_on_lines_zero_through_five() {
+fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
     let mut backend = Backend::new_simple_hardware_demo();
     let waiting = backend.apply_input_message(input(&backend, 1, vec![], 1, [0; 4]));
-    assert_eq!(waiting.output.calls.len(), 1);
+    assert_eq!(waiting.output.calls.len(), 3);
     assert!(
         waiting
             .output
@@ -55,7 +55,7 @@ fn live_hardware_loop_keeps_calls_on_lines_zero_through_five() {
             .iter()
             .all(|call| call.caller_line != call.requested_callee_line)
     );
-    assert_eq!(waiting.output.shift.active_call_count, 1);
+    assert_eq!(waiting.output.shift.active_call_count, 3);
     assert!(
         waiting.output.directory_pages[0]
             .lines
@@ -69,7 +69,7 @@ fn live_hardware_loop_keeps_calls_on_lines_zero_through_five() {
             .iter()
             .filter(|lamp| **lamp)
             .count(),
-        1
+        3
     );
 
     let first = waiting.output.calls[0].clone();
@@ -206,8 +206,8 @@ fn live_hardware_loop_keeps_calls_on_lines_zero_through_five() {
         first.requested_callee_line,
         [0; 4],
     ));
-    assert_eq!(next.output.calls.len(), 1);
-    assert_eq!(next.output.shift.active_call_count, 1);
+    assert_eq!(next.output.calls.len(), 3);
+    assert_eq!(next.output.shift.active_call_count, 3);
     assert!(
         !next
             .output
@@ -221,7 +221,7 @@ fn live_hardware_loop_keeps_calls_on_lines_zero_through_five() {
 fn simple_hardware_failure_prints_a_cost() {
     let mut backend = Backend::new_simple_hardware_demo();
     let waiting = backend.apply_input_message(input(&backend, 1, vec![], 1, [0; 4]));
-    assert_eq!(waiting.output.calls.len(), 1);
+    assert_eq!(waiting.output.calls.len(), 3);
     backend.apply_debug_command(exchange_protocol::DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
         command: DebugCommand::AdvanceTime { seconds: 65 },
