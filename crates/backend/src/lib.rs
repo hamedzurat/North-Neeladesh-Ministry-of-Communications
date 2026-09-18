@@ -1226,21 +1226,36 @@ impl Backend {
             calls: self.state.calls.clone(),
             subscribers,
             story: DebugStoryState {
-                current_node_id: self.story_node_id.clone(),
-                frontier: self.story.outgoing(&self.story_node_id).to_vec(),
-                current_story_beat,
+                current_node_id: if self.simple_hardware_mode {
+                    "neutral_exchange".to_string()
+                } else {
+                    self.story_node_id.clone()
+                },
+                frontier: if self.simple_hardware_mode {
+                    Vec::new()
+                } else {
+                    self.story.outgoing(&self.story_node_id).to_vec()
+                },
+                current_story_beat: if self.simple_hardware_mode {
+                    None
+                } else {
+                    current_story_beat
+                },
                 interference_reduced: self.interference_reduced,
                 interference_level: self.state.interference_level,
                 operator_knowledge: self.operator_knowledge.clone(),
-                graph: self
-                    .story
-                    .nodes()
-                    .map(|node| DebugStoryNode {
-                        id: node.id.clone(),
-                        kind: story_node_kind_label(&node.kind),
-                        outgoing: self.story.outgoing(&node.id).to_vec(),
-                    })
-                    .collect(),
+                graph: if self.simple_hardware_mode {
+                    Vec::new()
+                } else {
+                    self.story
+                        .nodes()
+                        .map(|node| DebugStoryNode {
+                            id: node.id.clone(),
+                            kind: story_node_kind_label(&node.kind),
+                            outgoing: self.story.outgoing(&node.id).to_vec(),
+                        })
+                        .collect()
+                },
             },
             counters: DebugCounters {
                 completed_routings: self.state.shift.completed_routings,
@@ -2442,6 +2457,7 @@ impl Backend {
                     .iter()
                     .find(|call| call.phase == exchange_protocol::CallPhase::Connected)
                 {
+                    self.simple_audio_duration[call.caller_line as usize] = None;
                     self.pending_neutral_conversation =
                         Some((call.caller_line, call.requested_callee_line));
                 }
