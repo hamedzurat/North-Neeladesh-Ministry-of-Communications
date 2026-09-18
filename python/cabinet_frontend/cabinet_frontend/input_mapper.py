@@ -41,7 +41,7 @@ class PhysicalInputSource:
         pair_scan_interval: float = 2.0,
         clock_ms: Callable[[], int] | None = None,
         controls: Controls | None = None,
-        crank_detents_per_rotation: int = 16,
+        crank_detents_per_rotation: int = 2,
         status_interval: float = 5.0,
         tuning: tuple[int, int] = (0, 0),
     ) -> None:

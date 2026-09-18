@@ -1159,11 +1159,18 @@ fn has_wrong_direct_circuit(input: &InputState, caller: u8, callee: u8) -> bool 
     })
 }
 fn crank(input: &InputState) -> bool {
-    input.crank_rotation_timestamps[3] > 0
-        && input
-            .crank_rotation_timestamps
-            .windows(2)
-            .all(|timestamps| timestamps[1] > timestamps[0])
+    let timestamps = input
+        .crank_rotation_timestamps
+        .iter()
+        .copied()
+        .filter(|timestamp| *timestamp > 0)
+        .collect::<Vec<_>>();
+    timestamps.len() >= 2
+        && timestamps.windows(2).all(|pair| pair[1] > pair[0])
+        && timestamps
+            .last()
+            .zip(timestamps.first())
+            .is_some_and(|(latest, earliest)| latest.saturating_sub(*earliest) <= 16_000)
 }
 fn configured_tts() -> Result<Box<dyn TextToSpeech>, VoiceError> {
     let command = CommandSpec::from_words(&env::var("NN_VOICE_TTS_COMMAND").map_err(|_| {
