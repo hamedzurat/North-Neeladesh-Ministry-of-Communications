@@ -230,6 +230,7 @@ pub struct Backend {
     voice_transcript: Option<String>,
     voice_response_text: Option<String>,
     voice_speaker_active: bool,
+    cancelled_voice_turn: Option<u64>,
     voice_conversations: Vec<DebugVoiceConversation>,
     next_voice_conversation_id: u64,
     last_input_json: Option<String>,
@@ -300,6 +301,7 @@ impl Backend {
             voice_transcript: None,
             voice_response_text: None,
             voice_speaker_active: false,
+            cancelled_voice_turn: None,
             voice_conversations: Vec::new(),
             next_voice_conversation_id: 1,
             last_input_json: None,
@@ -443,6 +445,7 @@ impl Backend {
         self.voice_transcript = None;
         self.voice_response_text = None;
         self.voice_speaker_active = false;
+        self.cancelled_voice_turn = None;
         self.voice_conversations.clear();
         self.next_voice_conversation_id = 1;
         self.refill_calls(self.call_target);
@@ -673,6 +676,7 @@ impl Backend {
         self.state.tap_bridge_monitoring = tap_monitor(input, &self.state);
         self.state.tap_bridge_audio_active = self.state.tap_bridge_monitoring.is_some();
         self.update_voice_control(input, self.revision);
+        self.cancel_voice_if_operator_disconnected(input);
         self.state.speaker_active = (input.held_controls.ptt
             && !self.state.tap_bridge_audio_active)
             || self.voice_speaker_active;
@@ -714,6 +718,7 @@ impl Backend {
         let caller = operator_line(&input.cord_topology)
             .or_else(|| self.state.call.as_ref().map(|call| call.caller_line));
         if ptt {
+            self.cancelled_voice_turn = None;
             self.voice_subscriber_line = caller;
             self.voice_callee_line = caller.and_then(|line| {
                 self.calls
@@ -740,6 +745,47 @@ impl Backend {
             },
         });
         self.voice_state_revision = revision;
+    }
+
+    fn cancel_voice_if_operator_disconnected(&mut self, input: &InputState) {
+        let Some(line) = self.voice_subscriber_line else {
+            return;
+        };
+        if operator_line(&input.cord_topology) == Some(line) {
+            return;
+        }
+        let active = self.voice_speaker_active
+            || self
+                .voice_status
+                .is_some_and(|status| !status.is_terminal());
+        if !active {
+            return;
+        }
+        self.cancelled_voice_turn = Some(self.voice_turn_id);
+        self.voice_status = Some(VoiceStatus::Cancelled);
+        self.voice_speaker_active = false;
+        self.audio_queue.clear();
+        self.audio_call = None;
+        let finished_elapsed_seconds = self.elapsed_seconds();
+        for conversation in &mut self.voice_conversations {
+            if conversation.session_id == self.voice_session_id
+                && conversation.turn_id == self.voice_turn_id
+                && !conversation
+                    .status
+                    .is_some_and(|status| status.is_terminal())
+            {
+                conversation.status = Some(VoiceStatus::Cancelled);
+                conversation.finished_elapsed_seconds = Some(finished_elapsed_seconds);
+            }
+        }
+        self.pending_voice_control = Some(VoiceControlMessage {
+            protocol_version: VOICE_PROTOCOL_VERSION,
+            session_id: self.voice_session_id,
+            turn_id: self.voice_turn_id.max(1),
+            state_revision: self.revision,
+            voice_id: self.subscriber(line).voice_id.clone(),
+            control: VoiceControl::Cancel,
+        });
     }
 
     fn advance(
@@ -1777,6 +1823,9 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                 return;
                             }
                         };
+                        if voice_turn_cancelled(&worker_backend, input.turn_id) {
+                            return;
+                        }
                         let status = VoiceStatusMessage {
                             protocol_version: VOICE_PROTOCOL_VERSION,
                             session_id: input.session_id,
@@ -1808,6 +1857,9 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                             let _ = worker_socket.send_to(&datagram, address);
                         }
                         for (index, chunk) in audio.chunks(VOICE_AUDIO_PACKET_SAMPLES).enumerate() {
+                            if voice_turn_cancelled(&worker_backend, input.turn_id) {
+                                return;
+                            }
                             let packet = RtpL16Packet {
                                 marker: index == 0,
                                 sequence: index as u16,
@@ -1816,6 +1868,9 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                 samples: chunk.to_vec(),
                             };
                             let _ = worker_socket.send_to(&packet.encode(), address);
+                        }
+                        if voice_turn_cancelled(&worker_backend, input.turn_id) {
+                            return;
                         }
                         let completed = VoiceStatusMessage {
                             protocol_version: VOICE_PROTOCOL_VERSION,
@@ -1909,6 +1964,13 @@ fn generate_operator_response(
         ));
     }
     Ok((transcript, response, audio))
+}
+
+fn voice_turn_cancelled(backend: &Arc<Mutex<Backend>>, turn_id: u64) -> bool {
+    backend
+        .lock()
+        .ok()
+        .is_some_and(|state| state.cancelled_voice_turn == Some(turn_id))
 }
 
 pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
