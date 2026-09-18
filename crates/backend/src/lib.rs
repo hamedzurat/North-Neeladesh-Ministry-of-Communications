@@ -76,6 +76,8 @@ pub struct Backend {
     tts_prepared: bool,
     last_ptt: bool,
     voice_peer: Option<SocketAddr>,
+    voice_session_id: u64,
+    voice_state_revision: u64,
     pending_voice_control: Option<VoiceControlMessage>,
     voice_turn_id: u64,
     next_voice_turn_id: u64,
@@ -84,6 +86,7 @@ pub struct Backend {
     voice_status: Option<VoiceStatus>,
     voice_transcript: Option<String>,
     voice_response_text: Option<String>,
+    voice_speaker_active: bool,
 }
 
 impl Default for Backend {
@@ -128,6 +131,8 @@ impl Backend {
             tts_prepared: false,
             last_ptt: false,
             voice_peer: None,
+            voice_session_id: 0,
+            voice_state_revision: 0,
             pending_voice_control: None,
             voice_turn_id: 0,
             next_voice_turn_id: 1,
@@ -136,6 +141,7 @@ impl Backend {
             voice_status: None,
             voice_transcript: None,
             voice_response_text: None,
+            voice_speaker_active: false,
         };
         backend.quota = backend.random_quota();
         backend.refill_calls(MAX_CALLS);
@@ -183,9 +189,27 @@ impl Backend {
         Some((self.pending_voice_control.take()?, self.voice_peer?))
     }
 
-    fn set_voice_peer(&mut self, peer: SocketAddr, status: VoiceStatus) {
+    fn set_voice_peer(&mut self, peer: SocketAddr, message: &VoiceStatusMessage) -> bool {
+        if message.session_id != 1 {
+            return false;
+        }
+        if let Some(existing) = self.voice_peer {
+            if existing != peer {
+                return false;
+            }
+        }
         self.voice_peer = Some(peer);
-        self.voice_status = Some(status);
+        self.voice_session_id = message.session_id;
+        self.voice_status = Some(message.status);
+        true
+    }
+
+    fn voice_input_is_current(&self, input: &exchange_protocol::VoiceInputAudioMessage) -> bool {
+        self.voice_peer.is_some()
+            && input.session_id == self.voice_session_id
+            && input.turn_id == self.voice_turn_id
+            && input.state_revision == self.voice_state_revision
+            && !self.state.tap_bridge_audio_active
     }
 
     fn voice_context(&self, caller: u8, callee: u8) -> ResponseContext {
@@ -244,8 +268,11 @@ impl Backend {
         self.voice_subscriber_line = None;
         self.voice_callee_line = None;
         self.voice_status = None;
+        self.voice_session_id = 0;
+        self.voice_state_revision = 0;
         self.voice_transcript = None;
         self.voice_response_text = None;
+        self.voice_speaker_active = false;
         self.refill_calls(self.call_target);
         self.state.calls = self
             .calls
@@ -309,8 +336,8 @@ impl Backend {
             },
             voice: exchange_protocol::DebugVoiceState {
                 status: self.voice_status,
-                speaker_active: false,
-                session_id: self.voice_peer.map(|_| 1),
+                speaker_active: self.voice_speaker_active,
+                session_id: (self.voice_session_id != 0).then_some(self.voice_session_id),
                 turn_id: (self.voice_turn_id != 0).then_some(self.voice_turn_id),
                 transcript: self.voice_transcript.clone(),
                 response_text: self.voice_response_text.clone(),
@@ -479,6 +506,9 @@ impl Backend {
             return;
         }
         self.last_ptt = ptt;
+        if ptt && self.state.tap_bridge_audio_active {
+            return;
+        }
         let caller = operator_line(&input.cord_topology)
             .or_else(|| self.state.call.as_ref().map(|call| call.caller_line));
         if ptt {
@@ -507,6 +537,7 @@ impl Backend {
                 VoiceControl::ReleasePtt
             },
         });
+        self.voice_state_revision = revision;
     }
 
     fn advance(
@@ -604,6 +635,12 @@ impl Backend {
                         ));
                     }
                 }
+            }
+            CallPhase::Ringing if !ring && !direct_route => {
+                call.phase = CallPhase::AwaitingRouting;
+                call.ring_started_at = None;
+                call.last_crank_timestamp = 0;
+                call.crank_samples = 0;
             }
             CallPhase::Ringing if direct_route => {
                 error = Some((
@@ -904,17 +941,26 @@ impl Backend {
                 && callee_line < self.line_limit
                 && caller_line != callee_line =>
             {
-                self.calls.push(ActiveCall {
-                    caller: caller_line,
-                    callee: callee_line,
-                    phase: CallPhase::Waiting,
-                    deadline: self.elapsed_seconds() as u64 + 30,
-                    connected_at: None,
-                    ring_started_at: None,
-                    last_crank_timestamp: 0,
-                    crank_samples: 0,
-                    audio_duration_seconds: 2,
-                })
+                let available = self.calls.len() < self.call_target
+                    && self.calls.iter().all(|call| {
+                        call.caller != caller_line
+                            && call.callee != caller_line
+                            && call.caller != callee_line
+                            && call.callee != callee_line
+                    });
+                if available {
+                    self.calls.push(ActiveCall {
+                        caller: caller_line,
+                        callee: callee_line,
+                        phase: CallPhase::Waiting,
+                        deadline: self.elapsed_seconds() as u64 + 30,
+                        connected_at: None,
+                        ring_started_at: None,
+                        last_crank_timestamp: 0,
+                        crank_samples: 0,
+                        audio_duration_seconds: 2,
+                    })
+                }
             }
             _ => {}
         }
@@ -1256,11 +1302,18 @@ pub fn serve_voice(
             if let Ok(status) = decode_voice_status(&buffer[..length]) {
                 if status.protocol_version == VOICE_PROTOCOL_VERSION {
                     if let Ok(mut state) = backend.lock() {
-                        state.set_voice_peer(address, status.status);
+                        let _ = state.set_voice_peer(address, &status);
                     }
                 }
             } else if let Ok(input) = decode_voice_input_audio(&buffer[..length]) {
                 if input.protocol_version != VOICE_PROTOCOL_VERSION {
+                    continue;
+                }
+                if !backend
+                    .lock()
+                    .ok()
+                    .is_some_and(|state| state.voice_input_is_current(&input))
+                {
                     continue;
                 }
                 if input.chunk_index == 0 {
@@ -1290,12 +1343,17 @@ pub fn serve_voice(
                         .and_then(|state| state.voice_callee_line)
                         .unwrap_or(1);
                     let worker_socket = socket.try_clone()?;
+                    let worker_backend = Arc::clone(&backend);
                     thread::spawn(move || {
                         let result =
                             generate_operator_response(tts, context, caller, callee, samples);
                         let (transcript, response, audio) = match result {
                             Ok(value) => value,
                             Err(error) => {
+                                if let Ok(mut state) = worker_backend.lock() {
+                                    state.voice_status = Some(VoiceStatus::Failed);
+                                    state.voice_speaker_active = false;
+                                }
                                 let message = VoiceStatusMessage {
                                     protocol_version: VOICE_PROTOCOL_VERSION,
                                     session_id: input.session_id,
@@ -1325,6 +1383,12 @@ pub fn serve_voice(
                             response_text: Some(response),
                             error: None,
                         };
+                        if let Ok(mut state) = worker_backend.lock() {
+                            state.voice_status = Some(VoiceStatus::Playing);
+                            state.voice_speaker_active = true;
+                            state.voice_transcript = status.transcript.clone();
+                            state.voice_response_text = status.response_text.clone();
+                        }
                         if let Ok(datagram) = encode_voice_status(&status) {
                             let _ = worker_socket.send_to(&datagram, address);
                         }
@@ -1350,6 +1414,10 @@ pub fn serve_voice(
                         };
                         if let Ok(datagram) = encode_voice_status(&completed) {
                             let _ = worker_socket.send_to(&datagram, address);
+                        }
+                        if let Ok(mut state) = worker_backend.lock() {
+                            state.voice_status = Some(VoiceStatus::Completed);
+                            state.voice_speaker_active = false;
                         }
                     });
                 }
