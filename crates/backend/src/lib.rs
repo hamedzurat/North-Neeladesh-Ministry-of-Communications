@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::env;
 use std::io::{self, ErrorKind};
-use std::net::{TcpListener, TcpStream, UdpSocket};
+use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -12,15 +12,17 @@ use exchange_protocol::{
     DebugStoryState, DebugSubscriberState, FrameError, GamePhase, HeldControls, InputMessage,
     InputState, OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, RtpL16Packet,
     ShiftPhase, ShiftStatus, StateMessage, StateOutput, TuningState, VOICE_AUDIO_PACKET_SAMPLES,
-    VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl, VoiceStatus, VoiceStatusMessage,
-    decode_voice_control, encode_voice_status, read_frame, write_frame,
+    VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl, VoiceControlMessage,
+    VoiceStatus, VoiceStatusMessage, decode_voice_input_audio, decode_voice_status,
+    encode_voice_control, encode_voice_status, read_frame, write_frame,
 };
 use exchange_voice_daemon::{
-    CommandSpec, PersistentPocketTtsCommand, PersistentQwen3TtsCommand, Qwen3TtsCommand,
-    TextToSpeech, VoiceError,
+    CommandDialogueGenerator, CommandSpec, CommandSpeechToText, DialogueGenerator,
+    PersistentPocketTtsCommand, PersistentQwen3TtsCommand, Qwen3TtsCommand, ResponseContext,
+    SpeechToText, SubscriberProfile, TextToSpeech, VoiceError,
 };
 
-const LINES: u8 = 6;
+const LINES: u8 = 12;
 const MAX_CALLS: usize = 3;
 const MAX_AUDIO_PACKETS: usize = 4096;
 
@@ -51,6 +53,7 @@ pub struct Backend {
     debug_elapsed: u64,
     rng: u64,
     calls: Vec<ActiveCall>,
+    line_limit: u8,
     call_target: usize,
     quota: u8,
     resolved: u8,
@@ -66,9 +69,21 @@ pub struct Backend {
     last_response: Option<StateMessage>,
     tts_engine: TtsEngine,
     audio_queue: VecDeque<Vec<u8>>,
+    audio_call: Option<(u8, u8)>,
     audio_sequence: u16,
     audio_timestamp: u32,
     pending_tts: Vec<(u8, u8)>,
+    tts_prepared: bool,
+    last_ptt: bool,
+    voice_peer: Option<SocketAddr>,
+    pending_voice_control: Option<VoiceControlMessage>,
+    voice_turn_id: u64,
+    next_voice_turn_id: u64,
+    voice_subscriber_line: Option<u8>,
+    voice_callee_line: Option<u8>,
+    voice_status: Option<VoiceStatus>,
+    voice_transcript: Option<String>,
+    voice_response_text: Option<String>,
 }
 
 impl Default for Backend {
@@ -90,6 +105,7 @@ impl Backend {
             debug_elapsed: 0,
             rng: 0x4e45_454c_4144_4553,
             calls: Vec::new(),
+            line_limit: LINES,
             call_target: MAX_CALLS,
             quota: 4,
             resolved: 0,
@@ -105,9 +121,21 @@ impl Backend {
             last_response: None,
             tts_engine: TtsEngine::Qwen,
             audio_queue: VecDeque::new(),
+            audio_call: None,
             audio_sequence: 0,
             audio_timestamp: 0,
             pending_tts: Vec::new(),
+            tts_prepared: false,
+            last_ptt: false,
+            voice_peer: None,
+            pending_voice_control: None,
+            voice_turn_id: 0,
+            next_voice_turn_id: 1,
+            voice_subscriber_line: None,
+            voice_callee_line: None,
+            voice_status: None,
+            voice_transcript: None,
+            voice_response_text: None,
         };
         backend.quota = backend.random_quota();
         backend.refill_calls(MAX_CALLS);
@@ -116,25 +144,75 @@ impl Backend {
     pub fn new_simple_hardware_demo() -> Self {
         let mut backend = Self::new_exchange();
         backend.call_target = 2;
-        backend.calls.truncate(2);
-        backend.state.calls.truncate(2);
-        backend.state.shift.active_call_count = 2;
+        backend.line_limit = 6;
+        backend.tts_prepared = true;
+        backend.calls.clear();
+        backend.refill_calls(2);
+        backend.state.calls = backend
+            .calls
+            .iter()
+            .map(|call| CallStatus {
+                caller_line: call.caller,
+                requested_callee_line: call.callee,
+                phase: call.phase.clone(),
+            })
+            .collect();
+        backend.state.line_lamps = lamps(&backend.calls);
+        backend.state.shift.active_call_count = backend.calls.len() as u8;
         backend
     }
     pub fn new_simple_hardware_demo_with_printer_stress(_: bool) -> Self {
         Self::new_simple_hardware_demo()
     }
     pub fn new_hardware_demo() -> Self {
-        Self::new_exchange()
+        let mut backend = Self::new_exchange();
+        backend.tts_prepared = true;
+        backend
     }
     pub fn new_hardware_demo_with_printer_stress(_: bool) -> Self {
-        Self::new_exchange()
+        Self::new_hardware_demo()
     }
     pub fn frontend_state(&self) -> &StateOutput {
         &self.state
     }
     pub fn money(&self) -> i32 {
         self.money
+    }
+
+    fn take_voice_control(&mut self) -> Option<(VoiceControlMessage, SocketAddr)> {
+        Some((self.pending_voice_control.take()?, self.voice_peer?))
+    }
+
+    fn set_voice_peer(&mut self, peer: SocketAddr, status: VoiceStatus) {
+        self.voice_peer = Some(peer);
+        self.voice_status = Some(status);
+    }
+
+    fn voice_context(&self, caller: u8, callee: u8) -> ResponseContext {
+        let (name, role, preference) = directory_user(caller);
+        ResponseContext {
+            profile: SubscriberProfile {
+                subscriber_id: caller,
+                name: name.into(),
+                voice_id: format!("neutral-line-{caller}"),
+                personality: role.into(),
+                baseline_goals: vec![format!("Reach {}", simple_place(callee))],
+                initial_perspective: format!("Calling from {}", simple_place(caller)),
+                permitted_actions: vec!["request_routing".into()],
+            },
+            caller_place: simple_place(caller).into(),
+            requested_place: simple_place(callee).into(),
+            known_places: (0..LINES).map(simple_place).map(str::to_string).collect(),
+            subscriber_goal: format!("Reach {}", simple_place(callee)),
+            call_premise: format!("Request a connection to {}.", simple_place(callee)),
+            call_guidance: format!(
+                "Answer the Operator's question naturally. State the requested place when asked. You enjoy {}.",
+                preference
+            ),
+            permitted_knowledge: vec![],
+            recent_conversation: vec![],
+            current_input: None,
+        }
     }
 
     pub fn reset_run(&mut self) {
@@ -155,9 +233,19 @@ impl Backend {
         self.conversation_seconds = 0;
         self.quota = self.random_quota();
         self.audio_queue.clear();
+        self.audio_call = None;
         self.audio_sequence = 0;
         self.audio_timestamp = 0;
         self.pending_tts.clear();
+        self.last_ptt = false;
+        self.pending_voice_control = None;
+        self.voice_turn_id = 0;
+        self.next_voice_turn_id = 1;
+        self.voice_subscriber_line = None;
+        self.voice_callee_line = None;
+        self.voice_status = None;
+        self.voice_transcript = None;
+        self.voice_response_text = None;
         self.refill_calls(self.call_target);
         self.state.calls = self
             .calls
@@ -220,12 +308,12 @@ impl Backend {
                 active_call_count: self.state.shift.active_call_count,
             },
             voice: exchange_protocol::DebugVoiceState {
-                status: None,
+                status: self.voice_status,
                 speaker_active: false,
-                session_id: None,
-                turn_id: None,
-                transcript: None,
-                response_text: None,
+                session_id: self.voice_peer.map(|_| 1),
+                turn_id: (self.voice_turn_id != 0).then_some(self.voice_turn_id),
+                transcript: self.voice_transcript.clone(),
+                response_text: self.voice_response_text.clone(),
                 conversations: vec![],
             },
             frontend: DebugFrontendState {
@@ -358,6 +446,7 @@ impl Backend {
         self.state.shift.active_call_count = self.calls.len() as u8;
         self.state.tap_bridge_monitoring = tap_monitor(input, &self.state);
         self.state.tap_bridge_audio_active = self.state.tap_bridge_monitoring.is_some();
+        self.update_voice_control(input, self.revision);
         self.state.game_phase = if self.state.game_phase == GamePhase::Ended {
             GamePhase::Ended
         } else if self.state.shift.phase == ShiftPhase::Settled {
@@ -382,6 +471,42 @@ impl Backend {
             state_revision: self.revision,
             output: self.state.clone(),
         }
+    }
+
+    fn update_voice_control(&mut self, input: &InputState, revision: u64) {
+        let ptt = input.held_controls.ptt;
+        if ptt == self.last_ptt {
+            return;
+        }
+        self.last_ptt = ptt;
+        let caller = operator_line(&input.cord_topology)
+            .or_else(|| self.state.call.as_ref().map(|call| call.caller_line));
+        if ptt {
+            self.voice_subscriber_line = caller;
+            self.voice_callee_line = caller.and_then(|line| {
+                self.calls
+                    .iter()
+                    .find(|call| call.caller == line)
+                    .map(|call| call.callee)
+            });
+            self.voice_turn_id = self.next_voice_turn_id;
+            self.next_voice_turn_id = self.next_voice_turn_id.wrapping_add(1);
+        }
+        let voice_id = caller
+            .map(|line| format!("neutral-line-{line}"))
+            .unwrap_or_else(|| "neutral-line-0".into());
+        self.pending_voice_control = Some(VoiceControlMessage {
+            protocol_version: VOICE_PROTOCOL_VERSION,
+            session_id: 1,
+            turn_id: self.voice_turn_id.max(1),
+            state_revision: revision,
+            voice_id,
+            control: if ptt {
+                VoiceControl::StartPtt
+            } else {
+                VoiceControl::ReleasePtt
+            },
+        });
     }
 
     fn advance(
@@ -517,15 +642,21 @@ impl Backend {
         let Some(call) = self.calls.get_mut(index) else {
             return;
         };
-        call.phase = CallPhase::Connected;
-        call.connected_at = Some(Instant::now());
-        call.audio_duration_seconds = 2;
-        self.pending_tts.push((caller, callee));
+        if self.tts_prepared {
+            call.phase = CallPhase::Connected;
+            call.connected_at = Some(Instant::now());
+            call.audio_duration_seconds = 2;
+        } else {
+            call.phase = CallPhase::Held;
+            call.connected_at = None;
+            call.audio_duration_seconds = 0;
+            self.pending_tts.push((caller, callee));
+        }
     }
 
     fn install_generated_audio(&mut self, caller: u8, callee: u8, samples: Vec<i16>) {
         let Some(call) = self.calls.iter_mut().find(|call| {
-            call.caller == caller && call.callee == callee && call.phase == CallPhase::Connected
+            call.caller == caller && call.callee == callee && call.phase == CallPhase::Held
         }) else {
             return;
         };
@@ -533,6 +664,9 @@ impl Backend {
             .div_ceil(u64::from(VOICE_AUDIO_SAMPLE_RATE))
             .max(1);
         call.audio_duration_seconds = duration;
+        call.phase = CallPhase::Connected;
+        call.connected_at = Some(Instant::now());
+        self.audio_call = Some((caller, callee));
         let sequence = self.audio_sequence;
         let timestamp = self.audio_timestamp;
         for (index, chunk) in samples.chunks(VOICE_AUDIO_PACKET_SAMPLES).enumerate() {
@@ -565,11 +699,13 @@ impl Backend {
         callee: u8,
     ) -> Result<Vec<i16>, VoiceError> {
         let text = format!(
-            "{}: Please connect me to {}. {}: Of course, I am at {}.",
+            "{}: Please connect me to {}. {}: Of course, I am at {}. {}: We can talk about {} while we wait.",
             directory_user(caller).0,
             simple_place(callee),
             directory_user(callee).0,
             simple_place(callee),
+            directory_user(caller).0,
+            directory_user(caller).2,
         );
         let mut tts = configured_tts(engine)?;
         let samples = tts.synthesize(&format!("neutral-line-{caller}"), &text)?;
@@ -584,6 +720,10 @@ impl Backend {
 
     fn finish_call(&mut self, index: usize, missed: bool) {
         let call = self.calls.remove(index);
+        if self.audio_call == Some((call.caller, call.callee)) {
+            self.audio_queue.clear();
+            self.audio_call = None;
+        }
         self.resolved = self.resolved.saturating_add(1);
         if missed {
             self.missed += 1;
@@ -713,8 +853,8 @@ impl Backend {
                 .rng
                 .wrapping_mul(6364136223846793005)
                 .wrapping_add(1442695040888963407);
-            let caller = (self.rng % u64::from(LINES)) as u8;
-            let callee = ((self.rng >> 3) % u64::from(LINES)) as u8;
+            let caller = (self.rng % u64::from(self.line_limit)) as u8;
+            let callee = ((self.rng >> 3) % u64::from(self.line_limit)) as u8;
             if caller != callee
                 && self.calls.iter().all(|c| {
                     c.caller != caller
@@ -760,7 +900,10 @@ impl Backend {
             DebugCommand::InjectCall {
                 caller_line,
                 callee_line,
-            } if caller_line < LINES && callee_line < LINES && caller_line != callee_line => {
+            } if caller_line < self.line_limit
+                && callee_line < self.line_limit
+                && caller_line != callee_line =>
+            {
                 self.calls.push(ActiveCall {
                     caller: caller_line,
                     callee: callee_line,
@@ -858,7 +1001,7 @@ fn directory_pages(digits: [u8; 4]) -> Vec<exchange_protocol::DirectoryPage> {
             heading: simple_place(id as u8).into(),
             lines: vec![
                 format!("SUBSCRIBER ID {id:04}"),
-                format!("USER // {name}"),
+                format!("SUBSCRIBER // {name}"),
                 format!("ROLE // {role}"),
                 format!("NOTE // {note}"),
                 format!("DESTINATION // {}", simple_place(id as u8)),
@@ -870,7 +1013,7 @@ fn directory_pages(digits: [u8; 4]) -> Vec<exchange_protocol::DirectoryPage> {
             heading: "NO RECORD".into(),
             lines: vec![
                 format!("SUBSCRIBER ID {id:04}"),
-                "SELECT A LINE FROM 0000 THROUGH 0005".into(),
+                "SELECT A LINE FROM 0000 THROUGH 0011".into(),
             ],
         }]
     }
@@ -882,7 +1025,13 @@ fn simple_place(line: u8) -> &'static str {
         2 => "RATION OFFICE",
         3 => "BORDER DEPOT",
         4 => "FOUNDRY APTS",
-        _ => "MINISTRY DESK",
+        5 => "MINISTRY DESK",
+        6 => "HOTEL MERIDIAN",
+        7 => "MINING OFFICE",
+        8 => "RATAN COLONY",
+        9 => "SHAPLA APARTMENTS",
+        10 => "OLD MARKET",
+        _ => "CENTRAL STATION",
     }
 }
 fn directory_user(line: u8) -> (&'static str, &'static str, &'static str) {
@@ -908,7 +1057,17 @@ fn directory_user(line: u8) -> (&'static str, &'static str, &'static str) {
             "foundry tenant",
             "repairs small motors after shift",
         ),
-        _ => ("KAVI ORAN", "exchange clerk", "keeps the line register"),
+        5 => ("KAVI ORAN", "exchange clerk", "keeps the line register"),
+        6 => ("TOMAS VALE", "hotel clerk", "keeps a camera by the desk"),
+        7 => ("JAVED RAHMAN", "mining clerk", "checks freight manifests"),
+        8 => (
+            "PARO SEN",
+            "colony organizer",
+            "knows the night shift workers",
+        ),
+        9 => ("RAFI ALAM", "resident", "feeds a one-eyed cat"),
+        10 => ("BIKRAM SEN", "market courier", "likes spiced tea"),
+        _ => ("MIRA HALEK", "station worker", "collects old timetables"),
     }
 }
 fn operator_line(cords: &[CordConnection]) -> Option<u8> {
@@ -964,6 +1123,10 @@ fn has_wrong_direct_circuit(input: &InputState, caller: u8, callee: u8) -> bool 
 }
 fn crank(input: &InputState) -> bool {
     input.crank_rotation_timestamps[3] > 0
+        && input
+            .crank_rotation_timestamps
+            .windows(2)
+            .all(|timestamps| timestamps[1] > timestamps[0])
 }
 fn configured_tts(engine: TtsEngine) -> Result<Box<dyn TextToSpeech>, VoiceError> {
     let command = CommandSpec::from_words(&env::var("NN_VOICE_TTS_COMMAND").map_err(|_| {
@@ -1082,62 +1245,197 @@ pub fn serve_with_voice(listener: TcpListener, voice: Option<UdpSocket>) -> io::
 pub fn serve_voice(
     socket: UdpSocket,
     backend: Arc<Mutex<Backend>>,
-    _tts: TtsEngine,
+    tts: TtsEngine,
 ) -> io::Result<()> {
     socket.set_read_timeout(Some(Duration::from_millis(10)))?;
     let mut buffer = [0_u8; 65_535];
-    let mut peer = None;
-    let mut session = None;
+    let mut input_samples = Vec::new();
+    let mut next_chunk = 0_u32;
     loop {
-        match socket.recv_from(&mut buffer) {
-            Ok((length, address)) => {
-                if let Ok(control) = decode_voice_control(&buffer[..length]) {
-                    if peer.is_some_and(|known| known != address) {
-                        continue;
+        if let Ok((length, address)) = socket.recv_from(&mut buffer) {
+            if let Ok(status) = decode_voice_status(&buffer[..length]) {
+                if status.protocol_version == VOICE_PROTOCOL_VERSION {
+                    if let Ok(mut state) = backend.lock() {
+                        state.set_voice_peer(address, status.status);
                     }
-                    if session.is_some_and(|known| known != (control.session_id, control.turn_id)) {
+                }
+            } else if let Ok(input) = decode_voice_input_audio(&buffer[..length]) {
+                if input.protocol_version != VOICE_PROTOCOL_VERSION {
+                    continue;
+                }
+                if input.chunk_index == 0 {
+                    input_samples.clear();
+                    next_chunk = 0;
+                }
+                if input.chunk_index != next_chunk {
+                    continue;
+                }
+                input_samples.extend_from_slice(&input.samples);
+                next_chunk = next_chunk.saturating_add(1);
+                if input.complete {
+                    let samples = std::mem::take(&mut input_samples);
+                    next_chunk = 0;
+                    let context = backend.lock().ok().and_then(|state| {
+                        state
+                            .voice_subscriber_line
+                            .zip(state.voice_callee_line)
+                            .map(|(caller, callee)| (state.voice_context(caller, callee), caller))
+                    });
+                    let Some((context, caller)) = context else {
                         continue;
-                    }
-                    peer = Some(address);
-                    session = Some((control.session_id, control.turn_id));
-                    let status = VoiceStatusMessage {
-                        protocol_version: VOICE_PROTOCOL_VERSION,
-                        session_id: control.session_id,
-                        turn_id: control.turn_id,
-                        state_revision: control.state_revision,
-                        status: match control.control {
-                            VoiceControl::Cancel => VoiceStatus::Cancelled,
-                            VoiceControl::StartPtt | VoiceControl::ReleasePtt => VoiceStatus::Ready,
-                        },
-                        transcript: None,
-                        response_text: None,
-                        error: None,
                     };
-                    let datagram = encode_voice_status(&status)
-                        .map_err(|error| io::Error::other(error.to_string()))?;
-                    socket.send_to(&datagram, address)?;
+                    let callee = backend
+                        .lock()
+                        .ok()
+                        .and_then(|state| state.voice_callee_line)
+                        .unwrap_or(1);
+                    let worker_socket = socket.try_clone()?;
+                    thread::spawn(move || {
+                        let result =
+                            generate_operator_response(tts, context, caller, callee, samples);
+                        let (transcript, response, audio) = match result {
+                            Ok(value) => value,
+                            Err(error) => {
+                                let message = VoiceStatusMessage {
+                                    protocol_version: VOICE_PROTOCOL_VERSION,
+                                    session_id: input.session_id,
+                                    turn_id: input.turn_id,
+                                    state_revision: input.state_revision,
+                                    status: VoiceStatus::Failed,
+                                    transcript: None,
+                                    response_text: None,
+                                    error: Some(ProtocolError {
+                                        code: error.code,
+                                        message: error.message,
+                                    }),
+                                };
+                                if let Ok(datagram) = encode_voice_status(&message) {
+                                    let _ = worker_socket.send_to(&datagram, address);
+                                }
+                                return;
+                            }
+                        };
+                        let status = VoiceStatusMessage {
+                            protocol_version: VOICE_PROTOCOL_VERSION,
+                            session_id: input.session_id,
+                            turn_id: input.turn_id,
+                            state_revision: input.state_revision,
+                            status: VoiceStatus::Playing,
+                            transcript: Some(transcript),
+                            response_text: Some(response),
+                            error: None,
+                        };
+                        if let Ok(datagram) = encode_voice_status(&status) {
+                            let _ = worker_socket.send_to(&datagram, address);
+                        }
+                        for (index, chunk) in audio.chunks(VOICE_AUDIO_PACKET_SAMPLES).enumerate() {
+                            let packet = RtpL16Packet {
+                                marker: index == 0,
+                                sequence: index as u16,
+                                timestamp: (index * VOICE_AUDIO_PACKET_SAMPLES) as u32,
+                                ssrc: 0x4e45_5554,
+                                samples: chunk.to_vec(),
+                            };
+                            let _ = worker_socket.send_to(&packet.encode(), address);
+                        }
+                        let completed = VoiceStatusMessage {
+                            protocol_version: VOICE_PROTOCOL_VERSION,
+                            session_id: input.session_id,
+                            turn_id: input.turn_id,
+                            state_revision: input.state_revision,
+                            status: VoiceStatus::Completed,
+                            transcript: None,
+                            response_text: None,
+                            error: None,
+                        };
+                        if let Ok(datagram) = encode_voice_status(&completed) {
+                            let _ = worker_socket.send_to(&datagram, address);
+                        }
+                    });
                 }
             }
-            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
-            Err(error) => return Err(error),
         }
-        let packets = {
-            let mut state = backend
-                .lock()
-                .map_err(|_| io::Error::other("backend state lock poisoned"))?;
-            if state.state.tap_bridge_audio_active && peer.is_some() {
-                state.audio_queue.drain(..).collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            }
-        };
-        if let Some(address) = peer {
+        if let Some((control, address)) = backend
+            .lock()
+            .ok()
+            .and_then(|mut state| state.take_voice_control())
+        {
+            let datagram = encode_voice_control(&control)
+                .map_err(|error| io::Error::other(error.to_string()))?;
+            socket.send_to(&datagram, address)?;
+        }
+        let (packets, audio_peer) = backend
+            .lock()
+            .ok()
+            .map(|mut state| {
+                let peer = state.voice_peer;
+                let packets = if state.state.tap_bridge_audio_active {
+                    state.audio_queue.drain(..).collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
+                (packets, peer)
+            })
+            .unwrap_or_default();
+        if let Some(address) = audio_peer {
             for packet in packets {
                 socket.send_to(&packet, address)?;
             }
         }
     }
 }
+
+fn generate_operator_response(
+    tts_engine: TtsEngine,
+    context: ResponseContext,
+    caller: u8,
+    _callee: u8,
+    samples: Vec<i16>,
+) -> Result<(String, String, Vec<i16>), VoiceError> {
+    let stt_command =
+        CommandSpec::from_words(&env::var("NN_VOICE_STT_COMMAND").map_err(|_| {
+            VoiceError::new(
+                "voice_worker_not_configured",
+                "NN_VOICE_STT_COMMAND is not configured",
+            )
+        })?)?;
+    let dialogue_command =
+        CommandSpec::from_words(&env::var("NN_VOICE_DIALOGUE_COMMAND").map_err(|_| {
+            VoiceError::new(
+                "voice_worker_not_configured",
+                "NN_VOICE_DIALOGUE_COMMAND is not configured",
+            )
+        })?)?;
+    let mut stt = CommandSpeechToText::new(stt_command);
+    let transcript = stt.transcribe(&samples)?;
+    let mut dialogue = CommandDialogueGenerator::new(dialogue_command);
+    let response = dialogue.generate(&context, &transcript)?.dialogue;
+    let tts_command =
+        CommandSpec::from_words(&env::var("NN_VOICE_TTS_COMMAND").map_err(|_| {
+            VoiceError::new(
+                "voice_worker_not_configured",
+                "NN_VOICE_TTS_COMMAND is not configured",
+            )
+        })?)?;
+    let mut tts = match tts_engine {
+        TtsEngine::Qwen if env::var_os("NN_VOICE_TTS_PERSISTENT").is_some() => {
+            Box::new(PersistentQwen3TtsCommand::new(tts_command)?) as Box<dyn TextToSpeech>
+        }
+        TtsEngine::Qwen => Box::new(Qwen3TtsCommand::new(tts_command)) as Box<dyn TextToSpeech>,
+        TtsEngine::Pocket => {
+            Box::new(PersistentPocketTtsCommand::new(tts_command)?) as Box<dyn TextToSpeech>
+        }
+    };
+    let audio = tts.synthesize(&format!("neutral-line-{caller}"), &response)?;
+    if audio.is_empty() {
+        return Err(VoiceError::new(
+            "tts_empty_output",
+            "TTS returned no audio samples",
+        ));
+    }
+    Ok((transcript, response, audio))
+}
+
 pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
     loop {
         let request: InputMessage = match read_frame(&mut stream) {

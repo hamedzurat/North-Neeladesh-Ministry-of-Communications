@@ -60,7 +60,7 @@ fn live_hardware_loop_keeps_two_calls_on_lines_zero_through_five() {
         waiting.output.directory_pages[0]
             .lines
             .iter()
-            .any(|line| line.starts_with("USER //"))
+            .any(|line| line.starts_with("SUBSCRIBER //"))
     );
     assert_eq!(
         waiting
