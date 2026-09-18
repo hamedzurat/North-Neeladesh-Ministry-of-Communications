@@ -117,7 +117,8 @@ update_reference_controls :: proc(app: ^Input_State, delta: f32) {
 	crank_input := ref_contains(crank_area, mouse) && (rl.IsMouseButtonDown(.LEFT) || rl.GetMouseWheelMove() != 0)
 	if crank_input {
 		app.crank_active_until = rl.GetTime() + 0.35
-		app.crank_fill += max(0.02, abs(rl.GetMouseWheelMove()) * 0.11)
+        // One recorded crank timestamp represents two crank detents.
+        app.crank_fill += max(0.5, abs(rl.GetMouseWheelMove()) * 0.5)
 		if app.crank_fill >= 1 {
 			app.crank_fill = 0
 			for index in 0 ..< 3 { app.intent.crank_rotation_timestamps[index] = app.intent.crank_rotation_timestamps[index + 1] }
