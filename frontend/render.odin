@@ -174,9 +174,10 @@ ref_draw_seven_digit :: proc(digit: int, origin: rl.Vector2, scale: f32) {
 ref_draw_clock :: proc(app: ^Input_State) {
 	area := ref_rect(940, 20, 480, 145)
 	ref_panel(area)
-	total_seconds := app.backend_output.elapsed_seconds
-	hours := int(total_seconds / 3600) % 100
-	minutes := int(total_seconds / 60) % 60
+	total_seconds := min(app.backend_output.elapsed_seconds, u32(90))
+	total_minutes := total_seconds * 6
+	hours := 8 + int(total_minutes / 60)
+	minutes := int(total_minutes % 60)
 	digits := [4]int{hours / 10, hours % 10, minutes / 10, minutes % 10}
 	start_x := area.x + 84
 	for digit, index in digits {

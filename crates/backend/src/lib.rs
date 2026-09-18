@@ -798,10 +798,7 @@ impl Backend {
                         "ring_generator_connected",
                         "disconnect the Ring Generator before completing the direct circuit",
                     ));
-                } else if call
-                    .ring_started_at
-                    .is_some_and(|started| now >= started + 2)
-                {
+                } else if call.ring_started_at.is_some() {
                     if exact_cords(
                         &input.cord_topology,
                         &[(

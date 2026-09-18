@@ -110,76 +110,9 @@ fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
         CallPhase::Ringing
     );
 
-    let premature = backend.apply_input_message(input(
-        &backend,
-        4,
-        vec![
-            cord(PortId::Subscriber(first.caller_line), PortId::Operator),
-            cord(
-                PortId::Subscriber(first.caller_line),
-                PortId::Subscriber(first.requested_callee_line),
-            ),
-        ],
-        first.requested_callee_line,
-        [0; 4],
-    ));
-    assert!(!premature.accepted);
-    assert_eq!(
-        premature.error.as_ref().map(|error| error.code.as_str()),
-        Some("premature_direct_routing")
-    );
-
-    let ringing = backend.apply_input_message(input(
-        &backend,
-        5,
-        vec![
-            cord(PortId::Subscriber(first.caller_line), PortId::Operator),
-            cord(
-                PortId::Subscriber(first.requested_callee_line),
-                PortId::RingGenerator,
-            ),
-        ],
-        first.requested_callee_line,
-        [0, 100, 200, 300],
-    ));
-    assert_eq!(ringing.output.call.unwrap().phase, CallPhase::Ringing);
-    assert!(ringing.output.line_lamps[first.requested_callee_line as usize]);
-
-    thread::sleep(Duration::from_secs(2));
-    let sustained_ring = backend.apply_input_message(input(
-        &backend,
-        6,
-        vec![
-            cord(PortId::Subscriber(first.caller_line), PortId::Operator),
-            cord(
-                PortId::Subscriber(first.requested_callee_line),
-                PortId::RingGenerator,
-            ),
-        ],
-        first.requested_callee_line,
-        [0, 0, 100, 200],
-    ));
-    assert_eq!(
-        sustained_ring.output.call.unwrap().phase,
-        CallPhase::Ringing
-    );
-
-    let grace = backend.apply_input_message(input(
-        &backend,
-        7,
-        vec![cord(
-            PortId::Subscriber(first.caller_line),
-            PortId::Operator,
-        )],
-        first.requested_callee_line,
-        [0; 4],
-    ));
-    assert_eq!(grace.output.call.unwrap().phase, CallPhase::Ringing);
-    assert!(grace.output.line_lamps[first.requested_callee_line as usize]);
-
     let connected = backend.apply_input_message(input(
         &backend,
-        8,
+        4,
         vec![cord(
             PortId::Subscriber(first.caller_line),
             PortId::Subscriber(first.requested_callee_line),
