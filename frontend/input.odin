@@ -32,6 +32,13 @@ ref_remove_cord :: proc(app: ^Input_State, index: int) {
 	resize(&app.intent.cord_topology, len(app.intent.cord_topology) - 1)
 }
 
+ring_generator_connected :: proc(cords: []Cord) -> bool {
+	for cord in cords {
+		if cord.first.kind == .Ring_Generator || cord.second.kind == .Ring_Generator do return true
+	}
+	return false
+}
+
 ref_handle_cords :: proc(app: ^Input_State, jacks: ^[ENDPOINT_COUNT]rl.Vector2) {
 	mouse := ref_mouse()
 	hovered := ref_endpoint_at(jacks, mouse)
@@ -66,6 +73,7 @@ ref_handle_cords :: proc(app: ^Input_State, jacks: ^[ENDPOINT_COUNT]rl.Vector2) 
 			}
 		}
 	}
+	app.intent.ring = ring_generator_connected(app.intent.cord_topology[:])
 }
 
 ref_action_slot :: proc(held: ^Held, index: int) -> ^bool {
@@ -121,8 +129,6 @@ update_reference_controls :: proc(app: ^Input_State, delta: f32) {
         app.crank_fill += max(0.5, abs(rl.GetMouseWheelMove()) * 0.5)
 		if app.crank_fill >= 1 {
 			app.crank_fill = 0
-			for index in 0 ..< 3 { app.intent.crank_rotation_timestamps[index] = app.intent.crank_rotation_timestamps[index + 1] }
-			app.intent.crank_rotation_timestamps[3] = u64(rl.GetTime() * 1000) + 1
 			app.crank_flash = 0.35
 		}
 	} else if rl.GetTime() > app.crank_active_until {

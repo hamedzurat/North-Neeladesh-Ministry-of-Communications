@@ -90,6 +90,7 @@ poll_backend :: proc(app: ^Input_State, now: f64) {
 
 send_input_message :: proc(app: ^Input_State) -> bool {
 	app.input_sequence += 1
+	app.intent.ring = ring_generator_connected(app.intent.cord_topology[:])
 	app.last_sent_directory_digits = app.intent.directory_digits
 	value := input_to_cbor(app.intent, app.input_sequence, app.backend_output.state_revision)
 	payload, marshal_err := cbor.marshal(value, cbor.ENCODE_FULLY_DETERMINISTIC)

@@ -12,8 +12,11 @@ fn input(
     sequence: u64,
     cords: Vec<CordConnection>,
     directory_line: u8,
-    crank: [u64; 4],
+    _crank: [u64; 4],
 ) -> InputMessage {
+    let ring = cords
+        .iter()
+        .any(|cord| cord.first == PortId::RingGenerator || cord.second == PortId::RingGenerator);
     InputMessage {
         protocol_version: PROTOCOL_VERSION,
         input_sequence: sequence,
@@ -25,7 +28,7 @@ fn input(
                 ..HeldControls::default()
             },
             directory_digits: [0, 0, 0, directory_line],
-            crank_rotation_timestamps: crank,
+            ring,
             tuning: TuningState::default(),
             debug: InputDebug::default(),
         },
@@ -160,7 +163,6 @@ fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
         sustained_ring.output.call.unwrap().phase,
         CallPhase::Ringing
     );
-    assert_eq!(backend.debug_snapshot().active_calls[0].crank_samples, 2);
 
     let grace = backend.apply_input_message(input(
         &backend,

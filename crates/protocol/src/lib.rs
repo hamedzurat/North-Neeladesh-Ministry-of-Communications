@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwn
 use std::fmt;
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 pub const DEBUG_PROTOCOL_VERSION: u16 = 2;
 pub const MAX_FRAME_SIZE: usize = 4 * 1_048_576;
 pub const VOICE_PROTOCOL_VERSION: u16 = 2;
@@ -128,7 +128,7 @@ pub struct InputState {
     pub cord_topology: Vec<CordConnection>,
     pub held_controls: HeldControls,
     pub directory_digits: [u8; 4],
-    pub crank_rotation_timestamps: [u64; 4],
+    pub ring: bool,
     pub tuning: TuningState,
     pub debug: InputDebug,
 }
@@ -382,8 +382,6 @@ pub struct DebugActiveCall {
     pub patience_deadline_elapsed_seconds: u64,
     pub patience_remaining_seconds: u64,
     pub ring_started_elapsed_seconds: Option<u64>,
-    pub last_crank_timestamp: u64,
-    pub crank_samples: u8,
     pub connected_elapsed_seconds: Option<u64>,
     pub audio_duration_seconds: u64,
 }

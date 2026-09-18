@@ -255,7 +255,7 @@
        }));
        document.getElementById('calls').innerHTML = table(
          [...finishedCalls.reverse(), ...activeCalls],
-         ['caller_line', 'requested_callee_line', 'phase', 'status', 'reason', 'started_elapsed_seconds', 'patience_deadline_elapsed_seconds', 'patience_remaining_seconds', 'ring_started_elapsed_seconds', 'last_crank_timestamp', 'crank_samples', 'connected_elapsed_seconds', 'audio_duration_seconds', 'finished_elapsed_seconds'],
+         ['caller_line', 'requested_callee_line', 'phase', 'status', 'reason', 'started_elapsed_seconds', 'patience_deadline_elapsed_seconds', 'patience_remaining_seconds', 'ring_started_elapsed_seconds', 'connected_elapsed_seconds', 'audio_duration_seconds', 'finished_elapsed_seconds'],
        );
        document.getElementById('subscribers').innerHTML = table(snapshot.subscribers, ['id', 'name', 'line', 'status', 'availability', 'pressure', 'current_goal', 'status_flags']);
      }

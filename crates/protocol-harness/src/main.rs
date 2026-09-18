@@ -203,11 +203,14 @@ fn physical_message(
     sequence: u64,
     revision: u64,
     cord_topology: Vec<CordConnection>,
-    crank_rotation_timestamps: [u64; 4],
+    _crank_rotation_timestamps: [u64; 4],
 ) -> InputMessage {
     let mut message = message(sequence, revision, [0, 0, 0, 2]);
     message.input.cord_topology = cord_topology;
-    message.input.crank_rotation_timestamps = crank_rotation_timestamps;
+    message.input.ring =
+        message.input.cord_topology.iter().any(|cord| {
+            cord.first == PortId::RingGenerator || cord.second == PortId::RingGenerator
+        });
     message
 }
 
@@ -223,7 +226,7 @@ fn message(sequence: u64, revision: u64, digits: [u8; 4]) -> InputMessage {
                 ..HeldControls::default()
             },
             directory_digits: digits,
-            crank_rotation_timestamps: [0; 4],
+            ring: false,
             tuning: TuningState::default(),
             debug: InputDebug {
                 firmware_version: Some("harness".to_string()),

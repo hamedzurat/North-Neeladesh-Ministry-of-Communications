@@ -13,7 +13,7 @@ fn first_input(backend: &Backend) -> InputMessage {
             cord_topology: Vec::new(),
             held_controls: HeldControls::default(),
             directory_digits: [0, 0, 0, 1],
-            crank_rotation_timestamps: [0; 4],
+            ring: false,
             tuning: TuningState::default(),
             debug: InputDebug::default(),
         },

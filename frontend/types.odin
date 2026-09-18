@@ -3,7 +3,7 @@ package frontend
 import "core:net"
 import rl "nn_vendor:raylib"
 
-PROTOCOL_VERSION :: 2
+PROTOCOL_VERSION :: 3
 MAX_FRAME_SIZE :: 1_048_576
 WINDOW_W :: 1440
 WINDOW_H :: 900
@@ -38,7 +38,7 @@ Input_Intent :: struct {
 	cord_topology: [dynamic]Cord,
 	held_controls: Held,
 	directory_digits: [4]u8,
-	crank_rotation_timestamps: [4]u64,
+	ring: bool,
 	tuning: Tuning,
 	debug: Input_Debug,
 }

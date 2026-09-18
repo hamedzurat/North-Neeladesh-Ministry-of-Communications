@@ -183,8 +183,6 @@ struct ActiveCall {
     connected_at: Option<Instant>,
     connected_elapsed_seconds: Option<u64>,
     ring_started_at: Option<u64>,
-    last_crank_timestamp: u64,
-    crank_samples: u8,
     audio_duration_seconds: u64,
 }
 
@@ -476,8 +474,6 @@ impl Backend {
                 patience_deadline_elapsed_seconds: call.deadline,
                 patience_remaining_seconds: call.deadline.saturating_sub(now),
                 ring_started_elapsed_seconds: call.ring_started_at,
-                last_crank_timestamp: call.last_crank_timestamp,
-                crank_samples: call.crank_samples,
                 connected_elapsed_seconds: call.connected_elapsed_seconds,
                 audio_duration_seconds: call.audio_duration_seconds,
             })
@@ -759,11 +755,7 @@ impl Backend {
         let now = self.elapsed_seconds() as u64;
         let call = &mut self.calls[index];
         let operator = has_cord(input, PortId::Subscriber(line), PortId::Operator);
-        let ring = has_cord(
-            input,
-            PortId::Subscriber(call.callee),
-            PortId::RingGenerator,
-        );
+        let ring = input.ring;
         let direct_route = direct(&input.cord_topology, call.caller, call.callee);
         match call.phase {
             CallPhase::Waiting if operator => {
@@ -779,7 +771,7 @@ impl Backend {
                         "premature_direct_routing",
                         "ring the requested destination before connecting the caller directly",
                     ));
-                } else if ring && crank(input) {
+                } else if ring {
                     if exact_cords(
                         &input.cord_topology,
                         &[
@@ -788,8 +780,6 @@ impl Backend {
                         ],
                     ) {
                         call.ring_started_at = Some(now);
-                        call.last_crank_timestamp = input.crank_rotation_timestamps[3];
-                        call.crank_samples = 1;
                         call.phase = CallPhase::Ringing;
                     } else {
                         error = Some((
@@ -806,13 +796,7 @@ impl Backend {
                     call.phase = CallPhase::AwaitingRouting;
                 }
             }
-            CallPhase::Ringing if ring && crank(input) => {
-                let timestamp = input.crank_rotation_timestamps[3];
-                if timestamp > call.last_crank_timestamp {
-                    call.last_crank_timestamp = timestamp;
-                    call.crank_samples = call.crank_samples.saturating_add(1);
-                }
-            }
+            CallPhase::Ringing if ring => {}
             CallPhase::Ringing if direct_route && selected == u16::from(call.callee) => {
                 if ring {
                     error = Some((
@@ -822,7 +806,6 @@ impl Backend {
                 } else if call
                     .ring_started_at
                     .is_some_and(|started| now >= started + 2)
-                    && call.crank_samples >= 2
                 {
                     if exact_cords(
                         &input.cord_topology,
@@ -852,8 +835,6 @@ impl Backend {
                 {
                     call.phase = CallPhase::AwaitingRouting;
                     call.ring_started_at = None;
-                    call.last_crank_timestamp = 0;
-                    call.crank_samples = 0;
                 }
             }
             CallPhase::Ringing if direct_route => {
@@ -1173,8 +1154,6 @@ impl Backend {
                 connected_at: None,
                 connected_elapsed_seconds: None,
                 ring_started_at: None,
-                last_crank_timestamp: 0,
-                crank_samples: 0,
                 audio_duration_seconds: 2,
             });
             self.next_call_arrival_elapsed_seconds =
@@ -1257,8 +1236,6 @@ impl Backend {
                         connected_at: None,
                         connected_elapsed_seconds: None,
                         ring_started_at: None,
-                        last_crank_timestamp: 0,
-                        crank_samples: 0,
                         audio_duration_seconds: 2,
                     })
                 }
@@ -1437,7 +1414,7 @@ fn direct(cords: &[CordConnection], caller: u8, callee: u8) -> bool {
             cord_topology: cords.to_vec(),
             held_controls: HeldControls::default(),
             directory_digits: [0; 4],
-            crank_rotation_timestamps: [0; 4],
+            ring: false,
             tuning: TuningState::default(),
             debug: Default::default(),
         },
@@ -1472,20 +1449,6 @@ fn has_wrong_direct_circuit(input: &InputState, caller: u8, callee: u8) -> bool 
         };
         (*first == caller && *second != callee) || (*second == caller && *first != callee)
     })
-}
-fn crank(input: &InputState) -> bool {
-    let timestamps = input
-        .crank_rotation_timestamps
-        .iter()
-        .copied()
-        .filter(|timestamp| *timestamp > 0)
-        .collect::<Vec<_>>();
-    !timestamps.is_empty()
-        && timestamps.windows(2).all(|pair| pair[1] > pair[0])
-        && timestamps
-            .last()
-            .zip(timestamps.first())
-            .is_some_and(|(latest, earliest)| latest.saturating_sub(*earliest) <= 16_000)
 }
 fn with_persistent_pocket_tts<T>(
     operation: impl FnOnce(&mut PersistentPocketTtsCommand) -> Result<T, VoiceError>,

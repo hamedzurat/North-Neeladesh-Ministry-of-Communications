@@ -10,13 +10,11 @@ input_to_cbor :: proc(input: Input_Intent, input_sequence, expected_state_revisi
 		entry("transport_connected", input.debug.transport_connected),
 		entry("device_faults", strings_array(input.debug.device_faults[:])),
 	})
-	timestamps: [4]cbor.Value
-	for timestamp, i in input.crank_rotation_timestamps { timestamps[i] = timestamp }
 	input_state := cbor_map({
 		entry("cord_topology", cords_to_cbor(input.cord_topology[:])),
 		entry("held_controls", held_to_cbor(input.held_controls)),
 		entry("directory_digits", digits_to_cbor(input.directory_digits)),
-		entry("crank_rotation_timestamps", cbor_array(timestamps[:])),
+		entry("ring", input.ring),
 		entry("tuning", cbor_map({entry("coarse", input.tuning.coarse), entry("fine", input.tuning.fine)})),
 		entry("debug", debug),
 	})
