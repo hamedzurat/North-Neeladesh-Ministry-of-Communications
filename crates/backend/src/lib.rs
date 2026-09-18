@@ -670,7 +670,7 @@ impl Backend {
                 .find(|c| c.caller_line == line)
                 .cloned()
         });
-        self.state.line_lamps = lamps(&self.calls, input.ring_line);
+        self.state.line_lamps = lamps(&self.calls, effective_ring_line(input));
         self.state.shift.active_call_count = self.calls.len() as u8;
         self.state.tap_bridge_monitoring = tap_monitor(input, &self.state);
         self.state.tap_bridge_audio_active = self.state.tap_bridge_monitoring.is_some();
@@ -758,7 +758,7 @@ impl Backend {
         let now = self.elapsed_seconds() as u64;
         let call = &mut self.calls[index];
         let operator = has_cord(input, PortId::Subscriber(line), PortId::Operator);
-        let ring = input.ring_line == i16::from(call.callee);
+        let ring = effective_ring_line(input) == i16::from(call.callee);
         let direct_route = direct(&input.cord_topology, call.caller, call.callee);
         match call.phase {
             CallPhase::Waiting if operator => {
@@ -1049,7 +1049,7 @@ impl Backend {
             .enumerate()
             .filter(|(_, call)| {
                 call.phase == CallPhase::Ringing
-                    && input.ring_line < 0
+                    && effective_ring_line(input) < 0
                     && call.ring_started_at.is_some()
                     && valid_direct_circuit(input, call.caller, call.callee)
             })
@@ -1411,7 +1411,7 @@ fn has_cord(input: &InputState, a: PortId, b: PortId) -> bool {
 }
 fn valid_ringing_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
     has_cord(input, PortId::Subscriber(caller), PortId::Operator)
-        && input.ring_line == i16::from(callee)
+        && effective_ring_line(input) == i16::from(callee)
 }
 fn valid_direct_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
     direct(&input.cord_topology, caller, callee)
@@ -1544,6 +1544,20 @@ fn lamps(calls: &[ActiveCall], ring_line: i16) -> [bool; 12] {
         }
     }
     result
+}
+fn effective_ring_line(input: &InputState) -> i16 {
+    let physical_line = input
+        .cord_topology
+        .iter()
+        .find_map(|cord| match (&cord.first, &cord.second) {
+            (PortId::RingGenerator, PortId::Subscriber(line))
+            | (PortId::Subscriber(line), PortId::RingGenerator) => Some(i16::from(*line)),
+            _ => None,
+        })
+        .unwrap_or(-1);
+    (input.ring_line == physical_line)
+        .then_some(physical_line)
+        .unwrap_or(-1)
 }
 fn tap_monitor(input: &InputState, state: &StateOutput) -> Option<u8> {
     if !input.held_controls.tap {
