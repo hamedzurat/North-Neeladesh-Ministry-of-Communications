@@ -773,7 +773,7 @@ impl Backend {
                 if (direct_route
                     && selected == u16::from(call.callee)
                     && call.phase == CallPhase::AwaitingRouting)
-                    || has_any_direct_circuit(input)
+                    || has_direct_circuit_for_caller(input, line)
                 {
                     error = Some((
                         "premature_direct_routing",
@@ -1445,10 +1445,15 @@ fn direct(cords: &[CordConnection], caller: u8, callee: u8) -> bool {
         PortId::Subscriber(callee),
     )
 }
-fn has_any_direct_circuit(input: &InputState) -> bool {
-    input.cord_topology.iter().any(|cord| {
-        matches!(cord.first, PortId::Subscriber(_)) && matches!(cord.second, PortId::Subscriber(_))
-    })
+fn has_direct_circuit_for_caller(input: &InputState, caller: u8) -> bool {
+    input
+        .cord_topology
+        .iter()
+        .any(|cord| match (&cord.first, &cord.second) {
+            (PortId::Subscriber(first), PortId::Subscriber(_)) if *first == caller => true,
+            (PortId::Subscriber(_), PortId::Subscriber(second)) if *second == caller => true,
+            _ => false,
+        })
 }
 fn exact_cords(input: &[CordConnection], expected: &[(PortId, PortId)]) -> bool {
     input.len() == expected.len()
@@ -1465,7 +1470,7 @@ fn has_wrong_direct_circuit(input: &InputState, caller: u8, callee: u8) -> bool 
         else {
             return false;
         };
-        !((*first == caller && *second == callee) || (*first == callee && *second == caller))
+        (*first == caller && *second != callee) || (*second == caller && *first != callee)
     })
 }
 fn crank(input: &InputState) -> bool {
