@@ -603,6 +603,7 @@ impl Backend {
         }
         self.expire_calls();
         self.refill_calls(self.call_target);
+        self.connect_ready_direct_calls(input);
         if self.state.shift.phase == ShiftPhase::Active
             && self.elapsed_seconds() as u64
                 >= self.shift_started_elapsed_seconds + self.config.shift_duration_seconds
@@ -640,9 +641,6 @@ impl Backend {
         }
         if error.is_none() {
             error = self.advance(input, focused, selected);
-        }
-        if error.is_none() {
-            self.connect_ready_direct_calls(input);
         }
         if error.is_some_and(|(code, _)| code == "wrong_destination")
             && let Some(line) = focused
