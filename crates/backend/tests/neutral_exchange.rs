@@ -1,0 +1,37 @@
+use exchange_backend::Backend;
+use exchange_protocol::{
+    HeldControls, InputDebug, InputMessage, InputState, PROTOCOL_VERSION, TuningState,
+};
+
+fn first_input(backend: &Backend) -> InputMessage {
+    InputMessage {
+        protocol_version: PROTOCOL_VERSION,
+        input_sequence: 1,
+        expected_state_revision: backend.debug_snapshot().run.state_revision,
+        input: InputState {
+            cord_topology: Vec::new(),
+            held_controls: HeldControls::default(),
+            directory_digits: [0, 0, 0, 1],
+            crank_rotation_timestamps: [0; 4],
+            tuning: TuningState::default(),
+            debug: InputDebug::default(),
+        },
+    }
+}
+
+#[test]
+fn production_exchange_starts_with_three_non_conflicting_calls() {
+    let mut backend = Backend::new_exchange();
+    let response = backend.apply_input_message(first_input(&backend));
+
+    assert!(response.accepted);
+    assert_eq!(response.output.calls.len(), 3);
+    for (index, call) in response.output.calls.iter().enumerate() {
+        for other in response.output.calls.iter().skip(index + 1) {
+            assert_ne!(call.caller_line, other.caller_line);
+            assert_ne!(call.caller_line, other.requested_callee_line);
+            assert_ne!(call.requested_callee_line, other.caller_line);
+            assert_ne!(call.requested_callee_line, other.requested_callee_line);
+        }
+    }
+}

@@ -36,7 +36,6 @@ const MAX_FAULTS: usize = 16;
 const MAX_CORDS: usize = 8;
 const DEMO_SHIFT_DURATION_SECONDS: u64 = 8 * 60;
 const DEMO_SHIFT_START_SECONDS: u64 = 8 * 60 * 60;
-const SIMPLE_WAITING_PATIENCE_SECONDS: u64 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TtsEngine {
@@ -75,7 +74,6 @@ impl DialogueGenerator for SharedDialogueGenerator {
             .generate(context, transcript)
     }
 }
-const SIMPLE_INTERACTED_PATIENCE_SECONDS: u64 = 120;
 const SIMPLE_SUBSCRIBER_LINES: u8 = 6;
 const RING_GENERATOR_LAMP_HOLD: Duration = Duration::from_secs(10);
 
@@ -141,6 +139,7 @@ pub struct Backend {
     directory_lookup_id: Option<u16>,
     tap_bridge_listen_frames: u8,
     simple_hardware_mode: bool,
+    simple_call_target: u8,
     simple_rng_state: u64,
     simple_pending_calls: VecDeque<(u8, u8)>,
     simple_connected_at: [Option<Instant>; 12],
@@ -148,6 +147,9 @@ pub struct Backend {
     simple_call_interacted: [bool; 12],
     simple_shift_quota: u8,
     simple_resolved_calls: u8,
+    simple_missed_calls: u8,
+    simple_failed_calls: u8,
+    simple_conversation_seconds: u64,
     simple_money: i32,
     shift_earned: u32,
     shift_cost: u32,
@@ -226,7 +228,9 @@ impl Backend {
     /// development fixtures, but the live game must not start in the Story
     /// Graph runtime.
     pub fn new_exchange() -> Self {
-        Self::new_simple_hardware_demo()
+        let mut backend = Self::new_simple_hardware_demo();
+        backend.simple_call_target = 3;
+        backend
     }
 
     pub fn new_simple_hardware_demo_with_printer_stress(printer_stress: bool) -> Self {
@@ -324,6 +328,7 @@ impl Backend {
             directory_lookup_id: None,
             tap_bridge_listen_frames: 0,
             simple_hardware_mode: false,
+            simple_call_target: 2,
             simple_rng_state: 0x4e45_454c_4144_4553,
             simple_pending_calls: VecDeque::new(),
             simple_connected_at: [None; 12],
@@ -331,6 +336,9 @@ impl Backend {
             simple_call_interacted: [false; 12],
             simple_shift_quota: 4 + (0x4e45_454c_4144_4553_u64 as u8 % 3),
             simple_resolved_calls: 0,
+            simple_missed_calls: 0,
+            simple_failed_calls: 0,
+            simple_conversation_seconds: 0,
             simple_money: 0,
             shift_earned: 0,
             shift_cost: 0,
@@ -1112,6 +1120,9 @@ impl Backend {
         self.simple_call_interacted = [false; 12];
         self.simple_shift_quota = 4;
         self.simple_resolved_calls = 0;
+        self.simple_missed_calls = 0;
+        self.simple_failed_calls = 0;
+        self.simple_conversation_seconds = 0;
         self.simple_money = 0;
         self.shift_earned = 0;
         self.shift_cost = 0;
@@ -1497,6 +1508,9 @@ impl Backend {
             self.state.shift.active_call_count = 0;
             self.state.shift.completed_routings = 0;
             self.simple_resolved_calls = 0;
+            self.simple_missed_calls = 0;
+            self.simple_failed_calls = 0;
+            self.simple_conversation_seconds = 0;
             self.simple_shift_quota = 4 + (self.simple_rng_state as u8 % 3);
             let shift_number = self.state.shift.number;
             append_printer(
@@ -1654,13 +1668,28 @@ impl Backend {
                 append_printer(
                     &mut next_state,
                     &format!(
-                        "SHIFT {shift_number} SUMMARY\nCOMPLETED CALLS // {}\nEARNED +${}\nDEDUCTIONS -${}\nCURRENT MONEY // ${}",
-                        self.state.shift.completed_routings,
+                        "SHIFT {shift_number} SUMMARY\nCOMPLETED CALLS // {}\nMISSED CALLS // {}\nFAILED CALLS // {}\nCONVERSATION SECONDS // {}\nEARNED +${}\nDEDUCTIONS -${}\nCURRENT MONEY // ${}",
+                        self.simple_resolved_calls.saturating_sub(
+                            self.simple_missed_calls
+                                .saturating_add(self.simple_failed_calls),
+                        ),
+                        self.simple_missed_calls,
+                        self.simple_failed_calls,
+                        self.simple_conversation_seconds,
                         self.shift_earned,
                         self.shift_cost,
                         self.simple_money
                     ),
                 );
+                if shift_number >= 3 {
+                    append_printer(
+                        &mut next_state,
+                        &format!(
+                            "RETIREMENT // THREE SHIFTS COMPLETE\nFINAL MONEY // ${}",
+                            self.simple_money
+                        ),
+                    );
+                }
                 transition.calls.clear();
                 transition.call = None;
                 transition.line_lamps = [false; 12];
@@ -2112,7 +2141,7 @@ impl Backend {
         // With six subscriber lines, two active calls can leave room for only
         // one conflict-free queued call.  Asking for two here would spin
         // forever once all remaining endpoints are occupied.
-        let target = if active_callers.is_empty() { 2 } else { 1 };
+        let target = usize::from(self.simple_call_target).saturating_sub(active_callers.len());
         while self.simple_pending_calls.len() < target {
             let next = self.next_simple_call(active_callers);
             if self
@@ -2156,14 +2185,36 @@ impl Backend {
         }
     }
 
+    fn simple_patience_seconds(&mut self, interacted: bool) -> u64 {
+        self.simple_rng_state = self
+            .simple_rng_state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let span = if interacted { 61 } else { 11 };
+        let base = if interacted { 60 } else { 20 };
+        base + self.simple_rng_state % span
+    }
+
+    fn simple_conversation_seconds(caller: u8, callee: u8) -> u64 {
+        // The neutral exchange uses a short authored flavour exchange. Its
+        // duration is deterministic from the generated participants, which
+        // keeps replay and earnings reproducible without story state.
+        2 + u64::from((caller.wrapping_add(callee)) % 4)
+    }
+
     fn simple_connected_callers_ready(&self) -> Vec<u8> {
         self.state
             .calls
             .iter()
             .filter(|call| {
                 call.phase == exchange_protocol::CallPhase::Connected
-                    && self.simple_connected_at[call.caller_line as usize]
-                        .is_some_and(|started| started.elapsed() >= Duration::from_secs(2))
+                    && self.simple_connected_at[call.caller_line as usize].is_some_and(|started| {
+                        started.elapsed().as_secs()
+                            >= Self::simple_conversation_seconds(
+                                call.caller_line,
+                                call.requested_callee_line,
+                            )
+                    })
             })
             .map(|call| call.caller_line)
             .collect()
@@ -2215,14 +2266,28 @@ impl Backend {
         let completed = previous_connected
             .iter()
             .filter(|line| {
-                self.simple_connected_at[**line as usize]
-                    .is_some_and(|started| started.elapsed() >= Duration::from_secs(2))
+                self.simple_connected_at[**line as usize].is_some_and(|started| {
+                    let duration = self
+                        .state
+                        .calls
+                        .iter()
+                        .find(|call| call.caller_line == **line)
+                        .map_or(2, |call| {
+                            Self::simple_conversation_seconds(
+                                call.caller_line,
+                                call.requested_callee_line,
+                            )
+                        });
+                    started.elapsed().as_secs() >= duration
+                })
             })
             .count() as u8;
         if completed > 0 || missed > 0 || failed > 0 {
             self.simple_resolved_calls = self
                 .simple_resolved_calls
                 .saturating_add(completed.saturating_add(missed).saturating_add(failed));
+            self.simple_missed_calls = self.simple_missed_calls.saturating_add(missed);
+            self.simple_failed_calls = self.simple_failed_calls.saturating_add(failed);
             self.simple_money -= i32::from(missed) * 2;
             self.simple_money -= i32::from(failed) * 3;
             self.shift_cost = self
@@ -2246,10 +2311,10 @@ impl Backend {
             if self.simple_call_deadlines[line].is_none() {
                 self.simple_call_deadlines[line] = Some(
                     now + if call.phase == exchange_protocol::CallPhase::Waiting {
-                        SIMPLE_WAITING_PATIENCE_SECONDS
+                        self.simple_patience_seconds(false)
                     } else {
                         self.simple_call_interacted[line] = true;
-                        SIMPLE_INTERACTED_PATIENCE_SECONDS
+                        self.simple_patience_seconds(true)
                     },
                 );
             } else if previous_phases
@@ -2261,7 +2326,7 @@ impl Backend {
                 })
             {
                 self.simple_call_interacted[line] = true;
-                self.simple_call_deadlines[line] = Some(now + SIMPLE_INTERACTED_PATIENCE_SECONDS);
+                self.simple_call_deadlines[line] = Some(now + self.simple_patience_seconds(true));
             }
             if call.phase == exchange_protocol::CallPhase::Connected
                 && !previous_connected.contains(&call.caller_line)
@@ -2293,7 +2358,7 @@ impl Backend {
             .map(|call| call.caller_line)
             .collect::<Vec<_>>();
         self.ensure_simple_pending_calls(&active_callers);
-        while transition.calls.len() < 2 {
+        while transition.calls.len() < usize::from(self.simple_call_target) {
             let (caller_line, callee_line) = self
                 .simple_pending_calls
                 .pop_front()
@@ -2315,10 +2380,10 @@ impl Backend {
             if self.simple_call_deadlines[line].is_none() {
                 self.simple_call_deadlines[line] = Some(
                     now + if call.phase == exchange_protocol::CallPhase::Waiting {
-                        SIMPLE_WAITING_PATIENCE_SECONDS
+                        self.simple_patience_seconds(false)
                     } else {
                         self.simple_call_interacted[line] = true;
-                        SIMPLE_INTERACTED_PATIENCE_SECONDS
+                        self.simple_patience_seconds(true)
                     },
                 );
             }
@@ -2346,15 +2411,25 @@ impl Backend {
                 transition.routing_receipt.take()
             };
             if newly_connected {
-                self.shift_earned += 5;
-                self.simple_money += 5;
-            }
-            if misrouted {
-                self.shift_cost += 3;
+                let duration = transition
+                    .calls
+                    .iter()
+                    .find(|call| call.phase == exchange_protocol::CallPhase::Connected)
+                    .map_or(2, |call| {
+                        Self::simple_conversation_seconds(
+                            call.caller_line,
+                            call.requested_callee_line,
+                        )
+                    });
+                self.simple_conversation_seconds =
+                    self.simple_conversation_seconds.saturating_add(duration);
+                let earnings = duration.min(u64::from(u32::MAX)) as u32;
+                self.shift_earned = self.shift_earned.saturating_add(earnings);
+                self.simple_money += i32::try_from(earnings).unwrap_or(i32::MAX);
             }
         }
         transition.line_lamps = lamps_for_calls(&transition.calls);
-        transition.shift.active_call_count = 2;
+        transition.shift.active_call_count = transition.calls.len() as u8;
         transition.shift.phase = ShiftPhase::Active;
         transition.game_phase = GamePhase::Shift;
     }
