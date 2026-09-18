@@ -9,11 +9,11 @@ use std::time::{Duration, Instant};
 use exchange_protocol::{
     CallPhase, CallStatus, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION, DebugCallRecord,
     DebugCommand, DebugCounters, DebugFrontendState, DebugRequest, DebugResponse, DebugRunState,
-    DebugSnapshot, DebugStoryState, DebugSubscriberState, FrameError, GamePhase, HeldControls,
-    InputMessage, InputState, OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError,
-    RtpL16Packet, ShiftPhase, ShiftStatus, StateMessage, StateOutput, TuningState,
-    VOICE_AUDIO_PACKET_SAMPLES, VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl,
-    VoiceControlMessage, VoiceStatus, VoiceStatusMessage, decode_voice_input_audio,
+    DebugSnapshot, DebugStoryState, DebugSubscriberState, DebugVoiceConversation, FrameError,
+    GamePhase, HeldControls, InputMessage, InputState, OutputDebug, PROTOCOL_VERSION, PortId,
+    PrinterEntry, ProtocolError, RtpL16Packet, ShiftPhase, ShiftStatus, StateMessage, StateOutput,
+    TuningState, VOICE_AUDIO_PACKET_SAMPLES, VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION,
+    VoiceControl, VoiceControlMessage, VoiceStatus, VoiceStatusMessage, decode_voice_input_audio,
     decode_voice_status, encode_voice_control, encode_voice_status, read_frame, write_frame,
 };
 use exchange_voice_daemon::{
@@ -85,6 +85,8 @@ pub struct Backend {
     voice_transcript: Option<String>,
     voice_response_text: Option<String>,
     voice_speaker_active: bool,
+    voice_conversations: Vec<DebugVoiceConversation>,
+    next_voice_conversation_id: u64,
     last_input_json: Option<String>,
     last_output_json: Option<String>,
 }
@@ -142,6 +144,8 @@ impl Backend {
             voice_transcript: None,
             voice_response_text: None,
             voice_speaker_active: false,
+            voice_conversations: Vec::new(),
+            next_voice_conversation_id: 1,
             last_input_json: None,
             last_output_json: None,
         };
@@ -276,6 +280,8 @@ impl Backend {
         self.voice_transcript = None;
         self.voice_response_text = None;
         self.voice_speaker_active = false;
+        self.voice_conversations.clear();
+        self.next_voice_conversation_id = 1;
         self.refill_calls(self.call_target);
         self.state.calls = self
             .calls
@@ -345,7 +351,7 @@ impl Backend {
                 turn_id: (self.voice_turn_id != 0).then_some(self.voice_turn_id),
                 transcript: self.voice_transcript.clone(),
                 response_text: self.voice_response_text.clone(),
-                conversations: vec![],
+                conversations: self.voice_conversations.clone(),
             },
             frontend: DebugFrontendState {
                 firmware_version: None,
@@ -1409,6 +1415,32 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         .unwrap_or(1);
                     let worker_socket = socket.try_clone()?;
                     let worker_backend = Arc::clone(&backend);
+                    let conversation_id = if let Ok(mut state) = backend.lock() {
+                        let id = state.next_voice_conversation_id;
+                        state.next_voice_conversation_id =
+                            state.next_voice_conversation_id.wrapping_add(1);
+                        let (caller_name, _, _) = directory_user(caller);
+                        let started_elapsed_seconds = state.elapsed_seconds();
+                        state.voice_conversations.push(DebugVoiceConversation {
+                            id,
+                            session_id: input.session_id,
+                            turn_id: input.turn_id,
+                            state_revision: input.state_revision,
+                            caller_name: caller_name.into(),
+                            caller_place: simple_place(caller).into(),
+                            status: Some(VoiceStatus::Transcribing),
+                            started_elapsed_seconds,
+                            finished_elapsed_seconds: None,
+                            captured_samples: samples.len() as u32,
+                            tts_samples: 0,
+                            transcript: None,
+                            response_text: None,
+                            error: None,
+                        });
+                        Some(id)
+                    } else {
+                        None
+                    };
                     if let Ok(mut state) = backend.lock() {
                         state.voice_status = Some(VoiceStatus::Transcribing);
                     }
@@ -1423,6 +1455,17 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                 if let Ok(mut state) = transcript_backend.lock() {
                                     state.voice_status = Some(VoiceStatus::GeneratingResponse);
                                     state.voice_transcript = Some(transcript.to_string());
+                                    if let Some(id) = conversation_id {
+                                        if let Some(conversation) = state
+                                            .voice_conversations
+                                            .iter_mut()
+                                            .find(|conversation| conversation.id == id)
+                                        {
+                                            conversation.status =
+                                                Some(VoiceStatus::GeneratingResponse);
+                                            conversation.transcript = Some(transcript.to_string());
+                                        }
+                                    }
                                 }
                             },
                         );
@@ -1432,6 +1475,22 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                 if let Ok(mut state) = worker_backend.lock() {
                                     state.voice_status = Some(VoiceStatus::Failed);
                                     state.voice_speaker_active = false;
+                                    let finished_elapsed_seconds = state.elapsed_seconds();
+                                    if let Some(id) = conversation_id {
+                                        if let Some(conversation) = state
+                                            .voice_conversations
+                                            .iter_mut()
+                                            .find(|conversation| conversation.id == id)
+                                        {
+                                            conversation.status = Some(VoiceStatus::Failed);
+                                            conversation.finished_elapsed_seconds =
+                                                Some(finished_elapsed_seconds);
+                                            conversation.error = Some(ProtocolError {
+                                                code: error.code.clone(),
+                                                message: error.message.clone(),
+                                            });
+                                        }
+                                    }
                                 }
                                 let message = VoiceStatusMessage {
                                     protocol_version: VOICE_PROTOCOL_VERSION,
@@ -1467,6 +1526,17 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                             state.voice_speaker_active = true;
                             state.voice_transcript = status.transcript.clone();
                             state.voice_response_text = status.response_text.clone();
+                            if let Some(id) = conversation_id {
+                                if let Some(conversation) = state
+                                    .voice_conversations
+                                    .iter_mut()
+                                    .find(|conversation| conversation.id == id)
+                                {
+                                    conversation.status = Some(VoiceStatus::Playing);
+                                    conversation.response_text = status.response_text.clone();
+                                    conversation.tts_samples = audio.len() as u32;
+                                }
+                            }
                         }
                         if let Ok(datagram) = encode_voice_status(&status) {
                             let _ = worker_socket.send_to(&datagram, address);
@@ -1497,6 +1567,18 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         if let Ok(mut state) = worker_backend.lock() {
                             state.voice_status = Some(VoiceStatus::Completed);
                             state.voice_speaker_active = false;
+                            let finished_elapsed_seconds = state.elapsed_seconds();
+                            if let Some(id) = conversation_id {
+                                if let Some(conversation) = state
+                                    .voice_conversations
+                                    .iter_mut()
+                                    .find(|conversation| conversation.id == id)
+                                {
+                                    conversation.status = Some(VoiceStatus::Completed);
+                                    conversation.finished_elapsed_seconds =
+                                        Some(finished_elapsed_seconds);
+                                }
+                            }
                         }
                     });
                 }
