@@ -161,9 +161,22 @@ fn live_hardware_loop_keeps_two_calls_on_lines_zero_through_five() {
         CallPhase::Ringing
     );
 
-    let connected = backend.apply_input_message(input(
+    let grace = backend.apply_input_message(input(
         &backend,
         7,
+        vec![cord(
+            PortId::Subscriber(first.caller_line),
+            PortId::Operator,
+        )],
+        first.requested_callee_line,
+        [0; 4],
+    ));
+    assert_eq!(grace.output.call.unwrap().phase, CallPhase::Ringing);
+    assert!(grace.output.line_lamps[first.requested_callee_line as usize]);
+
+    let connected = backend.apply_input_message(input(
+        &backend,
+        8,
         vec![cord(
             PortId::Subscriber(first.caller_line),
             PortId::Subscriber(first.requested_callee_line),
@@ -185,7 +198,7 @@ fn live_hardware_loop_keeps_two_calls_on_lines_zero_through_five() {
     thread::sleep(Duration::from_secs(3));
     let next = backend.apply_input_message(input(
         &backend,
-        8,
+        9,
         vec![cord(
             PortId::Subscriber(first.caller_line),
             PortId::Subscriber(first.requested_callee_line),

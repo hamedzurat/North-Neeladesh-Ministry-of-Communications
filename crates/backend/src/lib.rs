@@ -25,6 +25,7 @@ use exchange_voice_daemon::{
 const LINES: u8 = 12;
 const MAX_CALLS: usize = 3;
 const MAX_AUDIO_PACKETS: usize = 4096;
+const RING_GRACE_SECONDS: u64 = 16;
 static DIALOGUE_WORKER: OnceLock<Mutex<Option<PersistentCommandDialogueGenerator>>> =
     OnceLock::new();
 static POCKET_TTS_WORKER: OnceLock<Mutex<Option<PersistentPocketTtsCommand>>> = OnceLock::new();
@@ -641,10 +642,15 @@ impl Backend {
                 }
             }
             CallPhase::Ringing if !ring && !direct_route => {
-                call.phase = CallPhase::AwaitingRouting;
-                call.ring_started_at = None;
-                call.last_crank_timestamp = 0;
-                call.crank_samples = 0;
+                if call
+                    .ring_started_at
+                    .is_none_or(|started| now > started + RING_GRACE_SECONDS)
+                {
+                    call.phase = CallPhase::AwaitingRouting;
+                    call.ring_started_at = None;
+                    call.last_crank_timestamp = 0;
+                    call.crank_samples = 0;
+                }
             }
             CallPhase::Ringing if direct_route => {
                 error = Some((
