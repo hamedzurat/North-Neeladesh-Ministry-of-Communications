@@ -758,7 +758,12 @@ impl Backend {
         let now = self.elapsed_seconds() as u64;
         let call = &mut self.calls[index];
         let operator = has_cord(input, PortId::Subscriber(line), PortId::Operator);
-        let ring = input.ring;
+        let ring = input.ring
+            && has_cord(
+                input,
+                PortId::Subscriber(call.callee),
+                PortId::RingGenerator,
+            );
         let direct_route = direct(&input.cord_topology, call.caller, call.callee);
         match call.phase {
             CallPhase::Waiting if operator => {
@@ -775,13 +780,7 @@ impl Backend {
                         "ring the requested destination before connecting the caller directly",
                     ));
                 } else if ring {
-                    if exact_cords(
-                        &input.cord_topology,
-                        &[
-                            (PortId::Subscriber(call.caller), PortId::Operator),
-                            (PortId::Subscriber(call.callee), PortId::RingGenerator),
-                        ],
-                    ) {
+                    if valid_ringing_circuit(input, call.caller, call.callee) {
                         call.ring_started_at = Some(now);
                         call.phase = CallPhase::Ringing;
                     } else {
@@ -802,13 +801,7 @@ impl Backend {
                         "disconnect the Ring Generator before completing the direct circuit",
                     ));
                 } else if call.ring_started_at.is_some() {
-                    if exact_cords(
-                        &input.cord_topology,
-                        &[(
-                            PortId::Subscriber(call.caller),
-                            PortId::Subscriber(call.callee),
-                        )],
-                    ) {
+                    if valid_direct_circuit(input, call.caller, call.callee) {
                         connect = true;
                     } else {
                         error = Some((
@@ -1061,10 +1054,14 @@ impl Backend {
             .enumerate()
             .filter(|(_, call)| {
                 call.phase == CallPhase::Ringing
-                    && !input.ring
+                    && !has_cord(
+                        input,
+                        PortId::Subscriber(call.callee),
+                        PortId::RingGenerator,
+                    )
                     && call.ring_started_at.is_some()
                     && selected == u16::from(call.callee)
-                    && direct(&input.cord_topology, call.caller, call.callee)
+                    && valid_direct_circuit(input, call.caller, call.callee)
             })
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
@@ -1422,6 +1419,29 @@ fn has_cord(input: &InputState, a: PortId, b: PortId) -> bool {
         .iter()
         .any(|c| (c.first == a && c.second == b) || (c.first == b && c.second == a))
 }
+fn valid_ringing_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
+    has_cord(input, PortId::Subscriber(caller), PortId::Operator)
+        && has_cord(input, PortId::Subscriber(callee), PortId::RingGenerator)
+}
+fn valid_direct_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
+    direct(&input.cord_topology, caller, callee)
+        && input.cord_topology.iter().all(|cord| {
+            let touches_endpoint = |port: &PortId| {
+                matches!(port, PortId::Subscriber(line) if *line == caller || *line == callee)
+            };
+            if !touches_endpoint(&cord.first) && !touches_endpoint(&cord.second) {
+                return true;
+            }
+            (cord.first == PortId::Subscriber(caller)
+                && cord.second == PortId::Subscriber(callee))
+                || (cord.first == PortId::Subscriber(callee)
+                    && cord.second == PortId::Subscriber(caller))
+                || (cord.first == PortId::Subscriber(caller) && cord.second == PortId::Tap(1))
+                || (cord.first == PortId::Tap(1) && cord.second == PortId::Subscriber(caller))
+                || (cord.first == PortId::Subscriber(callee) && cord.second == PortId::Tap(2))
+                || (cord.first == PortId::Tap(2) && cord.second == PortId::Subscriber(callee))
+        })
+}
 fn direct(cords: &[CordConnection], caller: u8, callee: u8) -> bool {
     has_cord(
         &InputState {
@@ -1558,17 +1578,7 @@ fn tap_monitor(input: &InputState, state: &StateOutput) -> Option<u8> {
     })
 }
 fn valid_connected_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
-    exact_cords(
-        &input.cord_topology,
-        &[(PortId::Subscriber(caller), PortId::Subscriber(callee))],
-    ) || exact_cords(
-        &input.cord_topology,
-        &[
-            (PortId::Subscriber(caller), PortId::Subscriber(callee)),
-            (PortId::Subscriber(caller), PortId::Tap(1)),
-            (PortId::Subscriber(callee), PortId::Tap(2)),
-        ],
-    )
+    valid_direct_circuit(input, caller, callee)
 }
 
 pub fn serve_with_voice_and_debug_engine(
