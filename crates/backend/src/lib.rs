@@ -80,6 +80,8 @@ pub struct Backend {
     voice_transcript: Option<String>,
     voice_response_text: Option<String>,
     voice_speaker_active: bool,
+    last_input_json: Option<String>,
+    last_output_json: Option<String>,
 }
 
 impl Default for Backend {
@@ -134,6 +136,8 @@ impl Backend {
             voice_transcript: None,
             voice_response_text: None,
             voice_speaker_active: false,
+            last_input_json: None,
+            last_output_json: None,
         };
         backend.quota = backend.random_quota();
         backend.refill_calls(MAX_CALLS);
@@ -339,8 +343,8 @@ impl Backend {
                 firmware_version: None,
                 transport_connected: false,
                 device_faults: vec![],
-                last_input_json: None,
-                last_output_json: None,
+                last_input_json: self.last_input_json.clone(),
+                last_output_json: self.last_output_json.clone(),
             },
             recent_errors: self.state.debug.messages.clone(),
         }
@@ -353,6 +357,8 @@ impl Backend {
             return response;
         }
         let result = self.apply_input(message.clone());
+        self.last_input_json = serde_json::to_string(&message).ok();
+        self.last_output_json = serde_json::to_string(&result).ok();
         self.last_request = Some(message);
         self.last_response = Some(result.clone());
         result
@@ -1330,8 +1336,23 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         .unwrap_or(1);
                     let worker_socket = socket.try_clone()?;
                     let worker_backend = Arc::clone(&backend);
+                    if let Ok(mut state) = backend.lock() {
+                        state.voice_status = Some(VoiceStatus::Transcribing);
+                    }
                     thread::spawn(move || {
-                        let result = generate_operator_response(context, caller, callee, samples);
+                        let transcript_backend = Arc::clone(&worker_backend);
+                        let result = generate_operator_response(
+                            context,
+                            caller,
+                            callee,
+                            samples,
+                            &|transcript| {
+                                if let Ok(mut state) = transcript_backend.lock() {
+                                    state.voice_status = Some(VoiceStatus::GeneratingResponse);
+                                    state.voice_transcript = Some(transcript.to_string());
+                                }
+                            },
+                        );
                         let (transcript, response, audio) = match result {
                             Ok(value) => value,
                             Err(error) => {
@@ -1443,6 +1464,7 @@ fn generate_operator_response(
     caller: u8,
     _callee: u8,
     samples: Vec<i16>,
+    transcript_sink: &dyn Fn(&str),
 ) -> Result<(String, String, Vec<i16>), VoiceError> {
     let stt_command =
         CommandSpec::from_words(&env::var("NN_VOICE_STT_COMMAND").map_err(|_| {
@@ -1460,6 +1482,7 @@ fn generate_operator_response(
         })?)?;
     let mut stt = CommandSpeechToText::new(stt_command);
     let transcript = stt.transcribe(&samples)?;
+    transcript_sink(&transcript);
     let mut dialogue = CommandDialogueGenerator::new(dialogue_command);
     let response = dialogue.generate(&context, &transcript)?.dialogue;
     let tts_command =
