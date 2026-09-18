@@ -101,13 +101,10 @@ fn live_hardware_loop_keeps_two_calls_on_lines_zero_through_five() {
         (first.requested_callee_line + 1) % 6,
         [0, 100, 200, 300],
     ));
-    assert!(!wrong_directory.accepted);
+    assert!(wrong_directory.accepted);
     assert_eq!(
-        wrong_directory
-            .error
-            .as_ref()
-            .map(|error| error.code.as_str()),
-        Some("directory_selection_required")
+        wrong_directory.output.call.unwrap().phase,
+        CallPhase::Ringing
     );
 
     let premature = backend.apply_input_message(input(

@@ -413,12 +413,7 @@ impl Backend {
             .or_else(|| self.state.call.as_ref().map(|call| call.caller_line));
         let mut error = None;
         if let Some(call) = self.calls.iter().find(|call| Some(call.caller) == focused) {
-            if (direct(&input.cord_topology, call.caller, call.callee)
-                || has_cord(
-                    input,
-                    PortId::Subscriber(call.callee),
-                    PortId::RingGenerator,
-                ))
+            if direct(&input.cord_topology, call.caller, call.callee)
                 && selected != u16::from(call.callee)
             {
                 error = Some((
@@ -638,6 +633,11 @@ impl Backend {
                             "direct routing requires exactly one Caller-to-Callee cord",
                         ));
                     }
+                } else {
+                    error = Some((
+                        "premature_direct_routing",
+                        "keep ringing until the destination has been rung for two seconds",
+                    ));
                 }
             }
             CallPhase::Ringing if !ring && !direct_route => {

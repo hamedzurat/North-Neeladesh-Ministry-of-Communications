@@ -190,7 +190,7 @@ ref_draw_clock :: proc(app: ^Input_State) {
 	ref_text(fmt.tprintf("CALLS %d // SERVICES %d/%d // ERRORS %d", app.backend_output.shift.active_call_count, app.backend_output.shift.completed_service_calls, app.backend_output.shift.required_service_calls, app.backend_output.shift.service_errors), area.x + 286, area.y + 98, 10, MUTED)
 	ref_text(fmt.tprintf("INTERFERENCE %d%%", app.backend_output.interference_level), area.x + 286, area.y + 80, 10, app.backend_output.interference_level > 0 ? AMBER : GREEN)
 	if call, ok := app.backend_output.call.?; ok {
-		ref_text(fmt.tprintf("CALL // %s", call.phase), area.x + 14, area.y + 98, 10, BLUE)
+		ref_text(fmt.tprintf("CALL // LINE %d -> LINE %d // %s", call.caller_line, call.requested_callee_line, call.phase), area.x + 14, area.y + 98, 10, BLUE)
 	}
 	if app.backend_output.tap_bridge_monitoring >= 0 {
 		ref_text(fmt.tprintf("TAP BRIDGE %d // DUMMY AUDIO", app.backend_output.tap_bridge_monitoring), area.x + 14, area.y + 80, 10, BLUE)
