@@ -134,6 +134,7 @@ update_reference_controls :: proc(app: ^Input_State, delta: f32) {
         app.crank_fill += max(0.5, abs(rl.GetMouseWheelMove()) * 0.5)
 		if app.crank_fill >= 1 {
 			app.crank_fill = 0
+			app.intent.ring_line = ring_generator_line(app.intent.cord_topology[:])
 			app.crank_flash = 0.35
 		}
 	} else if rl.GetTime() > app.crank_active_until {
