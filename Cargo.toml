@@ -5,6 +5,7 @@ members = [
     "crates/protocol-harness",
     "crates/voice-daemon",
     "crates/debug-surface",
+    "crates/test-frontend",
 ]
 resolver = "2"
 

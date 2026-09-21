@@ -242,6 +242,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "exchange-test-frontend"
+version = "0.1.0"
+dependencies = [
+ "exchange-protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "exchange-voice-daemon"
 version = "0.1.0"
 dependencies = [

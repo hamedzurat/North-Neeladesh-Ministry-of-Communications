@@ -12,13 +12,13 @@ use serde::Deserialize;
 use exchange_protocol::{
     CallPhase, CallStatus, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION, DebugActiveCall,
     DebugCallRecord, DebugCommand, DebugCounters, DebugFrontendState, DebugRequest, DebugResponse,
-    DebugRunState, DebugSnapshot, DebugStoryState, DebugSubscriberState, DebugVoiceConversation,
-    FrameError, GamePhase, HeldControls, InputMessage, InputState, OutputDebug, PROTOCOL_VERSION,
-    PortId, PrinterEntry, ProtocolError, RtpL16Packet, ShiftPhase, ShiftStatus, StateMessage,
-    StateOutput, TuningState, VOICE_AUDIO_PACKET_SAMPLES, VOICE_AUDIO_SAMPLE_RATE,
-    VOICE_PROTOCOL_VERSION, VoiceControl, VoiceControlMessage, VoiceStatus, VoiceStatusMessage,
-    decode_voice_input_audio, decode_voice_status, encode_voice_control, encode_voice_status,
-    read_frame, write_frame,
+    DebugRunState, DebugSnapshot, DebugSubscriberState, DebugVoiceConversation, FrameError,
+    GamePhase, HeldControls, InputMessage, InputState, OutputDebug, PROTOCOL_VERSION, PortId,
+    PrinterEntry, ProtocolError, RtpL16Packet, ShiftPhase, ShiftStatus, StateMessage, StateOutput,
+    TEXT_PROTOCOL_VERSION, TextInputMessage, TextResponseMessage, TextStatus, TuningState,
+    VOICE_AUDIO_PACKET_SAMPLES, VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl,
+    VoiceControlMessage, VoiceStatus, VoiceStatusMessage, decode_voice_input_audio,
+    decode_voice_status, encode_voice_control, encode_voice_status, read_frame, write_frame,
 };
 use exchange_voice_daemon::{
     CommandSpec, CommandSpeechToText, DialogueGenerator, PersistentCommandDialogueGenerator,
@@ -31,6 +31,7 @@ const MAX_AUDIO_PACKETS: usize = 4096;
 static DIALOGUE_WORKER: OnceLock<Mutex<Option<PersistentCommandDialogueGenerator>>> =
     OnceLock::new();
 static POCKET_TTS_WORKER: OnceLock<Mutex<Option<PersistentPocketTtsCommand>>> = OnceLock::new();
+static TEXT_TURN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Debug, Clone, Deserialize)]
 struct GameConfig {
@@ -511,15 +512,6 @@ impl Backend {
             active_calls,
             call_history: self.call_history.clone(),
             subscribers,
-            story: DebugStoryState {
-                current_node_id: "neutral_exchange".into(),
-                frontier: vec![],
-                current_story_beat: None,
-                interference_reduced: false,
-                interference_level: 0,
-                operator_knowledge: vec![],
-                graph: vec![],
-            },
             counters: DebugCounters {
                 completed_routings: self.completed,
                 completed_service_calls: 0,
@@ -1637,7 +1629,19 @@ pub fn serve_with_voice_and_debug_engine(
     voice_socket: Option<UdpSocket>,
     debug_listener: Option<TcpListener>,
 ) -> io::Result<()> {
-    let initial = Backend::new_exchange();
+    serve_with_voice_debug_and_text(listener, voice_socket, debug_listener, None)
+}
+
+pub fn serve_with_voice_debug_and_text(
+    listener: TcpListener,
+    voice_socket: Option<UdpSocket>,
+    debug_listener: Option<TcpListener>,
+    text_listener: Option<TcpListener>,
+) -> io::Result<()> {
+    let mut initial = Backend::new_exchange();
+    if text_listener.is_some() {
+        initial.tts_prepared = true;
+    }
     let backend = Arc::new(Mutex::new(initial));
     if let Some(socket) = voice_socket {
         let voice_backend = Arc::clone(&backend);
@@ -1653,6 +1657,19 @@ pub fn serve_with_voice_and_debug_engine(
                 thread::spawn(move || {
                     if let Err(error) = handle_debug_connection(stream, connection_backend) {
                         eprintln!("debug connection closed with error: {error}");
+                    }
+                });
+            }
+        });
+    }
+    if let Some(listener) = text_listener {
+        let text_backend = Arc::clone(&backend);
+        thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let connection_backend = Arc::clone(&text_backend);
+                thread::spawn(move || {
+                    if let Err(error) = handle_text_connection(stream, connection_backend) {
+                        eprintln!("text connection closed with error: {error}");
                     }
                 });
             }
@@ -1952,8 +1969,7 @@ fn generate_operator_response(
     let mut stt = CommandSpeechToText::new(stt_command);
     let transcript = stt.transcribe(&samples)?;
     transcript_sink(&transcript);
-    let response =
-        with_persistent_dialogue(|dialogue| dialogue.generate(&context, &transcript))?.dialogue;
+    let response = generate_dialogue(&context, &transcript)?;
     let audio = with_persistent_pocket_tts(|tts| {
         tts.synthesize(&format!("pocket-line-{caller}"), &response)
     })?;
@@ -1964,6 +1980,126 @@ fn generate_operator_response(
         ));
     }
     Ok((transcript, response, audio))
+}
+
+fn generate_dialogue(context: &ResponseContext, transcript: &str) -> Result<String, VoiceError> {
+    Ok(with_persistent_dialogue(|dialogue| dialogue.generate(context, transcript))?.dialogue)
+}
+
+fn text_error(request: &TextInputMessage, code: &str, message: &str) -> TextResponseMessage {
+    TextResponseMessage {
+        protocol_version: TEXT_PROTOCOL_VERSION,
+        session_id: request.session_id,
+        turn_id: request.turn_id,
+        state_revision: request.state_revision,
+        status: TextStatus::Failed,
+        response_text: None,
+        error: Some(ProtocolError {
+            code: code.into(),
+            message: message.into(),
+        }),
+    }
+}
+
+fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -> io::Result<()> {
+    loop {
+        let _turn_lock = TEXT_TURN_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .map_err(|_| io::Error::other("text turn lock poisoned"))?;
+        let request: TextInputMessage = match read_frame(&mut stream) {
+            Ok(request) => request,
+            Err(FrameError::Io(error))
+                if matches!(
+                    error.kind(),
+                    ErrorKind::UnexpectedEof | ErrorKind::ConnectionReset
+                ) =>
+            {
+                return Ok(());
+            }
+            Err(error) => return Err(io::Error::new(ErrorKind::InvalidData, error.to_string())),
+        };
+
+        let (context, error) = {
+            let state = backend
+                .lock()
+                .map_err(|_| io::Error::other("backend state lock poisoned"))?;
+            if request.protocol_version != TEXT_PROTOCOL_VERSION {
+                (
+                    None,
+                    Some(("protocol_version", "unsupported text protocol version")),
+                )
+            } else if request.state_revision != state.revision {
+                (
+                    None,
+                    Some(("state_revision", "text state revision mismatch")),
+                )
+            } else if request.session_id == 0 || request.turn_id == 0 {
+                (
+                    None,
+                    Some(("turn", "session and turn ids must be non-zero")),
+                )
+            } else if request.text.trim().is_empty() {
+                (None, Some(("text", "text input cannot be empty")))
+            } else {
+                match state.voice_subscriber_line.zip(state.voice_callee_line) {
+                    Some((caller, callee)) => (Some(state.voice_context(caller, callee)), None),
+                    None => (
+                        None,
+                        Some(("no_active_call", "connect a caller before sending text")),
+                    ),
+                }
+            }
+        };
+
+        let response = if let Some((code, message)) = error {
+            text_error(&request, code, message)
+        } else {
+            match generate_dialogue(&context.expect("validated text context"), &request.text) {
+                Ok(response_text) => {
+                    if let Ok(mut state) = backend.lock() {
+                        state.voice_status = Some(VoiceStatus::Completed);
+                        state.voice_transcript = Some(request.text.clone());
+                        state.voice_response_text = Some(response_text.clone());
+                        let conversation_id = state.next_voice_conversation_id;
+                        state.next_voice_conversation_id =
+                            state.next_voice_conversation_id.wrapping_add(1);
+                        let caller = state.voice_subscriber_line.unwrap_or(0);
+                        let now = state.elapsed_seconds();
+                        let caller_name = state.subscriber(caller).name.clone();
+                        state.voice_conversations.push(DebugVoiceConversation {
+                            id: conversation_id,
+                            session_id: request.session_id,
+                            turn_id: request.turn_id,
+                            state_revision: request.state_revision,
+                            caller_name,
+                            caller_place: simple_place(caller).into(),
+                            status: Some(VoiceStatus::Completed),
+                            started_elapsed_seconds: now,
+                            finished_elapsed_seconds: Some(now),
+                            captured_samples: 0,
+                            tts_samples: 0,
+                            transcript: Some(request.text.clone()),
+                            response_text: Some(response_text.clone()),
+                            error: None,
+                        });
+                    }
+                    TextResponseMessage {
+                        protocol_version: TEXT_PROTOCOL_VERSION,
+                        session_id: request.session_id,
+                        turn_id: request.turn_id,
+                        state_revision: request.state_revision,
+                        status: TextStatus::Completed,
+                        response_text: Some(response_text),
+                        error: None,
+                    }
+                }
+                Err(error) => text_error(&request, &error.code, &error.message),
+            }
+        };
+        write_frame(&mut stream, &response)
+            .map_err(|error| io::Error::other(format!("text response write failed: {error}")))?;
+    }
 }
 
 fn voice_turn_cancelled(backend: &Arc<Mutex<Backend>>, turn_id: u64) -> bool {

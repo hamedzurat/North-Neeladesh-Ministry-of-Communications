@@ -6,16 +6,22 @@ fn main() -> io::Result<()> {
     let bind = argument_value("--bind").unwrap_or_else(|| "127.0.0.1:7878".to_string());
     let voice_bind = argument_value("--voice-bind").unwrap_or_else(|| "127.0.0.1:7879".to_string());
     let debug_bind = argument_value("--debug-bind");
+    let text_bind = argument_value("--text-bind");
     let listener = TcpListener::bind(&bind)?;
     let voice_socket = UdpSocket::bind(&voice_bind)?;
     let debug_listener = debug_bind
         .as_deref()
         .map(bind_loopback_listener)
         .transpose()?;
-    exchange_backend::serve_with_voice_and_debug_engine(
+    let text_listener = text_bind
+        .as_deref()
+        .map(bind_loopback_listener)
+        .transpose()?;
+    exchange_backend::serve_with_voice_debug_and_text(
         listener,
         Some(voice_socket),
         debug_listener,
+        text_listener,
     )
 }
 

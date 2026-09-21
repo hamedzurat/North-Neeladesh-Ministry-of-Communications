@@ -8,6 +8,7 @@ pub const PROTOCOL_VERSION: u16 = 3;
 pub const DEBUG_PROTOCOL_VERSION: u16 = 2;
 pub const MAX_FRAME_SIZE: usize = 4 * 1_048_576;
 pub const VOICE_PROTOCOL_VERSION: u16 = 2;
+pub const TEXT_PROTOCOL_VERSION: u16 = 1;
 pub const VOICE_INPUT_SAMPLE_RATE: u32 = 16_000;
 pub const VOICE_INPUT_AUDIO_PACKET_SAMPLES: usize = 320;
 pub const VOICE_AUDIO_SAMPLE_RATE: u32 = 24_000;
@@ -140,6 +141,36 @@ pub struct InputMessage {
     pub input_sequence: u64,
     pub expected_state_revision: u64,
     pub input: InputState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextInputMessage {
+    pub protocol_version: u16,
+    pub session_id: u64,
+    pub turn_id: u64,
+    pub state_revision: u64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextStatus {
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextResponseMessage {
+    pub protocol_version: u16,
+    pub session_id: u64,
+    pub turn_id: u64,
+    pub state_revision: u64,
+    pub status: TextStatus,
+    pub response_text: Option<String>,
+    pub error: Option<ProtocolError>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,12 +345,6 @@ pub enum DebugCommand {
         caller_line: u8,
         callee_line: u8,
     },
-    ForceStoryEvent {
-        event_id: String,
-    },
-    SelectStoryPath {
-        node_id: String,
-    },
     SetGodmode {
         enabled: bool,
     },
@@ -365,7 +390,6 @@ pub struct DebugSnapshot {
     pub active_calls: Vec<DebugActiveCall>,
     pub call_history: Vec<DebugCallRecord>,
     pub subscribers: Vec<DebugSubscriberState>,
-    pub story: DebugStoryState,
     pub counters: DebugCounters,
     pub voice: DebugVoiceState,
     pub frontend: DebugFrontendState,
@@ -421,26 +445,6 @@ pub struct DebugSubscriberState {
     pub pressure: u32,
     pub current_goal: Option<String>,
     pub status_flags: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DebugStoryState {
-    pub current_node_id: String,
-    pub frontier: Vec<String>,
-    pub current_story_beat: Option<String>,
-    pub interference_reduced: bool,
-    pub interference_level: u8,
-    pub operator_knowledge: Vec<String>,
-    pub graph: Vec<DebugStoryNode>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DebugStoryNode {
-    pub id: String,
-    pub kind: String,
-    pub outgoing: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -777,11 +781,11 @@ mod tests {
     use std::io::Cursor;
 
     use super::{
-        FrameError, MAX_FRAME_SIZE, PortId, RtpL16Packet, VOICE_AUDIO_PAYLOAD_TYPE,
-        VOICE_PROTOCOL_VERSION, VoiceControl, VoiceControlMessage, VoiceInputAudioMessage,
-        VoiceStatus, VoiceStatusMessage, decode_voice_control, decode_voice_input_audio,
-        decode_voice_status, encode_voice_control, encode_voice_input_audio, encode_voice_status,
-        read_frame, write_frame,
+        FrameError, MAX_FRAME_SIZE, PortId, RtpL16Packet, TextInputMessage, TextResponseMessage,
+        TextStatus, VOICE_AUDIO_PAYLOAD_TYPE, VOICE_PROTOCOL_VERSION, VoiceControl,
+        VoiceControlMessage, VoiceInputAudioMessage, VoiceStatus, VoiceStatusMessage,
+        decode_voice_control, decode_voice_input_audio, decode_voice_status, encode_voice_control,
+        encode_voice_input_audio, encode_voice_status, read_frame, write_frame,
     };
 
     #[test]
@@ -801,6 +805,34 @@ mod tests {
 
         assert!(matches!(error, FrameError::Oversized(size) if size > MAX_FRAME_SIZE));
         assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn text_messages_round_trip_over_framed_cbor() {
+        let request = TextInputMessage {
+            protocol_version: 1,
+            session_id: 4,
+            turn_id: 2,
+            state_revision: 9,
+            text: "Please connect me to the station.".into(),
+        };
+        let response = TextResponseMessage {
+            protocol_version: 1,
+            session_id: 4,
+            turn_id: 2,
+            state_revision: 9,
+            status: TextStatus::Completed,
+            response_text: Some("I will connect you now.".into()),
+            error: None,
+        };
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &request).unwrap();
+        write_frame(&mut bytes, &response).unwrap();
+        let mut cursor = Cursor::new(bytes);
+        let decoded_request: TextInputMessage = read_frame(&mut cursor).unwrap();
+        let decoded_response: TextResponseMessage = read_frame(&mut cursor).unwrap();
+        assert_eq!(decoded_request, request);
+        assert_eq!(decoded_response, response);
     }
 
     #[test]
