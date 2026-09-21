@@ -21,10 +21,11 @@ use exchange_protocol::{
     decode_voice_status, encode_voice_control, encode_voice_status, read_frame, write_frame,
 };
 use exchange_voice_daemon::{
-    CommandSpec, CommandSpeechToText, DialogueGenerator, PersistentCommandDialogueGenerator,
-    PersistentPocketTtsCommand, ResponseContext, SpeechToText, SubscriberProfile, TextToSpeech,
-    VoiceError,
+    CommandSpec, CommandSpeechToText, CommandTextClassifier, ConversationTurn, DialogueGenerator,
+    PersistentCommandDialogueGenerator, PersistentPocketTtsCommand, ResponseContext, SpeechToText,
+    SubscriberProfile, TextClassifier, TextToSpeech, VoiceError,
 };
+mod stories;
 
 const LINES: u8 = 12;
 const MAX_AUDIO_PACKETS: usize = 4096;
@@ -43,6 +44,12 @@ struct GameConfig {
     ring_grace_seconds: u64,
     shift_duration_seconds: u64,
     call_arrival_interval_seconds: u64,
+    #[serde(default = "default_story_seed")]
+    story_seed: u64,
+}
+
+fn default_story_seed() -> u64 {
+    1
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -77,6 +84,7 @@ impl Default for GameConfig {
             ring_grace_seconds: 16,
             shift_duration_seconds: 90,
             call_arrival_interval_seconds: 0,
+            story_seed: default_story_seed(),
         }
     }
 }
@@ -87,10 +95,26 @@ impl GameConfig {
         let Ok(contents) = fs::read_to_string(path) else {
             return Self::default();
         };
-        toml::from_str(&contents).unwrap_or_else(|error| {
+        let mut config: Self = toml::from_str(&contents).unwrap_or_else(|error| {
             eprintln!("exchange config ignored: {error}");
             Self::default()
-        })
+        });
+        let fallback_names = [
+            "Ayesha Rahman",
+            "Mithun Das",
+            "Farzana Akter",
+            "Rafiq Hasan",
+        ];
+        for subscriber in &mut config.subscribers {
+            if subscriber.name.trim().is_empty() || subscriber.name.starts_with("SUBSCRIBER ") {
+                subscriber.name =
+                    fallback_names[usize::from(subscriber.line) % fallback_names.len()].into();
+            }
+            if subscriber.role.trim().is_empty() || subscriber.role == "unassigned" {
+                subscriber.role = "senior emergency physician".into();
+            }
+        }
+        config
     }
 }
 
@@ -156,6 +180,17 @@ pub struct Backend {
     next_voice_conversation_id: u64,
     last_input_json: Option<String>,
     last_output_json: Option<String>,
+    story_beat: stories::shapla_apartments::Beat,
+    story_controls: HeldControls,
+    story_enabled: bool,
+    story_started_elapsed_seconds: u64,
+    voice_turn_controls: HeldControls,
+    story_reward_paid: bool,
+    story_followup_pending: bool,
+    story_followup_call_started: bool,
+    story_completed: bool,
+    story_thread: String,
+    story_conversation: Vec<ConversationTurn>,
 }
 
 impl Default for Backend {
@@ -185,7 +220,7 @@ impl Backend {
             sequence: None,
             clock_started: Instant::now(),
             debug_elapsed: 0,
-            rng: 0x4e45_454c_4144_4553,
+            rng: config.story_seed,
             calls: Vec::new(),
             call_history: Vec::new(),
             line_limit: LINES,
@@ -227,6 +262,17 @@ impl Backend {
             next_voice_conversation_id: 1,
             last_input_json: None,
             last_output_json: None,
+            story_beat: stories::shapla_apartments::Beat::EmergencyCall,
+            story_controls: HeldControls::default(),
+            story_enabled: true,
+            story_started_elapsed_seconds: 0,
+            voice_turn_controls: HeldControls::default(),
+            story_reward_paid: false,
+            story_followup_pending: false,
+            story_followup_call_started: false,
+            story_completed: false,
+            story_thread: "shapla_apartments".into(),
+            story_conversation: Vec::new(),
         };
         backend
     }
@@ -235,6 +281,7 @@ impl Backend {
         backend.call_target = backend.config.active_calls;
         backend.line_limit = 6;
         backend.tts_prepared = true;
+        backend.story_enabled = false;
         backend.calls.clear();
         backend.next_call_arrival_elapsed_seconds = backend.elapsed_seconds() as u64;
         backend.config.call_arrival_interval_seconds = 0;
@@ -320,9 +367,18 @@ impl Backend {
                 .collect(),
             subscriber_goal: String::new(),
             call_premise: String::new(),
-            call_guidance: String::new(),
+            call_guidance: if caller == stories::shapla_apartments::CALLER_LINE {
+                format!(
+                    "{}\nStory place: {}\nOpening dialogue: {}",
+                    self.story_beat.dialogue_prompt(),
+                    stories::shapla_apartments::PLACE,
+                    self.story_beat.opening_dialogue().unwrap_or(""),
+                )
+            } else {
+                String::new()
+            },
             permitted_knowledge: vec![],
-            recent_conversation: vec![],
+            recent_conversation: self.story_conversation.clone(),
             current_input: None,
         }
     }
@@ -363,6 +419,15 @@ impl Backend {
         self.voice_transcript = None;
         self.voice_response_text = None;
         self.voice_speaker_active = false;
+        self.story_beat = stories::shapla_apartments::Beat::EmergencyCall;
+        self.story_controls = HeldControls::default();
+        self.story_started_elapsed_seconds = self.elapsed_seconds() as u64;
+        self.voice_turn_controls = HeldControls::default();
+        self.story_reward_paid = false;
+        self.story_followup_pending = false;
+        self.story_followup_call_started = false;
+        self.story_completed = false;
+        self.story_conversation.clear();
         self.cancelled_voice_turn = None;
         self.voice_conversations.clear();
         self.next_voice_conversation_id = 1;
@@ -377,6 +442,7 @@ impl Backend {
             })
             .collect();
         self.state.line_lamps = lamps(&self.calls, -1);
+        self.sync_story_lamp();
         self.state.shift.active_call_count = self.calls.len() as u8;
         self.state.game_phase = GamePhase::Shift;
     }
@@ -416,6 +482,9 @@ impl Backend {
             })
             .collect();
         DebugSnapshot {
+            story_thread: self.story_thread.clone(),
+            story_beat: format!("{:?}", self.story_beat),
+            money: self.money,
             run: DebugRunState {
                 number: self.run_generation as u32 + 1,
                 state_revision: self.revision,
@@ -503,6 +572,18 @@ impl Backend {
         }
         self.sequence = Some(message.input_sequence);
         let input = &message.input;
+        let talk_buttons = u8::from(input.held_controls.ptt)
+            + u8::from(input.held_controls.police)
+            + u8::from(input.held_controls.ems);
+        if talk_buttons > 1 {
+            return rejected(
+                message.input_sequence,
+                "multiple_talk_buttons",
+                "press exactly one of PTT, Police, or EMS",
+                self.revision,
+                &self.state,
+            );
+        }
         self.debug_elapsed = self.debug_elapsed.saturating_add(0);
         if self.state.shift.phase == ShiftPhase::Ready && self.calls.is_empty() {
             self.refill_calls(self.call_target);
@@ -514,6 +595,7 @@ impl Backend {
             self.refill_calls(self.call_target);
         }
         self.expire_calls();
+        self.expire_story();
         self.refill_calls(self.call_target);
         self.connect_ready_direct_calls(input);
         if self.state.shift.phase == ShiftPhase::Active
@@ -524,7 +606,13 @@ impl Backend {
         }
         let selected = directory_id(input.directory_digits);
         let focused = operator_line(&input.cord_topology)
-            .or_else(|| self.state.call.as_ref().map(|call| call.caller_line));
+            .or_else(|| self.state.call.as_ref().map(|call| call.caller_line))
+            .or_else(|| {
+                self.calls
+                    .iter()
+                    .find(|call| call.phase == CallPhase::Connected)
+                    .map(|call| call.caller)
+            });
         let mut error = None;
         if let Some(call) = self.calls.iter().find(|call| Some(call.caller) == focused) {
             if direct(&input.cord_topology, call.caller, call.callee)
@@ -543,6 +631,7 @@ impl Backend {
             }
             if error.is_none()
                 && call.phase == CallPhase::Connected
+                && !input.cord_topology.is_empty()
                 && !valid_connected_circuit(input, call.caller, call.callee)
             {
                 error = Some((
@@ -581,6 +670,8 @@ impl Backend {
                 .cloned()
         });
         self.state.line_lamps = lamps(&self.calls, effective_ring_line(input));
+        self.story_controls = input.held_controls.clone();
+        self.sync_story_lamp();
         self.state.shift.active_call_count = self.calls.len() as u8;
         self.state.tap_bridge_monitoring = tap_monitor(input, &self.state);
         self.state.tap_bridge_audio_active = self.state.tap_bridge_monitoring.is_some();
@@ -616,25 +707,32 @@ impl Backend {
     }
 
     fn update_voice_control(&mut self, input: &InputState, revision: u64) {
-        let ptt = input.held_controls.ptt;
-        if ptt == self.last_ptt {
-            return;
-        }
-        self.last_ptt = ptt;
-        if ptt && self.state.tap_bridge_audio_active {
-            return;
-        }
+        let talking =
+            input.held_controls.ptt || input.held_controls.police || input.held_controls.ems;
         let caller = operator_line(&input.cord_topology)
             .or_else(|| self.state.call.as_ref().map(|call| call.caller_line));
-        if ptt {
+        if let Some(caller) = caller {
+            self.voice_subscriber_line = Some(caller);
+            self.voice_callee_line = self
+                .calls
+                .iter()
+                .find(|call| call.caller == caller)
+                .map(|call| call.callee)
+                .or_else(|| {
+                    (caller == stories::shapla_apartments::CALLER_LINE)
+                        .then_some(stories::shapla_apartments::CALLER_LINE)
+                });
+        }
+        if talking == self.last_ptt {
+            return;
+        }
+        self.last_ptt = talking;
+        if talking && self.state.tap_bridge_audio_active {
+            return;
+        }
+        if talking {
+            self.voice_turn_controls = input.held_controls.clone();
             self.cancelled_voice_turn = None;
-            self.voice_subscriber_line = caller;
-            self.voice_callee_line = caller.and_then(|line| {
-                self.calls
-                    .iter()
-                    .find(|call| call.caller == line)
-                    .map(|call| call.callee)
-            });
             self.voice_turn_id = self.next_voice_turn_id;
             self.next_voice_turn_id = self.next_voice_turn_id.wrapping_add(1);
         }
@@ -647,13 +745,36 @@ impl Backend {
             turn_id: self.voice_turn_id.max(1),
             state_revision: revision,
             voice_id,
-            control: if ptt {
+            control: if talking {
                 VoiceControl::StartPtt
             } else {
                 VoiceControl::ReleasePtt
             },
         });
         self.voice_state_revision = revision;
+    }
+
+    fn sync_story_lamp(&mut self) {
+        if !self.story_enabled {
+            return;
+        }
+        self.state.line_lamps[stories::shapla_apartments::CALLER_LINE as usize] = true;
+    }
+
+    fn expire_story(&mut self) {
+        if !self.story_enabled {
+            return;
+        }
+        let patience = self.story_beat.patience_seconds();
+        if patience > 0
+            && self.elapsed_seconds() as u64
+                >= self.story_started_elapsed_seconds.saturating_add(patience)
+        {
+            self.story_beat = stories::shapla_apartments::Beat::BadFollowup;
+            self.money -= 100;
+            self.deductions += 100;
+            self.story_started_elapsed_seconds = self.elapsed_seconds() as u64;
+        }
     }
 
     fn cancel_voice_if_operator_disconnected(&mut self, input: &InputState) {
@@ -671,6 +792,11 @@ impl Backend {
             return;
         }
         self.cancelled_voice_turn = Some(self.voice_turn_id);
+        if self.story_beat == stories::shapla_apartments::Beat::EmergencyCall {
+            self.story_beat = stories::shapla_apartments::Beat::BadFollowup;
+            self.money -= 100;
+            self.deductions += 100;
+        }
         self.voice_status = Some(VoiceStatus::Cancelled);
         self.voice_speaker_active = false;
         self.audio_queue.clear();
@@ -697,6 +823,47 @@ impl Backend {
         });
     }
 
+    fn apply_story_classification(
+        &mut self,
+        classification: stories::shapla_apartments::Classification,
+    ) {
+        let controls = self.story_controls.clone();
+        let police = controls.police;
+        let ems = controls.ems;
+        if let Some(next) =
+            stories::shapla_apartments::next_beat(self.story_beat, classification, police, ems)
+        {
+            self.story_beat = next;
+            self.story_followup_pending = true;
+            self.story_started_elapsed_seconds = self.elapsed_seconds() as u64;
+            append_printer(&mut self.state, &format!("STORY // {:?}", next));
+        }
+    }
+
+    fn complete_story_followup(&mut self) {
+        if self.story_beat == stories::shapla_apartments::Beat::HappyFollowup
+            && !self.story_reward_paid
+        {
+            self.money += 100;
+            self.earned += 100;
+            self.story_reward_paid = true;
+            append_printer(&mut self.state, "STORY // caller sent $100");
+        }
+    }
+
+    fn record_story_turn(&mut self, speaker: &str, text: &str) {
+        if self.voice_subscriber_line != Some(stories::shapla_apartments::CALLER_LINE) {
+            return;
+        }
+        self.story_conversation.push(ConversationTurn {
+            speaker: speaker.into(),
+            text: text.into(),
+        });
+        if self.story_conversation.len() > 6 {
+            self.story_conversation.remove(0);
+        }
+    }
+
     fn advance(
         &mut self,
         input: &InputState,
@@ -705,6 +872,25 @@ impl Backend {
     ) -> Option<(&'static str, &'static str)> {
         let line = focused?;
         let index = self.calls.iter().position(|c| c.caller == line)?;
+        if line == stories::shapla_apartments::CALLER_LINE && input.cord_topology.is_empty() {
+            if self.story_beat == stories::shapla_apartments::Beat::EmergencyCall
+                && self.story_conversation.len() > 2
+            {
+                self.story_beat = stories::shapla_apartments::Beat::BadFollowup;
+                self.story_followup_pending = true;
+                self.story_started_elapsed_seconds = self.elapsed_seconds() as u64;
+                append_printer(&mut self.state, "STORY // operator abandoned the caller");
+            }
+            if self.story_beat == stories::shapla_apartments::Beat::EmergencyCall {
+                self.calls.remove(index);
+                return None;
+            }
+            self.calls.remove(index);
+            if self.story_followup_call_started {
+                self.story_completed = true;
+            }
+            return None;
+        }
         let mut finish = false;
         let mut connect = false;
         let mut error = None;
@@ -986,6 +1172,7 @@ impl Backend {
                 .cloned()
         });
         self.state.line_lamps = lamps(&self.calls, -1);
+        self.sync_story_lamp();
         self.state.shift.active_call_count = self.calls.len() as u8;
     }
 
@@ -1068,6 +1255,12 @@ impl Backend {
     }
 
     fn refill_calls(&mut self, count: usize) {
+        self.ensure_story_call();
+        let ordinary_count = if self.story_enabled {
+            count.saturating_sub(1)
+        } else {
+            count
+        };
         let starting_shift = self.state.shift.phase != ShiftPhase::Active;
         if self.state.shift.phase == ShiftPhase::Settled {
             self.state.shift.number = self.state.shift.number.saturating_add(1);
@@ -1087,7 +1280,8 @@ impl Backend {
             self.next_call_arrival_elapsed_seconds = self.shift_started_elapsed_seconds;
         }
         let now = self.elapsed_seconds() as u64;
-        while self.calls.len() < count.min(self.call_target)
+        let target_count = ordinary_count.min(self.call_target) + usize::from(self.story_enabled);
+        while self.calls.len() < target_count
             && self.state.shift.number <= 3
             && now >= self.next_call_arrival_elapsed_seconds
         {
@@ -1111,6 +1305,33 @@ impl Backend {
         self.state.game_phase = GamePhase::Shift;
     }
 
+    fn ensure_story_call(&mut self) {
+        if !self.story_enabled
+            || self.story_completed
+            || self
+                .calls
+                .iter()
+                .any(|call| call.caller == stories::shapla_apartments::CALLER_LINE)
+        {
+            return;
+        }
+        if self.story_followup_pending {
+            self.story_followup_call_started = true;
+        }
+        let now = self.elapsed_seconds() as u64;
+        self.calls.push(ActiveCall {
+            caller: stories::shapla_apartments::CALLER_LINE,
+            callee: 0,
+            phase: CallPhase::Waiting,
+            deadline: u64::MAX,
+            started_elapsed_seconds: now,
+            connected_at: None,
+            connected_elapsed_seconds: None,
+            ring_started_at: None,
+            audio_duration_seconds: 2,
+        });
+    }
+
     fn next_call(&mut self) -> (u8, u8) {
         loop {
             self.rng = self
@@ -1120,6 +1341,9 @@ impl Backend {
             let caller = (self.rng % u64::from(self.line_limit)) as u8;
             let callee = ((self.rng >> 3) % u64::from(self.line_limit)) as u8;
             if caller != callee
+                && (!self.story_enabled
+                    || (caller != stories::shapla_apartments::CALLER_LINE
+                        && callee != stories::shapla_apartments::CALLER_LINE))
                 && self.calls.iter().all(|c| {
                     c.caller != caller
                         && c.callee != caller
@@ -1153,11 +1377,30 @@ impl Backend {
                 audio: None,
             };
         }
+        if let DebugCommand::SelectStoryThread { ref thread_id } = request.command
+            && !stories::known_thread(thread_id)
+        {
+            return DebugResponse {
+                protocol_version: DEBUG_PROTOCOL_VERSION,
+                accepted: false,
+                error: Some(ProtocolError {
+                    code: "unknown_story_thread".into(),
+                    message: format!("unknown story thread: {thread_id}"),
+                }),
+                snapshot: self.debug_snapshot(),
+                audio: None,
+            };
+        }
         match request.command {
             DebugCommand::ResetRun => self.reset_run(),
+            DebugCommand::SelectStoryThread { thread_id } => {
+                self.story_thread = thread_id;
+                self.reset_run();
+            }
             DebugCommand::AdvanceTime { seconds } => {
                 self.debug_elapsed = self.debug_elapsed.saturating_add(u64::from(seconds));
                 self.expire_calls();
+                self.expire_story();
                 self.refill_calls(self.call_target);
             }
             DebugCommand::InjectCall {
@@ -1613,6 +1856,9 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         .unwrap_or(1);
                     let worker_socket = socket.try_clone()?;
                     let worker_backend = Arc::clone(&backend);
+                    let service_turn = backend.lock().ok().is_some_and(|state| {
+                        state.voice_turn_controls.police || state.voice_turn_controls.ems
+                    });
                     let conversation_id = if let Ok(mut state) = backend.lock() {
                         let id = state.next_voice_conversation_id;
                         state.next_voice_conversation_id =
@@ -1649,10 +1895,36 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                             caller,
                             callee,
                             samples,
+                            service_turn,
                             &|transcript| {
                                 if let Ok(mut state) = transcript_backend.lock() {
-                                    state.voice_status = Some(VoiceStatus::GeneratingResponse);
+                                    state.voice_status = if service_turn {
+                                        Some(VoiceStatus::Completed)
+                                    } else {
+                                        Some(VoiceStatus::GeneratingResponse)
+                                    };
                                     state.voice_transcript = Some(transcript.to_string());
+                                    if service_turn
+                                        && caller == stories::shapla_apartments::CALLER_LINE
+                                    {
+                                        let service = if state.voice_turn_controls.police {
+                                            exchange_protocol::ServiceKind::Police
+                                        } else {
+                                            exchange_protocol::ServiceKind::Ems
+                                        };
+                                        match classify_story(transcript, service) {
+                                            Ok(classification) => {
+                                                state.apply_story_classification(classification)
+                                            }
+                                            Err(error) => append_printer(
+                                                &mut state.state,
+                                                &format!(
+                                                    "STORY CLASSIFIER ERROR // {}",
+                                                    error.message
+                                                ),
+                                            ),
+                                        }
+                                    }
                                     if let Some(id) = conversation_id {
                                         if let Some(conversation) = state
                                             .voice_conversations
@@ -1712,17 +1984,31 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         if voice_turn_cancelled(&worker_backend, input.turn_id) {
                             return;
                         }
+                        let has_response = !response.is_empty();
+                        let transcript_for_history = transcript.clone();
+                        let response_for_history = response.clone();
                         let status = VoiceStatusMessage {
                             protocol_version: VOICE_PROTOCOL_VERSION,
                             session_id: input.session_id,
                             turn_id: input.turn_id,
                             state_revision: input.state_revision,
-                            status: VoiceStatus::Playing,
+                            status: if audio.is_empty() {
+                                VoiceStatus::Completed
+                            } else {
+                                VoiceStatus::Playing
+                            },
                             transcript: Some(transcript),
-                            response_text: Some(response),
+                            response_text: (!response.is_empty()).then_some(response),
                             error: None,
                         };
                         if let Ok(mut state) = worker_backend.lock() {
+                            if has_response {
+                                if !service_turn {
+                                    state.record_story_turn("player", &transcript_for_history);
+                                    state.record_story_turn("caller", &response_for_history);
+                                }
+                                state.complete_story_followup();
+                            }
                             state.voice_status = Some(VoiceStatus::Playing);
                             state.voice_speaker_active = true;
                             state.voice_transcript = status.transcript.clone();
@@ -1826,6 +2112,7 @@ fn generate_operator_response(
     caller: u8,
     _callee: u8,
     samples: Vec<i16>,
+    service_turn: bool,
     transcript_sink: &dyn Fn(&str),
 ) -> Result<(String, String, Vec<i16>), VoiceError> {
     let stt_command =
@@ -1838,6 +2125,9 @@ fn generate_operator_response(
     let mut stt = CommandSpeechToText::new(stt_command);
     let transcript = stt.transcribe(&samples)?;
     transcript_sink(&transcript);
+    if service_turn {
+        return Ok((transcript, String::new(), Vec::new()));
+    }
     let response = generate_dialogue(&context, &transcript)?;
     let audio = with_persistent_pocket_tts(|tts| {
         tts.synthesize(&format!("pocket-line-{caller}"), &response)
@@ -1852,7 +2142,51 @@ fn generate_operator_response(
 }
 
 fn generate_dialogue(context: &ResponseContext, transcript: &str) -> Result<String, VoiceError> {
+    let normalized = transcript.to_ascii_lowercase();
+    if context.call_guidance.contains("Opening dialogue:")
+        && ["where", "location", "address", "located"]
+            .iter()
+            .any(|word| normalized.contains(word))
+    {
+        return Ok("Shapla Apartments.".into());
+    }
+    if normalized.contains("what is your name") || normalized.contains("what should i call") {
+        return Ok("Nusrat. Please help my mother.".into());
+    }
+    if normalized.contains("what do you do") || normalized.contains("line of work") {
+        return Ok("I am a senior architect, but that does not matter right now.".into());
+    }
+    if normalized.contains("pet") {
+        return Ok("I cannot think about that right now; please help her.".into());
+    }
+    if context
+        .call_guidance
+        .contains("Respond briefly and neutrally")
+    {
+        return Ok("Things are under control. Thank you for checking.".into());
+    }
     Ok(with_persistent_dialogue(|dialogue| dialogue.generate(context, transcript))?.dialogue)
+}
+
+fn classify_story(
+    transcript: &str,
+    service: exchange_protocol::ServiceKind,
+) -> Result<stories::shapla_apartments::Classification, VoiceError> {
+    let command = env::var("NN_STORY_CLASSIFIER_COMMAND").map_err(|_| {
+        VoiceError::new(
+            "story_classifier_not_configured",
+            "NN_STORY_CLASSIFIER_COMMAND is not configured",
+        )
+    })?;
+    let mut classifier = CommandTextClassifier::new(CommandSpec::from_words(&command)?);
+    let prompt = match service {
+        exchange_protocol::ServiceKind::Ems => stories::shapla_apartments::EMS_CLASSIFIER_PROMPT,
+        exchange_protocol::ServiceKind::Police => {
+            stories::shapla_apartments::POLICE_CLASSIFIER_PROMPT
+        }
+    };
+    let word = classifier.classify(prompt, transcript)?;
+    Ok(stories::shapla_apartments::Classification::parse(&word))
 }
 
 fn text_error(request: &TextInputMessage, code: &str, message: &str) -> TextResponseMessage {
@@ -1862,6 +2196,7 @@ fn text_error(request: &TextInputMessage, code: &str, message: &str) -> TextResp
         turn_id: request.turn_id,
         state_revision: request.state_revision,
         status: TextStatus::Failed,
+        classification: None,
         response_text: None,
         error: Some(ProtocolError {
             code: code.into(),
@@ -1921,12 +2256,48 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
             }
         };
 
+        let mut classification_word = None;
+        if error.is_none()
+            && let Ok(mut state) = backend.lock()
+        {
+            state.story_controls = request.held_controls.clone();
+            if state.voice_subscriber_line == Some(stories::shapla_apartments::CALLER_LINE) {
+                let service = if request.held_controls.police {
+                    exchange_protocol::ServiceKind::Police
+                } else {
+                    exchange_protocol::ServiceKind::Ems
+                };
+                match classify_story(&request.text, service) {
+                    Ok(classification) => {
+                        classification_word = Some(classification.as_str().to_string());
+                        state.apply_story_classification(classification);
+                    }
+                    Err(error) => append_printer(
+                        &mut state.state,
+                        &format!("STORY CLASSIFIER ERROR // {}", error.message),
+                    ),
+                }
+            }
+        }
+        let service_turn = request.held_controls.police || request.held_controls.ems;
         let response = if let Some((code, message)) = error {
             text_error(&request, code, message)
         } else {
-            match generate_dialogue(&context.expect("validated text context"), &request.text) {
+            let generated = if service_turn {
+                Ok(String::new())
+            } else {
+                generate_dialogue(&context.expect("validated text context"), &request.text)
+            };
+            match generated {
                 Ok(response_text) => {
                     if let Ok(mut state) = backend.lock() {
+                        if !service_turn {
+                            state.record_story_turn("player", &request.text);
+                            state.record_story_turn("caller", &response_text);
+                        }
+                        if !response_text.is_empty() {
+                            state.complete_story_followup();
+                        }
                         state.voice_status = Some(VoiceStatus::Completed);
                         state.voice_transcript = Some(request.text.clone());
                         state.voice_response_text = Some(response_text.clone());
@@ -1959,7 +2330,8 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
                         turn_id: request.turn_id,
                         state_revision: request.state_revision,
                         status: TextStatus::Completed,
-                        response_text: Some(response_text),
+                        classification: classification_word,
+                        response_text: (!response_text.is_empty()).then_some(response_text),
                         error: None,
                     }
                 }

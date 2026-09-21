@@ -1,6 +1,23 @@
 backend-debug address="127.0.0.1:7878" voice_address="127.0.0.1:7879":
     NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_DIALOGUE_PERSISTENT=1 NN_OLLAMA_MODEL="qwen3.5:4b" NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.pocket_tts" NN_VOICE_TTS_PERSISTENT=1 cargo run --quiet -p exchange-backend --bin exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }} --debug-bind 127.0.0.1:7880
 
+story-test-backend address="127.0.0.1:7878" voice_address="127.0.0.1:7879" text_address="127.0.0.1:7880" debug_address="127.0.0.1:7881":
+    PYTHONPATH=python NN_STORY_CLASSIFIER_COMMAND="python -m voice_workers.classifier" NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_DIALOGUE_PERSISTENT=1 NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.pocket_tts" NN_VOICE_TTS_PERSISTENT=1 cargo run --quiet -p exchange-backend --bin exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }} --text-bind {{ text_address }} --debug-bind {{ debug_address }}
+
+story-test path="ems_success" log="story-test.log":
+    PYTHONPATH=python NN_STORY_CLASSIFIER_COMMAND="python -m voice_workers.classifier" cargo run --quiet -p exchange-test-frontend -- --path {{ path }} --log {{ log }} --player-command "python -m voice_workers.player"
+
+story-test-all:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -f story-test-all.log
+    for path in ems_success ems_failure police_success water_no_help unrelated_questions random_conversation; do
+        temp="/tmp/opencode/story-test-${path}.log"
+        just story-test "${path}" "$temp"
+        cat "$temp" >> story-test-all.log
+        printf '\n' >> story-test-all.log
+    done
+
 frontend-raylib:
     test -f /usr/lib/libraylib.so || (echo "missing /usr/lib/libraylib.so; install raylib 6.0" >&2 && exit 1)
     rm -rf target/odin-vendor

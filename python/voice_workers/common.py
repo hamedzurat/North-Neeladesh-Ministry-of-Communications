@@ -33,6 +33,9 @@ Response Context:
 
 Exchange Operator transcript:
 {transcript}
+
+Example output:
+{{"dialogue":"I will answer that."}}
 """
 
 

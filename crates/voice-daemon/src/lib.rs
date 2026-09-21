@@ -182,6 +182,10 @@ pub trait DialogueGenerator {
     ) -> Result<SubscriberResponse, VoiceError>;
 }
 
+pub trait TextClassifier {
+    fn classify(&mut self, prompt: &str, text: &str) -> Result<String, VoiceError>;
+}
+
 pub trait TextToSpeech {
     fn synthesize(&mut self, voice_id: &str, text: &str) -> Result<Vec<i16>, VoiceError>;
 
@@ -999,6 +1003,38 @@ struct DialogueRequest<'a> {
 
 pub struct CommandDialogueGenerator {
     spec: CommandSpec,
+}
+
+#[derive(Serialize)]
+struct ClassificationRequest<'a> {
+    prompt: &'a str,
+    text: &'a str,
+}
+
+#[derive(Deserialize)]
+struct ClassificationResult {
+    classification: String,
+}
+
+pub struct CommandTextClassifier {
+    spec: CommandSpec,
+}
+
+impl CommandTextClassifier {
+    pub fn new(spec: CommandSpec) -> Self {
+        Self { spec }
+    }
+}
+
+impl TextClassifier for CommandTextClassifier {
+    fn classify(&mut self, prompt: &str, text: &str) -> Result<String, VoiceError> {
+        let input = serde_json::to_vec(&ClassificationRequest { prompt, text })
+            .map_err(|error| VoiceError::new("classification_request_failed", error.to_string()))?;
+        let output = run_command(&self.spec, &input)?;
+        let result = serde_json::from_slice::<ClassificationResult>(&output)
+            .map_err(|error| VoiceError::new("classification_invalid_output", error.to_string()))?;
+        Ok(result.classification.trim().to_ascii_lowercase())
+    }
 }
 
 impl CommandDialogueGenerator {

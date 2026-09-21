@@ -1,19 +1,20 @@
 # Text test frontend
 
-This binary drives the backend without a microphone or speakers. It performs one
-call, asks a player-utterance command for the caller's text, sends that text to
-the backend, and records the run in CSV.
+This binary drives the real backend without a microphone or speakers. It plays a
+complete Shapla story path: the first call, location conversation, service
+request, second call, and outcome conversation. The backend performs the story
+transition and dialogue generation; the frontend only supplies human actions.
 
 Start the backend with the text listener enabled:
 
 ```sh
-cargo run -p exchange-backend -- --text-bind 127.0.0.1:7880
+cargo run -p exchange-backend -- --text-bind 127.0.0.1:7880 --debug-bind 127.0.0.1:7881
 ```
 
 Run interactively:
 
 ```sh
-cargo run -p exchange-test-frontend -- --csv run.csv
+cargo run -p exchange-test-frontend -- --log run.log
 ```
 
 Use an LLM adapter instead of the terminal prompt:
@@ -21,8 +22,27 @@ Use an LLM adapter instead of the terminal prompt:
 ```sh
 cargo run -p exchange-test-frontend -- \
   --player-command ./player-utterance \
-  --csv run.csv
+  --log run.log
 ```
+
+Available complete paths:
+
+```sh
+just story-test path=ems_success log=story-test-ems-success.log
+just story-test path=ems_failure log=story-test-ems-failure.log
+just story-test path=police_success log=story-test-police-success.log
+just story-test path=water_no_help log=story-test-water-no-help.log
+just story-test path=unrelated_questions log=story-test-unrelated-questions.log
+just story-test path=random_conversation log=story-test-random-conversation.log
+just story-test-all
+```
+
+`story-test-all` runs every path in one backend session and writes the combined
+transcript to `story-test-all.log`.
+
+The debug connection is used only to select the story thread. It never selects
+or skips a story beat. Each path reaches its second beat through normal backend
+conversation and classification.
 
 The command receives JSON on stdin:
 
@@ -31,7 +51,8 @@ The command receives JSON on stdin:
   "caller_line": 3,
   "destination_line": 11,
   "state_revision": 2,
-  "conversation": []
+  "conversation": [],
+  "task": "ask the caller for the exact location"
 }
 ```
 
@@ -43,3 +64,36 @@ It must write JSON to stdout:
 
 The adapter generates only the player's words. The backend remains responsible
 for routing, dialogue response generation, and game state.
+
+During a run, the terminal prints:
+
+```text
+PLAYER LLM    // ...
+CLASSIFIER    // success
+SUBSCRIBER    // ...
+```
+
+The same gameplay is recorded in the `.log` file.
+
+The story classifier is a separate generic command. Configure it with
+`NN_STORY_CLASSIFIER_COMMAND`. It receives:
+
+```json
+{"prompt":"...","text":"Send EMS to Shapla Apartments."}
+```
+
+and must return one word in this JSON shape:
+
+```json
+{"classification":"success"}
+```
+
+The active service task accepts `success` or `failure`. EMS and Police use
+different prompts, selected by the button the player pressed.
+
+The bundled Ollama adapter can be used directly:
+
+```sh
+export PYTHONPATH=python
+export NN_STORY_CLASSIFIER_COMMAND="python -m voice_workers.classifier"
+```

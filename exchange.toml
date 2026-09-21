@@ -5,6 +5,7 @@ patience_max_seconds = 64
 ring_grace_seconds = 16
 shift_duration_seconds = 90
 call_arrival_interval_seconds = 0
+story_seed = 1
 
 dialogue_prompt_template = '''You are a configured subscriber in a telephone exchange.
 Generate only the subscriber's next spoken reply to the Exchange Operator.
@@ -18,4 +19,91 @@ Response Context:
 
 Exchange Operator transcript:
 {transcript}
+
+Example output:
+{{"dialogue":"I will answer that."}}
 '''
+
+[[subscribers]]
+line = 0
+place = "LINE 00"
+name = "SUBSCRIBER 00"
+role = "unassigned"
+voice_id = "pocket-line-0"
+
+[[subscribers]]
+line = 1
+place = "SHAPLA APARTMENTS"
+name = "Nusrat Rahman"
+role = "senior architect"
+voice_id = "pocket-line-1"
+
+[[subscribers]]
+line = 2
+place = "LINE 02"
+name = "SUBSCRIBER 02"
+role = "unassigned"
+voice_id = "pocket-line-2"
+
+[[subscribers]]
+line = 3
+place = "LINE 03"
+name = "SUBSCRIBER 03"
+role = "unassigned"
+voice_id = "pocket-line-3"
+
+[[subscribers]]
+line = 4
+place = "LINE 04"
+name = "SUBSCRIBER 04"
+role = "unassigned"
+voice_id = "pocket-line-4"
+
+[[subscribers]]
+line = 5
+place = "LINE 05"
+name = "SUBSCRIBER 05"
+role = "unassigned"
+voice_id = "pocket-line-5"
+
+[[subscribers]]
+line = 6
+place = "LINE 06"
+name = "SUBSCRIBER 06"
+role = "unassigned"
+voice_id = "pocket-line-6"
+
+[[subscribers]]
+line = 7
+place = "LINE 07"
+name = "SUBSCRIBER 07"
+role = "unassigned"
+voice_id = "pocket-line-7"
+
+[[subscribers]]
+line = 8
+place = "LINE 08"
+name = "SUBSCRIBER 08"
+role = "unassigned"
+voice_id = "pocket-line-8"
+
+[[subscribers]]
+line = 9
+place = "LINE 09"
+name = "SUBSCRIBER 09"
+role = "unassigned"
+voice_id = "pocket-line-9"
+
+[[subscribers]]
+line = 10
+place = "LINE 10"
+name = "SUBSCRIBER 10"
+role = "unassigned"
+voice_id = "pocket-line-10"
+
+[[subscribers]]
+line = 11
+place = "LINE 11"
+name = "SUBSCRIBER 11"
+role = "unassigned"
+voice_id = "pocket-line-11"

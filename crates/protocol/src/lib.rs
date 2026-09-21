@@ -150,6 +150,7 @@ pub struct TextInputMessage {
     pub session_id: u64,
     pub turn_id: u64,
     pub state_revision: u64,
+    pub held_controls: HeldControls,
     pub text: String,
 }
 
@@ -169,6 +170,7 @@ pub struct TextResponseMessage {
     pub turn_id: u64,
     pub state_revision: u64,
     pub status: TextStatus,
+    pub classification: Option<String>,
     pub response_text: Option<String>,
     pub error: Option<ProtocolError>,
 }
@@ -338,6 +340,9 @@ pub struct StateMessage {
 pub enum DebugCommand {
     Snapshot,
     ResetRun,
+    SelectStoryThread {
+        thread_id: String,
+    },
     AdvanceTime {
         seconds: u32,
     },
@@ -384,6 +389,9 @@ pub struct DebugResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DebugSnapshot {
+    pub story_thread: String,
+    pub story_beat: String,
+    pub money: i32,
     pub run: DebugRunState,
     pub shift: ShiftStatus,
     pub calls: Vec<CallStatus>,
@@ -781,9 +789,9 @@ mod tests {
     use std::io::Cursor;
 
     use super::{
-        FrameError, MAX_FRAME_SIZE, PortId, RtpL16Packet, TextInputMessage, TextResponseMessage,
-        TextStatus, VOICE_AUDIO_PAYLOAD_TYPE, VOICE_PROTOCOL_VERSION, VoiceControl,
-        VoiceControlMessage, VoiceInputAudioMessage, VoiceStatus, VoiceStatusMessage,
+        FrameError, HeldControls, MAX_FRAME_SIZE, PortId, RtpL16Packet, TextInputMessage,
+        TextResponseMessage, TextStatus, VOICE_AUDIO_PAYLOAD_TYPE, VOICE_PROTOCOL_VERSION,
+        VoiceControl, VoiceControlMessage, VoiceInputAudioMessage, VoiceStatus, VoiceStatusMessage,
         decode_voice_control, decode_voice_input_audio, decode_voice_status, encode_voice_control,
         encode_voice_input_audio, encode_voice_status, read_frame, write_frame,
     };
@@ -814,6 +822,7 @@ mod tests {
             session_id: 4,
             turn_id: 2,
             state_revision: 9,
+            held_controls: HeldControls::default(),
             text: "Please connect me to the station.".into(),
         };
         let response = TextResponseMessage {
@@ -822,6 +831,7 @@ mod tests {
             turn_id: 2,
             state_revision: 9,
             status: TextStatus::Completed,
+            classification: None,
             response_text: Some("I will connect you now.".into()),
             error: None,
         };
