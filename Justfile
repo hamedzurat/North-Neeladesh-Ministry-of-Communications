@@ -7,11 +7,14 @@ story-test-backend address="127.0.0.1:7878" voice_address="127.0.0.1:7879" text_
 story-test path="ems_success" log="story-test.log":
     PYTHONPATH=python NN_STORY_CLASSIFIER_COMMAND="python -m voice_workers.classifier" cargo run --quiet -p exchange-test-frontend -- --path {{ path }} --log {{ log }} --player-command "python -m voice_workers.player"
 
+story-audio:
+    PYTHONPATH=python uv run --project python --no-sync python scripts/generate_neel_university_audio.py
+
 story-test-all:
     #!/usr/bin/env bash
     set -euo pipefail
     rm -f story-test-all.log
-    for path in ems_success ems_failure police_success water_no_help unrelated_questions random_conversation; do
+    for path in ems_success ems_failure police_success water_no_help unrelated_questions random_conversation neel_direct neel_misdirection neel_tap neel_tap_late neel_bela_1031 neel_bela_1032 neel_bela_1032_questions; do
         temp="/tmp/opencode/story-test-${path}.log"
         just story-test "${path}" "$temp"
         cat "$temp" >> story-test-all.log

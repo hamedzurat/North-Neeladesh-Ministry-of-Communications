@@ -140,9 +140,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut backend = TcpStream::connect(&backend_address)?;
     let mut text = TcpStream::connect(&text_address)?;
     let mut debug = TcpStream::connect(&debug_address)?;
-    let initial_debug = select_story_thread(&mut debug, "shapla_apartments")?;
-    if initial_debug.snapshot.story_thread != "shapla_apartments"
-        || initial_debug.snapshot.story_beat != "EmergencyCall"
+    let story_thread = if path.starts_with("neel_") {
+        "neel_university"
+    } else {
+        "shapla_apartments"
+    };
+    let initial_debug = select_story_thread(&mut debug, story_thread)?;
+    if initial_debug.snapshot.story_thread != story_thread
+        || (story_thread == "shapla_apartments"
+            && initial_debug.snapshot.story_beat != "EmergencyCall")
+        || (story_thread == "neel_university"
+            && initial_debug.snapshot.story_beat != "ProfessorRouting")
     {
         return Err("thread selection did not reset to EmergencyCall".into());
     }
@@ -150,8 +158,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut log = GameLog::open(&log_path)?;
     writeln!(
         log.file,
-        "=== STORY THREAD: shapla_apartments / PATH: {path} ==="
+        "=== STORY THREAD: {story_thread} / PATH: {path} ==="
     )?;
+    if story_thread == "neel_university" {
+        return run_neel_story(
+            &mut backend,
+            &mut text,
+            &mut debug,
+            &mut log,
+            &player_command,
+            path.as_str(),
+            initial_money,
+        );
+    }
     let mut sequence = 0;
     let mut revision = 0;
     let mut turns = Vec::new();
@@ -628,6 +647,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         final_debug.snapshot.money - initial_money,
         final_debug.snapshot.story_beat,
     );
+    for entry in &state.output.printer_output {
+        if entry.text.contains("MONEY //") {
+            log.row(CsvRow {
+                event: "money",
+                sequence,
+                revision,
+                caller: followup.caller_line,
+                destination: followup.requested_callee_line,
+                status: "accepted",
+                text: &entry.text,
+            })?;
+        }
+    }
     log.row(CsvRow {
         event: "outcome",
         sequence,
@@ -673,6 +705,404 @@ fn argument(name: &str) -> Option<String> {
     None
 }
 
+fn run_neel_story(
+    backend: &mut TcpStream,
+    text: &mut TcpStream,
+    debug: &mut TcpStream,
+    log: &mut GameLog,
+    player_command: &Option<String>,
+    path: &str,
+    initial_money: i32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut sequence = 0;
+    let mut revision = 0;
+    let mut state = exchange(
+        backend,
+        input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+    )?;
+    revision = state.state_revision;
+    let professor = state
+        .output
+        .calls
+        .iter()
+        .find(|call| call.caller_line == 2)
+        .cloned()
+        .ok_or("Neel University did not call")?;
+    log.row(CsvRow {
+        event: "state",
+        sequence,
+        revision,
+        caller: 2,
+        destination: 3,
+        status: "accepted",
+        text: "Neel University calls; Professor Routing is active.",
+    })?;
+    let operator = vec![cord(PortId::Subscriber(2), PortId::Operator)];
+    state = exchange(
+        backend,
+        input(
+            &mut sequence,
+            revision,
+            operator.clone(),
+            false,
+            [0, 0, 0, 1],
+        ),
+    )?;
+    revision = state.state_revision;
+    log.row(CsvRow {
+        event: "operator",
+        sequence,
+        revision,
+        caller: 2,
+        destination: 3,
+        status: "accepted",
+        text: "You connect Neel University to the Operator.",
+    })?;
+    let mut turns = Vec::new();
+    let question = player_utterance(
+        player_command,
+        &professor,
+        revision,
+        &turns,
+        "ask Prof. Kashem where he wants to be connected",
+    )?;
+    let answer = send_text(
+        text,
+        TextInputMessage {
+            protocol_version: TEXT_PROTOCOL_VERSION,
+            session_id: 1,
+            turn_id: 1,
+            state_revision: revision,
+            held_controls: HeldControls::default(),
+            text: question.clone(),
+        },
+    )?;
+    let answer_text = answer.response_text.clone().unwrap_or_default();
+    turns.push(Turn {
+        speaker: "player".into(),
+        text: question.clone(),
+    });
+    turns.push(Turn {
+        speaker: "subscriber".into(),
+        text: answer_text.clone(),
+    });
+    log.row(CsvRow {
+        event: "text_turn",
+        sequence,
+        revision,
+        caller: 2,
+        destination: 3,
+        status: "accepted",
+        text: &format!(
+            "player={question} | service=caller | classification=none | subscriber={answer_text}"
+        ),
+    })?;
+
+    if path.contains("misdirection") {
+        let wrong = vec![cord(PortId::Subscriber(2), PortId::Subscriber(4))];
+        let wrong_response = exchange(
+            backend,
+            input(&mut sequence, revision, wrong, false, [0, 0, 0, 4]),
+        )?;
+        if wrong_response.accepted {
+            return Err("Neel misdirection unexpectedly succeeded".into());
+        }
+        revision = wrong_response.state_revision;
+        log.row(CsvRow {
+            event: "misdirection",
+            sequence,
+            revision,
+            caller: 2,
+            destination: 4,
+            status: "rejected",
+            text: "The wrong direct circuit fails and Neel University calls again.",
+        })?;
+        state = exchange(
+            backend,
+            input(
+                &mut sequence,
+                revision,
+                vec![cord(PortId::Subscriber(2), PortId::Operator)],
+                false,
+                [0, 0, 0, 1],
+            ),
+        )?;
+        revision = state.state_revision;
+    }
+
+    let ringing = vec![
+        cord(PortId::Subscriber(2), PortId::Operator),
+        cord(PortId::Subscriber(3), PortId::RingGenerator),
+    ];
+    state = exchange(
+        backend,
+        input_with_ring(
+            &mut sequence,
+            revision,
+            ringing.clone(),
+            false,
+            [0, 0, 0, 3],
+            3,
+        ),
+    )?;
+    revision = state.state_revision;
+    log.row(CsvRow {
+        event: "ring_start",
+        sequence,
+        revision,
+        caller: 2,
+        destination: 3,
+        status: "accepted",
+        text: "You connect the Ring Generator to Shadhin Housing and keep ringing.",
+    })?;
+    let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 3 })?;
+    state = exchange(
+        backend,
+        input_with_ring(&mut sequence, revision, ringing, false, [0, 0, 0, 3], 3),
+    )?;
+    revision = state.state_revision;
+    if !state.output.line_lamps[3] {
+        return Err("Shadhin Housing did not light after the crank delay".into());
+    }
+    log.row(CsvRow {
+        event: "ring_ready",
+        sequence,
+        revision,
+        caller: 2,
+        destination: 3,
+        status: "accepted",
+        text: "Shadhin Housing LED is active after the delayed crank.",
+    })?;
+    let direct = vec![cord(PortId::Subscriber(2), PortId::Subscriber(3))];
+    state = exchange(
+        backend,
+        input(&mut sequence, revision, direct.clone(), false, [0, 0, 0, 3]),
+    )?;
+    revision = state.state_revision;
+    if !state.accepted {
+        return Err(format!("Neel University direct route rejected: {:?}", state.error).into());
+    }
+    let first_audio_duration = debug_snapshot(debug)?
+        .snapshot
+        .active_calls
+        .iter()
+        .find(|call| call.caller_line == 2)
+        .map(|call| call.audio_duration_seconds)
+        .unwrap_or(2);
+    if path.contains("tap") {
+        if path.contains("late") {
+            let _ = debug_command(
+                debug,
+                DebugCommand::AdvanceTime {
+                    seconds: first_audio_duration.saturating_sub(1) as u32,
+                },
+            )?;
+        }
+        let tap = vec![
+            cord(PortId::Subscriber(2), PortId::Tap(1)),
+            cord(PortId::Subscriber(3), PortId::Tap(2)),
+        ];
+        state = exchange(
+            backend,
+            tap_input(&mut sequence, revision, tap.clone(), true, [0, 0, 0, 3]),
+        )?;
+        revision = state.state_revision;
+        if !state.output.tap_bridge_audio_active {
+            return Err("TAP did not become active for the Neel/Shadhin call".into());
+        }
+        log.row(CsvRow {
+            event: "tap",
+            sequence,
+            revision,
+            caller: 2,
+            destination: 3,
+            status: "accepted",
+            text: "TAP is held and monitors the active call timeline.",
+        })?;
+        let _ = debug_command(
+            debug,
+            DebugCommand::AdvanceTime {
+                seconds: first_audio_duration.saturating_add(1) as u32,
+            },
+        )?;
+        state = exchange(
+            backend,
+            tap_input(&mut sequence, revision, tap, false, [0, 0, 0, 3]),
+        )?;
+    } else {
+        let _ = debug_command(
+            debug,
+            DebugCommand::AdvanceTime {
+                seconds: first_audio_duration.saturating_add(1) as u32,
+            },
+        )?;
+        state = exchange(
+            backend,
+            input(&mut sequence, revision, direct.clone(), false, [0, 0, 0, 3]),
+        )?;
+    }
+    revision = state.state_revision;
+    let arnab = state
+        .output
+        .calls
+        .iter()
+        .find(|call| call.caller_line == 3)
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "Arnab did not call after the Professor connection; active calls: {:?}",
+                state.output.calls
+            )
+        })?;
+    log.row(CsvRow {
+        event: "followup",
+        sequence,
+        revision,
+        caller: 3,
+        destination: arnab.requested_callee_line,
+        status: "accepted",
+        text: "Arnab Bhattacharjee calls from Shadhin Housing.",
+    })?;
+    state = exchange(
+        backend,
+        input(
+            &mut sequence,
+            revision,
+            vec![cord(PortId::Subscriber(3), PortId::Operator)],
+            false,
+            [0, 0, 0, 1],
+        ),
+    )?;
+    revision = state.state_revision;
+    let mut arnab_turns = turns;
+    for turn in 0..2 {
+        let task = if turn == 0 {
+            "ask Arnab who he wants to be connected to"
+        } else if path.contains("questions") {
+            "ask Arnab whether Bela Bose has a cat"
+        } else {
+            "ask Arnab whether he knows Bela Bose's directory ID"
+        };
+        let utterance = player_utterance(player_command, &arnab, revision, &arnab_turns, task)?;
+        let response = send_text(
+            text,
+            TextInputMessage {
+                protocol_version: TEXT_PROTOCOL_VERSION,
+                session_id: 1,
+                turn_id: 10 + turn,
+                state_revision: revision,
+                held_controls: HeldControls::default(),
+                text: utterance.clone(),
+            },
+        )?;
+        let response_text = response.response_text.clone().unwrap_or_default();
+        arnab_turns.push(Turn {
+            speaker: "player".into(),
+            text: utterance.clone(),
+        });
+        arnab_turns.push(Turn {
+            speaker: "subscriber".into(),
+            text: response_text.clone(),
+        });
+        log.row(CsvRow {
+            event: "text_turn",
+            sequence,
+            revision,
+            caller: 3,
+            destination: 4,
+            status: "accepted",
+            text: &format!("player={utterance} | service=caller | classification=none | subscriber={response_text}"),
+        })?;
+    }
+    let destination = if path.contains("1031") { 4 } else { 5 };
+    let digits = if destination == 4 {
+        [1, 0, 3, 1]
+    } else {
+        [1, 0, 3, 2]
+    };
+    let direct = vec![cord(PortId::Subscriber(3), PortId::Subscriber(destination))];
+    state = exchange(
+        backend,
+        input(&mut sequence, revision, direct.clone(), false, digits),
+    )?;
+    revision = state.state_revision;
+    if !state.accepted {
+        return Err(format!("Bela route rejected: {:?}", state.error).into());
+    }
+    let connected_snapshot = debug_snapshot(debug)?;
+    let audio_duration = connected_snapshot
+        .snapshot
+        .active_calls
+        .iter()
+        .find(|call| call.caller_line == 3)
+        .map(|call| call.audio_duration_seconds)
+        .ok_or("Bela connection did not become active")?;
+    let _ = debug_command(
+        debug,
+        DebugCommand::AdvanceTime {
+            seconds: audio_duration.saturating_add(1) as u32,
+        },
+    )?;
+    state = exchange(
+        backend,
+        input(&mut sequence, revision, direct, false, digits),
+    )?;
+    revision = state.state_revision;
+    if !state.accepted {
+        return Err(format!("Bela completion input rejected: {:?}", state.error).into());
+    }
+    let snapshot = debug_snapshot(debug)?;
+    if snapshot.snapshot.story_beat != "Completed" {
+        return Err(format!(
+            "Neel story did not complete: beat={}, calls={:?}, state_calls={:?}, history={:?}",
+            snapshot.snapshot.story_beat,
+            snapshot.snapshot.active_calls,
+            state.output.calls,
+            snapshot.snapshot.call_history
+        )
+        .into());
+    }
+    let outcome = format!(
+        "Backend final money: ${} (started at ${}; delta ${}). Final beat: {}.",
+        snapshot.snapshot.money,
+        initial_money,
+        snapshot.snapshot.money - initial_money,
+        snapshot.snapshot.story_beat,
+    );
+    for entry in &state.output.printer_output {
+        if entry.text.contains("MONEY //") {
+            log.row(CsvRow {
+                event: "money",
+                sequence,
+                revision,
+                caller: 3,
+                destination,
+                status: "accepted",
+                text: &entry.text,
+            })?;
+        }
+    }
+    log.row(CsvRow {
+        event: "outcome",
+        sequence,
+        revision,
+        caller: 3,
+        destination,
+        status: "accepted",
+        text: &outcome,
+    })?;
+    log.row(CsvRow {
+        event: "finish",
+        sequence,
+        revision,
+        caller: 3,
+        destination,
+        status: "accepted",
+        text: "Neel University story complete.",
+    })?;
+    Ok(())
+}
+
 fn cord(first: PortId, second: PortId) -> CordConnection {
     CordConnection { first, second }
 }
@@ -713,6 +1143,31 @@ fn input(
             },
         },
     }
+}
+
+fn input_with_ring(
+    sequence: &mut u64,
+    revision: u64,
+    cords: Vec<CordConnection>,
+    ptt: bool,
+    digits: [u8; 4],
+    ring_line: i16,
+) -> InputMessage {
+    let mut message = input(sequence, revision, cords, ptt, digits);
+    message.input.ring_line = ring_line;
+    message
+}
+
+fn tap_input(
+    sequence: &mut u64,
+    revision: u64,
+    cords: Vec<CordConnection>,
+    tap: bool,
+    digits: [u8; 4],
+) -> InputMessage {
+    let mut message = input(sequence, revision, cords, false, digits);
+    message.input.held_controls.tap = tap;
+    message
 }
 
 fn exchange(stream: &mut TcpStream, message: InputMessage) -> io::Result<StateMessage> {
@@ -760,6 +1215,18 @@ fn debug_snapshot(stream: &mut TcpStream) -> io::Result<DebugResponse> {
     read_frame(stream).map_err(frame_io)
 }
 
+fn debug_command(stream: &mut TcpStream, command: DebugCommand) -> io::Result<DebugResponse> {
+    write_frame(
+        stream,
+        &DebugRequest {
+            protocol_version: DEBUG_PROTOCOL_VERSION,
+            command,
+        },
+    )
+    .map_err(frame_io)?;
+    read_frame(stream).map_err(frame_io)
+}
+
 fn frame_io(error: exchange_protocol::FrameError) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
 }
@@ -779,22 +1246,24 @@ fn player_utterance(
             conversation: turns,
             task,
         })?;
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()?;
-        child.stdin.take().unwrap().write_all(&prompt)?;
-        let output = child.wait_with_output()?;
-        if !output.status.success() {
-            return Err(format!("player command failed: {}", output.status).into());
+        for _attempt in 0..3 {
+            let mut child = Command::new("sh")
+                .arg("-c")
+                .arg(command)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()?;
+            child.stdin.take().unwrap().write_all(&prompt)?;
+            let output = child.wait_with_output()?;
+            if output.status.success() {
+                #[derive(Deserialize)]
+                struct ResultText {
+                    text: String,
+                }
+                return Ok(serde_json::from_slice::<ResultText>(&output.stdout)?.text);
+            }
         }
-        #[derive(Deserialize)]
-        struct ResultText {
-            text: String,
-        }
-        return Ok(serde_json::from_slice::<ResultText>(&output.stdout)?.text);
+        return Err("player command failed after three attempts".into());
     }
     let stdin = io::stdin();
     eprint!("player> ");

@@ -1,0 +1,123 @@
+use exchange_backend::Backend;
+use exchange_protocol::{
+    CordConnection, DebugCommand, DebugRequest, HeldControls, InputDebug, InputMessage, InputState,
+    PROTOCOL_VERSION, PortId, TuningState,
+};
+
+fn input_with_ring(
+    backend: &Backend,
+    sequence: u64,
+    cords: Vec<CordConnection>,
+    digits: [u8; 4],
+    ring_line: i16,
+) -> InputMessage {
+    InputMessage {
+        protocol_version: PROTOCOL_VERSION,
+        input_sequence: sequence,
+        expected_state_revision: backend.debug_snapshot().run.state_revision,
+        input: InputState {
+            cord_topology: cords,
+            held_controls: HeldControls::default(),
+            directory_digits: digits,
+            ring_line,
+            tuning: TuningState::default(),
+            debug: InputDebug::default(),
+        },
+    }
+}
+
+fn input(
+    backend: &Backend,
+    sequence: u64,
+    cords: Vec<CordConnection>,
+    digits: [u8; 4],
+) -> InputMessage {
+    input_with_ring(backend, sequence, cords, digits, -1)
+}
+
+fn cord(first: PortId, second: PortId) -> CordConnection {
+    CordConnection { first, second }
+}
+
+#[test]
+fn neel_thread_selects_professor_routing_and_authored_directory_records() {
+    let mut backend = Backend::new_exchange();
+    let selected = backend.apply_debug_command(DebugRequest {
+        protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
+        command: DebugCommand::SelectStoryThread {
+            thread_id: "neel_university".into(),
+        },
+    });
+
+    assert!(selected.accepted);
+    assert_eq!(selected.snapshot.story_thread, "neel_university");
+    assert_eq!(selected.snapshot.story_beat, "ProfessorRouting");
+
+    let response = backend.apply_input_message(input(&backend, 1, vec![], [1, 0, 3, 1]));
+    assert!(response.accepted);
+    let dog = response
+        .output
+        .directory_pages
+        .iter()
+        .flat_map(|page| &page.lines)
+        .collect::<Vec<_>>();
+    assert!(dog.iter().any(|line| *line == "SUBSCRIBER // Bela Bose"));
+    assert!(dog.iter().any(|line| *line == "NOTE // Meghna Abashon"));
+
+    let response = backend.apply_input_message(input(&backend, 2, vec![], [1, 0, 3, 2]));
+    let cat = response
+        .output
+        .directory_pages
+        .iter()
+        .flat_map(|page| &page.lines)
+        .collect::<Vec<_>>();
+    assert!(cat.iter().any(|line| *line == "NOTE // Padma Nibash"));
+}
+
+#[test]
+fn professor_must_wait_for_delayed_ring_activation_before_direct_connection() {
+    let mut backend = Backend::new_exchange();
+    backend.apply_debug_command(DebugRequest {
+        protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
+        command: DebugCommand::SelectStoryThread {
+            thread_id: "neel_university".into(),
+        },
+    });
+    let response = backend.apply_input_message(input(&backend, 1, vec![], [0, 0, 0, 1]));
+    assert!(
+        response
+            .output
+            .calls
+            .iter()
+            .any(|call| call.caller_line == 2)
+    );
+    let operator = vec![cord(PortId::Subscriber(2), PortId::Operator)];
+    backend.apply_input_message(input(&backend, 2, operator.clone(), [0, 0, 0, 1]));
+    let ringing = vec![
+        cord(PortId::Subscriber(2), PortId::Operator),
+        cord(PortId::Subscriber(3), PortId::RingGenerator),
+    ];
+    backend.apply_input_message(input_with_ring(
+        &backend,
+        3,
+        ringing.clone(),
+        [0, 0, 0, 3],
+        3,
+    ));
+    assert!(!backend.frontend_state().line_lamps[3]);
+
+    backend.apply_debug_command(DebugRequest {
+        protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
+        command: DebugCommand::AdvanceTime { seconds: 3 },
+    });
+    let ready = backend.apply_input_message(input_with_ring(&backend, 4, ringing, [0, 0, 0, 3], 3));
+    assert!(ready.output.line_lamps[3]);
+
+    let direct = vec![cord(PortId::Subscriber(2), PortId::Subscriber(3))];
+    let response = backend.apply_input_message(input(&backend, 5, direct, [0, 0, 0, 3]));
+    assert!(response.accepted);
+    assert_eq!(
+        response.output.calls[0].phase,
+        exchange_protocol::CallPhase::Held
+    );
+}

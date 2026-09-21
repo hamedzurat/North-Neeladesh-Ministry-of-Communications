@@ -235,6 +235,15 @@ pub struct ServiceCallStatus {
     pub phase: ServiceCallPhase,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TapBridgeMonitoring {
+    pub caller_line: u8,
+    pub callee_line: u8,
+    pub caller_tap_port: u8,
+    pub callee_tap_port: u8,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceErrorKind {
@@ -313,7 +322,7 @@ pub struct StateOutput {
     pub call: Option<CallStatus>,
     pub calls: Vec<CallStatus>,
     pub service_call: Option<ServiceCallStatus>,
-    pub tap_bridge_monitoring: Option<u8>,
+    pub tap_bridge_monitoring: Option<TapBridgeMonitoring>,
     pub shift: ShiftStatus,
     pub debug: OutputDebug,
 }

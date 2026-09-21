@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,9 +16,9 @@ use exchange_protocol::{
     DebugRunState, DebugSnapshot, DebugSubscriberState, DebugVoiceConversation, FrameError,
     GamePhase, HeldControls, InputMessage, InputState, OutputDebug, PROTOCOL_VERSION, PortId,
     PrinterEntry, ProtocolError, RtpL16Packet, ShiftPhase, ShiftStatus, StateMessage, StateOutput,
-    TEXT_PROTOCOL_VERSION, TextInputMessage, TextResponseMessage, TextStatus, TuningState,
-    VOICE_AUDIO_PACKET_SAMPLES, VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl,
-    VoiceControlMessage, VoiceStatus, VoiceStatusMessage, decode_voice_input_audio,
+    TEXT_PROTOCOL_VERSION, TapBridgeMonitoring, TextInputMessage, TextResponseMessage, TextStatus,
+    TuningState, VOICE_AUDIO_PACKET_SAMPLES, VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION,
+    VoiceControl, VoiceControlMessage, VoiceStatus, VoiceStatusMessage, decode_voice_input_audio,
     decode_voice_status, encode_voice_control, encode_voice_status, read_frame, write_frame,
 };
 use exchange_voice_daemon::{
@@ -128,6 +129,9 @@ struct ActiveCall {
     connected_at: Option<Instant>,
     connected_elapsed_seconds: Option<u64>,
     ring_started_at: Option<u64>,
+    ring_ready_at: Option<u64>,
+    ring_activated: bool,
+    disconnected_at: Option<u64>,
     audio_duration_seconds: u64,
 }
 
@@ -160,6 +164,7 @@ pub struct Backend {
     audio_call: Option<(u8, u8)>,
     audio_sequence: u16,
     audio_timestamp: u32,
+    audio_tap_was_active: bool,
     pending_tts: Vec<(u8, u8)>,
     tts_prepared: bool,
     last_ptt: bool,
@@ -181,6 +186,7 @@ pub struct Backend {
     last_input_json: Option<String>,
     last_output_json: Option<String>,
     story_beat: stories::shapla_apartments::Beat,
+    neel_story_beat: stories::neel_university::Beat,
     story_controls: HeldControls,
     story_enabled: bool,
     story_started_elapsed_seconds: u64,
@@ -191,6 +197,7 @@ pub struct Backend {
     story_completed: bool,
     story_thread: String,
     story_conversation: Vec<ConversationTurn>,
+    ring_active_line: i16,
 }
 
 impl Default for Backend {
@@ -242,6 +249,7 @@ impl Backend {
             audio_call: None,
             audio_sequence: 0,
             audio_timestamp: 0,
+            audio_tap_was_active: false,
             pending_tts: Vec::new(),
             tts_prepared: false,
             last_ptt: false,
@@ -263,6 +271,7 @@ impl Backend {
             last_input_json: None,
             last_output_json: None,
             story_beat: stories::shapla_apartments::Beat::EmergencyCall,
+            neel_story_beat: stories::neel_university::Beat::ProfessorRouting,
             story_controls: HeldControls::default(),
             story_enabled: true,
             story_started_elapsed_seconds: 0,
@@ -273,6 +282,7 @@ impl Backend {
             story_completed: false,
             story_thread: "shapla_apartments".into(),
             story_conversation: Vec::new(),
+            ring_active_line: -1,
         };
         backend
     }
@@ -367,7 +377,16 @@ impl Backend {
                 .collect(),
             subscriber_goal: String::new(),
             call_premise: String::new(),
-            call_guidance: if caller == stories::shapla_apartments::CALLER_LINE {
+            call_guidance: if self.story_thread == "neel_university"
+                && caller == self.story_caller()
+            {
+                format!(
+                    "{}\nStory place: {}\nOpening dialogue: {}",
+                    self.neel_story_beat.dialogue_prompt(),
+                    self.subscriber(caller).place,
+                    self.neel_story_beat.opening_dialogue().unwrap_or(""),
+                )
+            } else if caller == stories::shapla_apartments::CALLER_LINE {
                 format!(
                     "{}\nStory place: {}\nOpening dialogue: {}",
                     self.story_beat.dialogue_prompt(),
@@ -380,6 +399,34 @@ impl Backend {
             permitted_knowledge: vec![],
             recent_conversation: self.story_conversation.clone(),
             current_input: None,
+        }
+    }
+
+    fn story_caller(&self) -> u8 {
+        if self.story_thread == "neel_university" {
+            match self.neel_story_beat {
+                stories::neel_university::Beat::ProfessorRouting => {
+                    stories::neel_university::NEEL_LINE
+                }
+                stories::neel_university::Beat::ArnabDirectory => {
+                    stories::neel_university::SHADHIN_LINE
+                }
+                stories::neel_university::Beat::Completed => stories::neel_university::SHADHIN_LINE,
+            }
+        } else {
+            stories::shapla_apartments::CALLER_LINE
+        }
+    }
+
+    fn story_requested_callee(&self) -> u8 {
+        if self.story_thread == "neel_university"
+            && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory
+        {
+            stories::neel_university::BELA_DOG_LINE
+        } else if self.story_thread == "neel_university" {
+            stories::neel_university::SHADHIN_LINE
+        } else {
+            0
         }
     }
 
@@ -406,6 +453,7 @@ impl Backend {
         self.audio_call = None;
         self.audio_sequence = 0;
         self.audio_timestamp = 0;
+        self.audio_tap_was_active = false;
         self.pending_tts.clear();
         self.last_ptt = false;
         self.pending_voice_control = None;
@@ -420,6 +468,7 @@ impl Backend {
         self.voice_response_text = None;
         self.voice_speaker_active = false;
         self.story_beat = stories::shapla_apartments::Beat::EmergencyCall;
+        self.neel_story_beat = stories::neel_university::Beat::ProfessorRouting;
         self.story_controls = HeldControls::default();
         self.story_started_elapsed_seconds = self.elapsed_seconds() as u64;
         self.voice_turn_controls = HeldControls::default();
@@ -428,6 +477,7 @@ impl Backend {
         self.story_followup_call_started = false;
         self.story_completed = false;
         self.story_conversation.clear();
+        self.ring_active_line = -1;
         self.cancelled_voice_turn = None;
         self.voice_conversations.clear();
         self.next_voice_conversation_id = 1;
@@ -483,7 +533,7 @@ impl Backend {
             .collect();
         DebugSnapshot {
             story_thread: self.story_thread.clone(),
-            story_beat: format!("{:?}", self.story_beat),
+            story_beat: self.current_story_beat_name().into(),
             money: self.money,
             run: DebugRunState {
                 number: self.run_generation as u32 + 1,
@@ -523,6 +573,46 @@ impl Backend {
             },
             recent_errors: self.state.debug.messages.clone(),
         }
+    }
+
+    fn current_story_beat_name(&self) -> &'static str {
+        if self.story_thread == "neel_university" {
+            self.neel_story_beat.name()
+        } else {
+            match self.story_beat {
+                stories::shapla_apartments::Beat::EmergencyCall => "EmergencyCall",
+                stories::shapla_apartments::Beat::HappyFollowup => "HappyFollowup",
+                stories::shapla_apartments::Beat::NeutralFollowup => "NeutralFollowup",
+                stories::shapla_apartments::Beat::BadFollowup => "BadFollowup",
+            }
+        }
+    }
+
+    fn destination_is_allowed(&self, call: &ActiveCall, selected: u16) -> bool {
+        if self.story_thread == "neel_university"
+            && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory
+            && call.caller == stories::neel_university::SHADHIN_LINE
+        {
+            return [
+                stories::neel_university::BELA_DOG_LINE,
+                stories::neel_university::BELA_CAT_LINE,
+            ]
+            .iter()
+            .any(|line| selected == u16::from(*line) || directory_line(selected) == Some(*line));
+        }
+        selected == u16::from(call.callee)
+    }
+
+    fn story_direct_destination_allowed(&self, input: &InputState, caller: u8) -> bool {
+        self.story_thread == "neel_university"
+            && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory
+            && caller == stories::neel_university::SHADHIN_LINE
+            && [
+                stories::neel_university::BELA_DOG_LINE,
+                stories::neel_university::BELA_CAT_LINE,
+            ]
+            .iter()
+            .any(|line| direct(&input.cord_topology, caller, *line))
     }
 
     pub fn apply_input_message(&mut self, message: InputMessage) -> StateMessage {
@@ -597,10 +687,15 @@ impl Backend {
         self.expire_calls();
         self.expire_story();
         self.refill_calls(self.call_target);
+        self.update_ring_activation(input);
         self.connect_ready_direct_calls(input);
         if self.state.shift.phase == ShiftPhase::Active
             && self.elapsed_seconds() as u64
                 >= self.shift_started_elapsed_seconds + self.config.shift_duration_seconds
+            && !self
+                .calls
+                .iter()
+                .any(|call| matches!(call.phase, CallPhase::Held | CallPhase::Connected))
         {
             self.settle_shift();
         }
@@ -616,14 +711,17 @@ impl Backend {
         let mut error = None;
         if let Some(call) = self.calls.iter().find(|call| Some(call.caller) == focused) {
             if direct(&input.cord_topology, call.caller, call.callee)
-                && selected != u16::from(call.callee)
+                && !self.destination_is_allowed(call, selected)
             {
                 error = Some((
                     "directory_selection_required",
                     "select the requested destination before routing",
                 ));
             }
-            if error.is_none() && has_wrong_direct_circuit(input, call.caller, call.callee) {
+            if error.is_none()
+                && has_wrong_direct_circuit(input, call.caller, call.callee)
+                && !self.story_direct_destination_allowed(input, call.caller)
+            {
                 error = Some((
                     "wrong_destination",
                     "the direct circuit must use the requested destination line",
@@ -669,7 +767,7 @@ impl Backend {
                 .find(|c| c.caller_line == line)
                 .cloned()
         });
-        self.state.line_lamps = lamps(&self.calls, effective_ring_line(input));
+        self.state.line_lamps = lamps(&self.calls, self.effective_ring_line(input));
         self.story_controls = input.held_controls.clone();
         self.sync_story_lamp();
         self.state.shift.active_call_count = self.calls.len() as u8;
@@ -758,21 +856,66 @@ impl Backend {
         if !self.story_enabled {
             return;
         }
-        self.state.line_lamps[stories::shapla_apartments::CALLER_LINE as usize] = true;
+        if self.story_thread == "shapla_apartments" {
+            self.state.line_lamps[stories::shapla_apartments::CALLER_LINE as usize] = true;
+        }
+    }
+
+    fn update_ring_activation(&mut self, input: &InputState) {
+        let physical_line = physical_ring_line(input);
+        if physical_line < 0 || input.ring_line != physical_line {
+            self.ring_active_line = -1;
+            return;
+        }
+        let now = self.elapsed_seconds() as u64;
+        let delay = 1 + (self.rng % 3);
+        let Some(call) = self.calls.iter_mut().find(|call| {
+            call.phase == CallPhase::Ringing && i16::from(call.callee) == physical_line
+        }) else {
+            self.ring_active_line = -1;
+            return;
+        };
+        let ready_at = *call.ring_ready_at.get_or_insert(now + delay);
+        if now >= ready_at {
+            self.ring_active_line = physical_line;
+            call.ring_activated = true;
+        }
+    }
+
+    fn effective_ring_line(&self, input: &InputState) -> i16 {
+        let physical_line = physical_ring_line(input);
+        (self.ring_active_line == physical_line && input.ring_line == physical_line)
+            .then_some(physical_line)
+            .unwrap_or(-1)
     }
 
     fn expire_story(&mut self) {
         if !self.story_enabled {
             return;
         }
-        let patience = self.story_beat.patience_seconds();
+        if self.calls.iter().any(|call| {
+            call.caller == self.story_caller()
+                && !matches!(call.phase, CallPhase::Waiting | CallPhase::Missed)
+        }) {
+            return;
+        }
+        let patience = if self.story_thread == "neel_university" {
+            self.neel_story_beat.patience_seconds()
+        } else {
+            self.story_beat.patience_seconds()
+        };
         if patience > 0
             && self.elapsed_seconds() as u64
                 >= self.story_started_elapsed_seconds.saturating_add(patience)
         {
-            self.story_beat = stories::shapla_apartments::Beat::BadFollowup;
-            self.money -= 100;
-            self.deductions += 100;
+            if self.story_thread == "neel_university" {
+                if self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory {
+                    self.neel_story_beat = stories::neel_university::Beat::Completed;
+                    self.story_completed = true;
+                }
+            } else {
+                self.story_beat = stories::shapla_apartments::Beat::BadFollowup;
+            }
             self.story_started_elapsed_seconds = self.elapsed_seconds() as u64;
         }
     }
@@ -796,6 +939,13 @@ impl Backend {
             self.story_beat = stories::shapla_apartments::Beat::BadFollowup;
             self.money -= 100;
             self.deductions += 100;
+            append_printer(
+                &mut self.state,
+                &format!(
+                    "MONEY // -$100 abandoned Shapla emergency call // balance ${}",
+                    self.money
+                ),
+            );
         }
         self.voice_status = Some(VoiceStatus::Cancelled);
         self.voice_speaker_active = false;
@@ -852,7 +1002,7 @@ impl Backend {
     }
 
     fn record_story_turn(&mut self, speaker: &str, text: &str) {
-        if self.voice_subscriber_line != Some(stories::shapla_apartments::CALLER_LINE) {
+        if self.voice_subscriber_line != Some(self.story_caller()) {
             return;
         }
         self.story_conversation.push(ConversationTurn {
@@ -895,9 +1045,35 @@ impl Backend {
         let mut connect = false;
         let mut error = None;
         let now = self.elapsed_seconds() as u64;
+        let active_ring_line = self.effective_ring_line(input);
+        let requested_ring_line = effective_ring_line(input);
+        let ring_delay = 1 + (self.rng % 3);
+        let neel_arnab_beat = self.story_thread == "neel_university"
+            && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory;
+        let neel_arnab_destination = neel_arnab_beat
+            && [
+                stories::neel_university::BELA_DOG_LINE,
+                stories::neel_university::BELA_CAT_LINE,
+            ]
+            .iter()
+            .any(|line| selected == u16::from(*line) || directory_line(selected) == Some(*line));
+        let requires_ring = !neel_arnab_beat;
         let call = &mut self.calls[index];
+        if neel_arnab_beat && call.caller == stories::neel_university::SHADHIN_LINE {
+            for target in [
+                stories::neel_university::BELA_DOG_LINE,
+                stories::neel_university::BELA_CAT_LINE,
+            ] {
+                if (selected == u16::from(target) || directory_line(selected) == Some(target))
+                    && direct(&input.cord_topology, call.caller, target)
+                {
+                    call.callee = target;
+                }
+            }
+        }
         let operator = has_cord(input, PortId::Subscriber(line), PortId::Operator);
-        let ring = effective_ring_line(input) == i16::from(call.callee);
+        let ring_requested = requested_ring_line == i16::from(call.callee);
+        let ring = active_ring_line == i16::from(call.callee);
         let direct_route = direct(&input.cord_topology, call.caller, call.callee);
         match call.phase {
             CallPhase::Waiting if operator => {
@@ -905,17 +1081,19 @@ impl Backend {
             }
             CallPhase::OperatorSession | CallPhase::AwaitingRouting => {
                 if (direct_route
-                    && selected == u16::from(call.callee)
+                    && (neel_arnab_destination || selected == u16::from(call.callee))
                     && call.phase == CallPhase::AwaitingRouting)
-                    || has_direct_circuit_for_caller(input, line)
+                    && requires_ring
+                    || (has_direct_circuit_for_caller(input, line) && requires_ring)
                 {
                     error = Some((
                         "premature_direct_routing",
                         "ring the requested destination before connecting the caller directly",
                     ));
-                } else if ring {
+                } else if ring_requested {
                     if valid_ringing_circuit(input, call.caller, call.callee) {
                         call.ring_started_at = Some(now);
+                        call.ring_ready_at = Some(now + ring_delay);
                         call.phase = CallPhase::Ringing;
                     } else {
                         error = Some((
@@ -923,16 +1101,26 @@ impl Backend {
                             "ringing requires exactly the caller-to-Operator and callee-to-Ring Generator cords",
                         ));
                     }
+                } else if !requires_ring
+                    && direct_route
+                    && (neel_arnab_destination || selected == u16::from(call.callee))
+                {
+                    connect = true;
                 } else if input.cord_topology.is_empty() {
                     call.phase = CallPhase::AwaitingRouting;
                 }
             }
-            CallPhase::Ringing if ring => {}
+            CallPhase::Ringing if ring_requested => {}
             CallPhase::Ringing if direct_route && selected == u16::from(call.callee) => {
-                if ring {
+                if ring_requested {
                     error = Some((
                         "ring_generator_connected",
                         "disconnect the Ring Generator before completing the direct circuit",
+                    ));
+                } else if !call.ring_activated {
+                    error = Some((
+                        "ringing_not_ready",
+                        "keep the Ring Generator connected until the line LED lights",
                     ));
                 } else if call.ring_started_at.is_some() {
                     if valid_direct_circuit(input, call.caller, call.callee) {
@@ -965,14 +1153,20 @@ impl Backend {
                     "the direct circuit must use the requested destination line",
                 ));
             }
-            CallPhase::Connected
-                if input.cord_topology.is_empty()
-                    || (direct_route
-                        && call.connected_at.is_some_and(|started| {
-                            started.elapsed() >= Duration::from_secs(call.audio_duration_seconds)
-                        })) =>
-            {
-                finish = true
+            CallPhase::Connected => {
+                if valid_connected_circuit(input, call.caller, call.callee) {
+                    call.disconnected_at = None;
+                    if call.connected_elapsed_seconds.is_some_and(|started| {
+                        now.saturating_sub(started) >= call.audio_duration_seconds
+                    }) {
+                        finish = true;
+                    }
+                } else {
+                    let disconnected_at = *call.disconnected_at.get_or_insert(now);
+                    if now.saturating_sub(disconnected_at) >= 5 {
+                        finish = true;
+                    }
+                }
             }
             _ => {}
         }
@@ -1001,7 +1195,11 @@ impl Backend {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
-            call.audio_duration_seconds = 2;
+            call.audio_duration_seconds = if story_audio_path(caller, callee).is_some() {
+                story_audio_duration_seconds(caller, callee).unwrap_or(1)
+            } else {
+                2
+            };
         } else {
             call.phase = CallPhase::Held;
             call.connected_at = None;
@@ -1071,6 +1269,36 @@ impl Backend {
             .ok_or_else(|| {
                 VoiceError::new("subscriber_not_configured", "callee is not configured")
             })?;
+        if let Some(path) = story_audio_path(caller, callee)
+            && path.is_file()
+        {
+            let output = Command::new("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-i",
+                    path.to_string_lossy().as_ref(),
+                    "-f",
+                    "s16le",
+                    "-ar",
+                    "24000",
+                    "-ac",
+                    "1",
+                    "-",
+                ])
+                .output()
+                .map_err(|error| VoiceError::new("story_audio_decode_failed", error.to_string()))?;
+            if output.status.success() {
+                let samples = output
+                    .stdout
+                    .chunks_exact(2)
+                    .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+                    .collect::<Vec<_>>();
+                if !samples.is_empty() {
+                    return Ok(samples);
+                }
+            }
+        }
         let text = format!(
             "{}: Please connect me to {}. {}: I am at {}.",
             caller_profile.name, callee_profile.place, callee_profile.name, callee_profile.place,
@@ -1113,14 +1341,50 @@ impl Backend {
         self.resolved = self.resolved.saturating_add(1);
         if missed {
             self.missed += 1;
-            self.deductions += 2;
-            self.money -= 2;
+            self.deductions += 4;
+            self.money -= 4;
+            append_printer(
+                &mut self.state,
+                &format!(
+                    "MONEY // -$4 missed call line {} -> {} // balance ${}",
+                    call.caller, call.callee, self.money
+                ),
+            );
         } else {
             self.completed += 1;
             let seconds = call.audio_duration_seconds.max(1);
             self.conversation_seconds += seconds;
-            self.earned += seconds as i32;
-            self.money += seconds as i32;
+            self.earned += 5;
+            self.money += 5;
+            append_printer(
+                &mut self.state,
+                &format!(
+                    "MONEY // +$5 completed connection line {} -> {} // balance ${}",
+                    call.caller, call.callee, self.money
+                ),
+            );
+            if self.story_thread == "neel_university"
+                && call.caller == stories::neel_university::SHADHIN_LINE
+            {
+                self.neel_story_beat = stories::neel_university::Beat::Completed;
+                self.story_completed = true;
+                if call.callee == stories::neel_university::BELA_CAT_LINE {
+                    self.earned += 100;
+                    self.money += 100;
+                    append_printer(
+                        &mut self.state,
+                        &format!(
+                            "MONEY // +$100 Arnab connected to Bela Bose 1032 // balance ${}",
+                            self.money
+                        ),
+                    );
+                }
+            } else if self.story_thread == "neel_university"
+                && call.caller == stories::neel_university::NEEL_LINE
+            {
+                self.neel_story_beat = stories::neel_university::Beat::ArnabDirectory;
+                self.story_followup_pending = true;
+            }
         }
         self.state.shift.completed_routings = self.completed;
     }
@@ -1139,8 +1403,15 @@ impl Backend {
         });
         self.resolved = self.resolved.saturating_add(1);
         self.failed += 1;
-        self.deductions += 2;
-        self.money -= 2;
+        self.deductions += 4;
+        self.money -= 4;
+        append_printer(
+            &mut self.state,
+            &format!(
+                "MONEY // -$4 failed connection line {} -> {} ({reason}) // balance ${}",
+                call.caller, call.callee, self.money
+            ),
+        );
     }
 
     fn fail_generated_call(&mut self, caller: u8, callee: u8) {
@@ -1183,7 +1454,7 @@ impl Backend {
             .enumerate()
             .filter(|(_, call)| {
                 call.phase == CallPhase::Ringing
-                    && effective_ring_line(input) < 0
+                    && self.effective_ring_line(input) < 0
                     && call.ring_started_at.is_some()
                     && valid_direct_circuit(input, call.caller, call.callee)
             })
@@ -1256,11 +1527,14 @@ impl Backend {
 
     fn refill_calls(&mut self, count: usize) {
         self.ensure_story_call();
-        let ordinary_count = if self.story_enabled {
-            count.saturating_sub(1)
+        let story_slots = if self.story_enabled && self.story_thread == "neel_university" {
+            2
+        } else if self.story_enabled {
+            1
         } else {
-            count
+            0
         };
+        let ordinary_count = count.saturating_sub(story_slots);
         let starting_shift = self.state.shift.phase != ShiftPhase::Active;
         if self.state.shift.phase == ShiftPhase::Settled {
             self.state.shift.number = self.state.shift.number.saturating_add(1);
@@ -1280,7 +1554,7 @@ impl Backend {
             self.next_call_arrival_elapsed_seconds = self.shift_started_elapsed_seconds;
         }
         let now = self.elapsed_seconds() as u64;
-        let target_count = ordinary_count.min(self.call_target) + usize::from(self.story_enabled);
+        let target_count = ordinary_count.min(self.call_target) + story_slots.min(1);
         while self.calls.len() < target_count
             && self.state.shift.number <= 3
             && now >= self.next_call_arrival_elapsed_seconds
@@ -1296,7 +1570,10 @@ impl Backend {
                 connected_at: None,
                 connected_elapsed_seconds: None,
                 ring_started_at: None,
-                audio_duration_seconds: 2,
+                ring_ready_at: None,
+                ring_activated: false,
+                disconnected_at: None,
+                audio_duration_seconds: 0,
             });
             self.next_call_arrival_elapsed_seconds =
                 now.saturating_add(self.config.call_arrival_interval_seconds);
@@ -1306,29 +1583,44 @@ impl Backend {
     }
 
     fn ensure_story_call(&mut self) {
-        if !self.story_enabled
-            || self.story_completed
-            || self
-                .calls
-                .iter()
-                .any(|call| call.caller == stories::shapla_apartments::CALLER_LINE)
-        {
+        if !self.story_enabled || self.story_completed {
+            return;
+        }
+        let caller = self.story_caller();
+        if self.calls.iter().any(|call| call.caller == caller) {
             return;
         }
         if self.story_followup_pending {
             self.story_followup_call_started = true;
         }
+        if self.story_thread == "neel_university"
+            && self.neel_story_beat == stories::neel_university::Beat::Completed
+        {
+            return;
+        }
         let now = self.elapsed_seconds() as u64;
         self.calls.push(ActiveCall {
-            caller: stories::shapla_apartments::CALLER_LINE,
-            callee: 0,
+            caller,
+            callee: if self.story_thread == "neel_university" {
+                self.story_requested_callee()
+            } else {
+                0
+            },
             phase: CallPhase::Waiting,
-            deadline: u64::MAX,
+            deadline: now
+                + if self.story_thread == "neel_university" {
+                    self.neel_story_beat.patience_seconds()
+                } else {
+                    u64::MAX - now
+                },
             started_elapsed_seconds: now,
             connected_at: None,
             connected_elapsed_seconds: None,
             ring_started_at: None,
-            audio_duration_seconds: 2,
+            ring_ready_at: None,
+            ring_activated: false,
+            disconnected_at: None,
+            audio_duration_seconds: 0,
         });
     }
 
@@ -1342,8 +1634,24 @@ impl Backend {
             let callee = ((self.rng >> 3) % u64::from(self.line_limit)) as u8;
             if caller != callee
                 && (!self.story_enabled
-                    || (caller != stories::shapla_apartments::CALLER_LINE
-                        && callee != stories::shapla_apartments::CALLER_LINE))
+                    || (caller != self.story_caller()
+                        && callee != self.story_caller()
+                        && !(self.story_thread == "neel_university"
+                            && [
+                                stories::neel_university::NEEL_LINE,
+                                stories::neel_university::SHADHIN_LINE,
+                                stories::neel_university::BELA_DOG_LINE,
+                                stories::neel_university::BELA_CAT_LINE,
+                            ]
+                            .contains(&caller))
+                        && !(self.story_thread == "neel_university"
+                            && [
+                                stories::neel_university::NEEL_LINE,
+                                stories::neel_university::SHADHIN_LINE,
+                                stories::neel_university::BELA_DOG_LINE,
+                                stories::neel_university::BELA_CAT_LINE,
+                            ]
+                            .contains(&callee))))
                 && self.calls.iter().all(|c| {
                     c.caller != caller
                         && c.callee != caller
@@ -1427,7 +1735,10 @@ impl Backend {
                         connected_at: None,
                         connected_elapsed_seconds: None,
                         ring_started_at: None,
-                        audio_duration_seconds: 2,
+                        ring_ready_at: None,
+                        ring_activated: false,
+                        disconnected_at: None,
+                        audio_duration_seconds: 0,
                     })
                 }
             }
@@ -1441,6 +1752,50 @@ impl Backend {
             audio: None,
         }
     }
+}
+
+fn story_audio_path(caller: u8, callee: u8) -> Option<std::path::PathBuf> {
+    let name = match (caller, callee) {
+        (stories::neel_university::NEEL_LINE, stories::neel_university::SHADHIN_LINE) => {
+            "professor_arnab.wav"
+        }
+        (stories::neel_university::SHADHIN_LINE, stories::neel_university::BELA_DOG_LINE) => {
+            "belabose_wrong.wav"
+        }
+        (stories::neel_university::SHADHIN_LINE, stories::neel_university::BELA_CAT_LINE) => {
+            "belabose_success.m4a"
+        }
+        _ => return None,
+    };
+    Some(std::path::Path::new("assets/stories/neel_university").join(name))
+}
+
+fn story_audio_duration_seconds(caller: u8, callee: u8) -> Option<u64> {
+    let path = story_audio_path(caller, callee)?;
+    if !path.is_file() {
+        return None;
+    }
+    let output = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            path.to_string_lossy().as_ref(),
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let duration = String::from_utf8(output.stdout)
+        .ok()?
+        .trim()
+        .parse::<f64>()
+        .ok()?;
+    Some(duration.ceil().max(1.0) as u64)
 }
 
 fn initial_state() -> StateOutput {
@@ -1509,17 +1864,17 @@ fn directory_id(d: [u8; 4]) -> u16 {
 }
 fn directory_pages(digits: [u8; 4]) -> Vec<exchange_protocol::DirectoryPage> {
     let id = directory_id(digits);
-    if id < u16::from(LINES) {
-        let (name, role, note) = directory_user(id as u8);
+    if let Some(line) = directory_line(id) {
+        let (name, role, note) = directory_user(line);
         vec![exchange_protocol::DirectoryPage {
             page_number: 1,
-            heading: simple_place(id as u8).into(),
+            heading: simple_place(line),
             lines: vec![
                 format!("SUBSCRIBER ID {id:04}"),
                 format!("SUBSCRIBER // {name}"),
                 format!("ROLE // {role}"),
                 format!("NOTE // {note}"),
-                format!("DESTINATION // {}", simple_place(id as u8)),
+                format!("DESTINATION // {}", simple_place(line)),
             ],
         }]
     } else {
@@ -1534,14 +1889,50 @@ fn directory_pages(digits: [u8; 4]) -> Vec<exchange_protocol::DirectoryPage> {
     }
 }
 fn simple_place(line: u8) -> String {
-    format!("LINE {line:02}")
+    match line {
+        2 => "NEEL UNIVERSITY".into(),
+        3 => "SHADHIN HOUSING".into(),
+        4 => "MEGHNA ABASHON".into(),
+        5 => "PADMA NIBASH".into(),
+        _ => format!("LINE {line:02}"),
+    }
 }
 fn directory_user(line: u8) -> (String, String, String) {
-    (
-        format!("SUBSCRIBER {line:02}"),
-        "unassigned".into(),
-        "No story profile assigned".into(),
-    )
+    match line {
+        2 => (
+            "Prof. Kashem".into(),
+            "professor".into(),
+            "Neel University".into(),
+        ),
+        3 => (
+            "Arnab Bhattacharjee".into(),
+            "recently hired graduate".into(),
+            "Shadhin Housing".into(),
+        ),
+        4 => (
+            "Bela Bose".into(),
+            "dog owner".into(),
+            "Meghna Abashon".into(),
+        ),
+        5 => (
+            "Bela Bose".into(),
+            "cat owner".into(),
+            "Padma Nibash".into(),
+        ),
+        _ => (
+            format!("SUBSCRIBER {line:02}"),
+            "unassigned".into(),
+            "No story profile assigned".into(),
+        ),
+    }
+}
+fn directory_line(id: u16) -> Option<u8> {
+    match id {
+        1031 => Some(stories::neel_university::BELA_DOG_LINE),
+        1032 => Some(stories::neel_university::BELA_CAT_LINE),
+        0..=11 => Some(id as u8),
+        _ => None,
+    }
 }
 fn operator_line(cords: &[CordConnection]) -> Option<u8> {
     cords.iter().find_map(|c| match (&c.first, &c.second) {
@@ -1559,7 +1950,8 @@ fn has_cord(input: &InputState, a: PortId, b: PortId) -> bool {
 }
 fn valid_ringing_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
     has_cord(input, PortId::Subscriber(caller), PortId::Operator)
-        && effective_ring_line(input) == i16::from(callee)
+        && physical_ring_line(input) == i16::from(callee)
+        && input.ring_line == i16::from(callee)
 }
 fn valid_direct_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
     direct(&input.cord_topology, caller, callee)
@@ -1576,6 +1968,10 @@ fn valid_direct_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
                     && cord.second == PortId::Subscriber(caller))
                 || (cord.first == PortId::Subscriber(caller) && cord.second == PortId::Tap(1))
                 || (cord.first == PortId::Tap(1) && cord.second == PortId::Subscriber(caller))
+                || (cord.first == PortId::Subscriber(caller) && cord.second == PortId::Tap(2))
+                || (cord.first == PortId::Tap(2) && cord.second == PortId::Subscriber(caller))
+                || (cord.first == PortId::Subscriber(callee) && cord.second == PortId::Tap(1))
+                || (cord.first == PortId::Tap(1) && cord.second == PortId::Subscriber(callee))
                 || (cord.first == PortId::Subscriber(callee) && cord.second == PortId::Tap(2))
                 || (cord.first == PortId::Tap(2) && cord.second == PortId::Subscriber(callee))
         })
@@ -1683,10 +2079,9 @@ fn lamps(calls: &[ActiveCall], ring_line: i16) -> [bool; 12] {
             CallPhase::Missed | CallPhase::Failed | CallPhase::Completed
         ) {
             result[c.caller as usize] = true;
-            if matches!(
-                c.phase,
-                CallPhase::Ringing | CallPhase::Held | CallPhase::Connected
-            ) {
+            if matches!(c.phase, CallPhase::Held | CallPhase::Connected)
+                || (c.phase == CallPhase::Ringing && c.ring_activated)
+            {
                 result[c.callee as usize] = true;
             }
         }
@@ -1694,7 +2089,13 @@ fn lamps(calls: &[ActiveCall], ring_line: i16) -> [bool; 12] {
     result
 }
 fn effective_ring_line(input: &InputState) -> i16 {
-    let physical_line = input
+    let physical_line = physical_ring_line(input);
+    (input.ring_line == physical_line)
+        .then_some(physical_line)
+        .unwrap_or(-1)
+}
+fn physical_ring_line(input: &InputState) -> i16 {
+    input
         .cord_topology
         .iter()
         .find_map(|cord| match (&cord.first, &cord.second) {
@@ -1702,12 +2103,9 @@ fn effective_ring_line(input: &InputState) -> i16 {
             | (PortId::Subscriber(line), PortId::RingGenerator) => Some(i16::from(*line)),
             _ => None,
         })
-        .unwrap_or(-1);
-    (input.ring_line == physical_line)
-        .then_some(physical_line)
         .unwrap_or(-1)
 }
-fn tap_monitor(input: &InputState, state: &StateOutput) -> Option<u8> {
+fn tap_monitor(input: &InputState, state: &StateOutput) -> Option<TapBridgeMonitoring> {
     if !input.held_controls.tap {
         return None;
     }
@@ -1715,25 +2113,39 @@ fn tap_monitor(input: &InputState, state: &StateOutput) -> Option<u8> {
         if call.phase != CallPhase::Connected {
             return None;
         }
-        exact_cords(
-            &input.cord_topology,
-            &[
-                (
-                    PortId::Subscriber(call.caller_line),
-                    PortId::Subscriber(call.requested_callee_line),
-                ),
-                (PortId::Subscriber(call.caller_line), PortId::Tap(1)),
-                (
-                    PortId::Subscriber(call.requested_callee_line),
-                    PortId::Tap(2),
-                ),
-            ],
+        let caller_tap_port =
+            if has_cord(input, PortId::Subscriber(call.caller_line), PortId::Tap(1)) {
+                1
+            } else {
+                2
+            };
+        valid_tap_circuit(input, call.caller_line, call.requested_callee_line).then_some(
+            TapBridgeMonitoring {
+                caller_line: call.caller_line,
+                callee_line: call.requested_callee_line,
+                caller_tap_port,
+                callee_tap_port: if caller_tap_port == 1 { 2 } else { 1 },
+            },
         )
-        .then_some(1)
     })
 }
 fn valid_connected_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
-    valid_direct_circuit(input, caller, callee)
+    valid_direct_circuit(input, caller, callee) || valid_tap_circuit(input, caller, callee)
+}
+fn valid_tap_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
+    exact_cords(
+        &input.cord_topology,
+        &[
+            (PortId::Subscriber(caller), PortId::Tap(1)),
+            (PortId::Subscriber(callee), PortId::Tap(2)),
+        ],
+    ) || exact_cords(
+        &input.cord_topology,
+        &[
+            (PortId::Subscriber(caller), PortId::Tap(2)),
+            (PortId::Subscriber(callee), PortId::Tap(1)),
+        ],
+    )
 }
 
 pub fn serve_with_voice_and_debug_engine(
@@ -2091,6 +2503,25 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
             .ok()
             .map(|mut state| {
                 let peer = state.voice_peer;
+                if !state.state.tap_bridge_audio_active {
+                    state.audio_tap_was_active = false;
+                } else if !state.audio_tap_was_active {
+                    if let Some((caller, callee)) = state.audio_call
+                        && let Some(call) = state
+                            .calls
+                            .iter()
+                            .find(|call| (call.caller, call.callee) == (caller, callee))
+                        && let Some(connected_at) = call.connected_at
+                    {
+                        let packets_to_skip = connected_at.elapsed().as_millis() as usize
+                            / ((VOICE_AUDIO_PACKET_SAMPLES as u128) * 1000
+                                / u128::from(VOICE_AUDIO_SAMPLE_RATE))
+                                as usize;
+                        let skip = packets_to_skip.min(state.audio_queue.len());
+                        state.audio_queue.drain(..skip);
+                    }
+                    state.audio_tap_was_active = true;
+                }
                 let packets = if state.state.tap_bridge_audio_active {
                     state.audio_queue.drain(..).collect::<Vec<_>>()
                 } else {
@@ -2143,6 +2574,29 @@ fn generate_operator_response(
 
 fn generate_dialogue(context: &ResponseContext, transcript: &str) -> Result<String, VoiceError> {
     let normalized = transcript.to_ascii_lowercase();
+    if context.call_guidance.contains("Prof. Kashem")
+        && ["where", "connect", "talk", "speak"]
+            .iter()
+            .any(|word| normalized.contains(word))
+    {
+        return Ok("I want to talk to Shadhin Housing.".into());
+    }
+    if context.call_guidance.contains("Arnab Bhattacharjee") {
+        if normalized.contains("dog") {
+            return Ok("No, I remember Bela has a cat.".into());
+        }
+        if normalized.contains("cat") {
+            return Ok("Yes, I remember Bela has a cat.".into());
+        }
+        if normalized.contains("id") || normalized.contains("number") {
+            return Ok("Her ID is around 1024 or something like that.".into());
+        }
+        if normalized.contains("who") || normalized.contains("bela") {
+            return Ok(
+                "Yes, I am trying to reach Bela Bose, but I do not know her housing.".into(),
+            );
+        }
+    }
     if context.call_guidance.contains("Opening dialogue:")
         && ["where", "location", "address", "located"]
             .iter()

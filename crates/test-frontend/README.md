@@ -1,9 +1,10 @@
 # Text test frontend
 
 This binary drives the real backend without a microphone or speakers. It plays a
-complete Shapla story path: the first call, location conversation, service
-request, second call, and outcome conversation. The backend performs the story
-transition and dialogue generation; the frontend only supplies human actions.
+complete story path. It supports both the Shapla Apartments service story and
+the Neel University routing story. The backend performs story transitions,
+delayed ringing, directory routing, and dialogue generation; the frontend only
+supplies human actions.
 
 Start the backend with the text listener enabled:
 
@@ -34,8 +35,24 @@ just story-test path=police_success log=story-test-police-success.log
 just story-test path=water_no_help log=story-test-water-no-help.log
 just story-test path=unrelated_questions log=story-test-unrelated-questions.log
 just story-test path=random_conversation log=story-test-random-conversation.log
+just story-test neel_direct /tmp/neel-direct.log
+just story-test neel_misdirection /tmp/neel-misdirection.log
+just story-test neel_tap /tmp/neel-tap.log
+just story-test neel_tap_late /tmp/neel-tap-late.log
+just story-test neel_bela_1031 /tmp/neel-wrong-bela.log
+just story-test neel_bela_1032 /tmp/neel-correct-bela.log
+just story-test neel_bela_1032_questions /tmp/neel-questions.log
 just story-test-all
 ```
+
+Generate the authored Neel University TAP recordings after changing voice
+profiles in `exchange.toml` with:
+
+```sh
+just story-audio
+```
+
+Generated recordings are runtime assets and are intentionally ignored by Git.
 
 `story-test-all` runs every path in one backend session and writes the combined
 transcript to `story-test-all.log`.

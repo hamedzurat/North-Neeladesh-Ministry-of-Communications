@@ -40,30 +40,30 @@ voice_id = "pocket-line-1"
 
 [[subscribers]]
 line = 2
-place = "LINE 02"
-name = "SUBSCRIBER 02"
-role = "unassigned"
+place = "NEEL UNIVERSITY"
+name = "Prof. Kashem"
+role = "professor"
 voice_id = "pocket-line-2"
 
 [[subscribers]]
 line = 3
-place = "LINE 03"
-name = "SUBSCRIBER 03"
-role = "unassigned"
+place = "SHADHIN HOUSING"
+name = "Arnab Bhattacharjee"
+role = "recently hired graduate"
 voice_id = "pocket-line-3"
 
 [[subscribers]]
 line = 4
-place = "LINE 04"
-name = "SUBSCRIBER 04"
-role = "unassigned"
+place = "Meghna Abashon"
+name = "Bela Bose"
+role = "dog owner"
 voice_id = "pocket-line-4"
 
 [[subscribers]]
 line = 5
-place = "LINE 05"
-name = "SUBSCRIBER 05"
-role = "unassigned"
+place = "Padma Nibash"
+name = "Bela Bose"
+role = "cat owner"
 voice_id = "pocket-line-5"
 
 [[subscribers]]

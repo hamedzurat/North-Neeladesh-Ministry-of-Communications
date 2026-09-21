@@ -62,6 +62,6 @@ fn patience_starts_when_each_call_is_shown() {
     let response = backend.apply_input_message(next_input(&backend));
 
     assert!(response.accepted);
-    assert_eq!(backend.money(), -2);
+    assert_eq!(backend.money(), -4);
     assert_eq!(response.output.calls.len(), 3);
 }

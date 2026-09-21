@@ -67,7 +67,7 @@ The response wire shape is exactly:
     "call": {...}|null,
     "calls": [{"caller_line": u8, "requested_callee_line": u8, "phase": string}],
     "service_call": {"service": string, "phase": string}|null,
-    "tap_bridge_monitoring": u8|null,
+  "tap_bridge_monitoring": {"caller_line": u8, "callee_line": u8, "caller_tap_port": u8, "callee_tap_port": u8}|null,
     "shift": {...},
     "debug": {"messages": [{"code": string, "message": string}]}
   }
