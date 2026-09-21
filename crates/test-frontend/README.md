@@ -43,6 +43,7 @@ just story-test neel_tap_late /tmp/neel-tap-late.log
 just story-test neel_rewire /tmp/neel-rewire.log
 just story-test neel_rewire_late /tmp/neel-rewire-late.log
 just story-test neel_patience /tmp/neel-patience.log
+just story-test neel_arnab_patience /tmp/neel-arnab-patience.log
 just story-test neel_bela_1031 /tmp/neel-wrong-bela.log
 just story-test neel_bela_1032 /tmp/neel-correct-bela.log
 just story-test neel_bela_1032_questions /tmp/neel-questions.log

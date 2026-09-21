@@ -1056,6 +1056,38 @@ fn run_neel_story(
         status: "accepted",
         text: "Arnab Bhattacharjee calls from Shadhin Housing.",
     })?;
+    if path.contains("arnab_patience") {
+        let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 33 })?;
+        state = exchange(
+            backend,
+            input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+        )?;
+        revision = state.state_revision;
+        let snapshot = debug_snapshot(debug)?;
+        if snapshot.snapshot.story_beat != "Completed"
+            || !state
+                .output
+                .printer_output
+                .iter()
+                .any(|entry| entry.text.contains("-$4 missed call line 3"))
+        {
+            return Err(format!(
+                "Arnab patience expiry was not recorded correctly: beat={}, printer={:?}",
+                snapshot.snapshot.story_beat, state.output.printer_output
+            )
+            .into());
+        }
+        log.row(CsvRow {
+            event: "patience",
+            sequence,
+            revision,
+            caller: 3,
+            destination: arnab.requested_callee_line,
+            status: "accepted",
+            text: "Arnab call expired and the story ended with a -$4 printer entry.",
+        })?;
+        return Ok(());
+    }
     state = exchange(
         backend,
         input(
