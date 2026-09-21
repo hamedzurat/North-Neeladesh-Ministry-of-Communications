@@ -33,16 +33,10 @@ def prompt_for(request: dict[str, object]) -> str:
     caller_place = context.get("caller_place", "the exchange")
     requested_place = context.get("requested_place", "an unknown place")
     caller_name = profile["name"]
-    destination_instruction = (
-        f"Do not volunteer the location. Wait for the Operator to ask, then say the place name {requested_place}."
-        if caller_name == "Rafi Alam"
-        else f"Your first sentence MUST clearly say that you want to be connected to {requested_place}."
-    )
     return dialogue_prompt_template().format(
         caller_name=caller_name,
         caller_place=caller_place,
         requested_place=requested_place,
-        destination_instruction=destination_instruction,
         max_dialogue_chars=MAX_DIALOGUE_CHARS,
         context_json=context_json,
         transcript=transcript,
@@ -113,14 +107,6 @@ def main() -> int:
     if not isinstance(dialogue, str) or not dialogue.strip():
         fail("dialogue JSON did not contain non-empty dialogue")
     dialogue = dialogue.strip()
-    context = request.get("context")
-    requested_place = (
-        context.get("requested_place", "the requested place")
-        if isinstance(context, dict)
-        else "the requested place"
-    )
-    if requested_place not in dialogue and profile_name(context) != "Rafi Alam":
-        dialogue = f"I need to be connected to {requested_place}. {dialogue}"
     if len(dialogue) > MAX_DIALOGUE_CHARS:
         fail("dialogue exceeded the bounded turn limit")
     json.dump({"dialogue": dialogue}, sys.stdout, ensure_ascii=False, separators=(",", ":"))
@@ -164,29 +150,11 @@ def persistent_main() -> int:
             if not isinstance(dialogue, str) or not dialogue.strip():
                 fail("Ollama returned invalid dialogue JSON")
             dialogue = dialogue.strip()
-            context = request.get("context")
-            requested_place = (
-                context.get("requested_place", "the requested place")
-                if isinstance(context, dict)
-                else "the requested place"
-            )
-            if requested_place not in dialogue and profile_name(context) != "Rafi Alam":
-                dialogue = f"I need to be connected to {requested_place}. {dialogue}"
             if len(dialogue) > MAX_DIALOGUE_CHARS:
                 fail("dialogue exceeded the bounded turn limit")
             sys.stdout.write(json.dumps({"dialogue": dialogue}, ensure_ascii=False) + "\n")
             sys.stdout.flush()
         except Exception as error:  # noqa: BLE001 - worker reports runtime failures
             fail(f"persistent Ollama dialogue synthesis failed: {error}")
-
-
-def profile_name(context: object) -> str:
-    if isinstance(context, dict):
-        profile = context.get("profile")
-        if isinstance(profile, dict) and isinstance(profile.get("name"), str):
-            return profile["name"]
-    return ""
-
-
 if __name__ == "__main__":
     main()

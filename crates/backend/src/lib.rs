@@ -51,100 +51,20 @@ struct SubscriberConfig {
     place: String,
     name: String,
     role: String,
-    preference: String,
     #[serde(default)]
     voice_id: String,
-    #[serde(default)]
-    pet: String,
 }
 
 fn default_subscribers() -> Vec<SubscriberConfig> {
-    vec![
-        (
-            "RAIL DISPATCH",
-            "NILA SEN",
-            "rail dispatcher",
-            "checks the night timetable",
-        ),
-        (
-            "KHARAD CLINIC",
-            "MIRA DAS",
-            "clinic clerk",
-            "keeps mint tea by the register",
-        ),
-        (
-            "RATION OFFICE",
-            "OMAR SEN",
-            "ration clerk",
-            "issues household allotment cards",
-        ),
-        (
-            "BORDER DEPOT",
-            "CAPTAIN OREN VEY",
-            "depot officer",
-            "stays on duty until dawn",
-        ),
-        (
-            "FOUNDRY APTS",
-            "NERI TAL",
-            "foundry tenant",
-            "repairs small motors after shift",
-        ),
-        (
-            "MINISTRY DESK",
-            "KAVI ORAN",
-            "exchange clerk",
-            "keeps the line register",
-        ),
-        (
-            "HOTEL MERIDIAN",
-            "TOMAS VALE",
-            "hotel clerk",
-            "keeps a camera by the desk",
-        ),
-        (
-            "MINING OFFICE",
-            "JAVED RAHMAN",
-            "mining clerk",
-            "checks freight manifests",
-        ),
-        (
-            "RATAN COLONY",
-            "PARO SEN",
-            "colony organizer",
-            "knows the night shift workers",
-        ),
-        (
-            "SHAPLA APARTMENTS",
-            "RAFI ALAM",
-            "resident",
-            "feeds a one-eyed cat",
-        ),
-        (
-            "OLD MARKET",
-            "BIKRAM SEN",
-            "market courier",
-            "likes spiced tea",
-        ),
-        (
-            "CENTRAL STATION",
-            "MIRA HALEK",
-            "station worker",
-            "collects old timetables",
-        ),
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(line, (place, name, role, preference))| SubscriberConfig {
-        line: line as u8,
-        place: place.into(),
-        name: name.into(),
-        role: role.into(),
-        preference: preference.into(),
-        voice_id: format!("pocket-line-{line}"),
-        pet: format!("Pet {line} is a small mixed-breed dog."),
-    })
-    .collect()
+    (0..LINES)
+        .map(|line| SubscriberConfig {
+            line,
+            place: format!("LINE {line:02}"),
+            name: format!("SUBSCRIBER {line:02}"),
+            role: "unassigned".into(),
+            voice_id: format!("pocket-line-{line}"),
+        })
+        .collect()
 }
 
 impl Default for GameConfig {
@@ -386,9 +306,9 @@ impl Backend {
                 name: caller_profile.name.clone(),
                 voice_id: caller_profile.voice_id.clone(),
                 personality: caller_profile.role.clone(),
-                baseline_goals: vec![format!("Reach {}", simple_place(callee))],
-                initial_perspective: format!("Calling from {}", simple_place(caller)),
-                permitted_actions: vec!["request_routing".into()],
+                baseline_goals: Vec::new(),
+                initial_perspective: String::new(),
+                permitted_actions: Vec::new(),
             },
             caller_place: caller_profile.place.clone(),
             requested_place: callee_profile.place.clone(),
@@ -398,12 +318,9 @@ impl Backend {
                 .iter()
                 .map(|s| s.place.clone())
                 .collect(),
-            subscriber_goal: format!("Reach {}", callee_profile.place),
-            call_premise: format!("Request a connection to {}.", callee_profile.place),
-            call_guidance: format!(
-                "Answer the Operator's question naturally. State the requested place when asked. You enjoy {}. Pet detail: {}",
-                caller_profile.preference, caller_profile.pet
-            ),
+            subscriber_goal: String::new(),
+            call_premise: String::new(),
+            call_guidance: String::new(),
             permitted_knowledge: vec![],
             recent_conversation: vec![],
             current_input: None,
@@ -969,14 +886,8 @@ impl Backend {
                 VoiceError::new("subscriber_not_configured", "callee is not configured")
             })?;
         let text = format!(
-            "{}: Please connect me to {}. {}: Of course, I am at {}. {}: We can talk about {} while we wait. My pet is {}.",
-            caller_profile.name,
-            callee_profile.place,
-            callee_profile.name,
-            callee_profile.place,
-            caller_profile.name,
-            caller_profile.preference,
-            caller_profile.pet,
+            "{}: Please connect me to {}. {}: I am at {}.",
+            caller_profile.name, callee_profile.place, callee_profile.name, callee_profile.place,
         );
         let samples =
             with_persistent_pocket_tts(|tts| tts.synthesize(&caller_profile.voice_id, &text))?;
@@ -1379,57 +1290,15 @@ fn directory_pages(digits: [u8; 4]) -> Vec<exchange_protocol::DirectoryPage> {
         }]
     }
 }
-fn simple_place(line: u8) -> &'static str {
-    match line {
-        0 => "RAIL DISPATCH",
-        1 => "KHARAD CLINIC",
-        2 => "RATION OFFICE",
-        3 => "BORDER DEPOT",
-        4 => "FOUNDRY APTS",
-        5 => "MINISTRY DESK",
-        6 => "HOTEL MERIDIAN",
-        7 => "MINING OFFICE",
-        8 => "RATAN COLONY",
-        9 => "SHAPLA APARTMENTS",
-        10 => "OLD MARKET",
-        _ => "CENTRAL STATION",
-    }
+fn simple_place(line: u8) -> String {
+    format!("LINE {line:02}")
 }
-fn directory_user(line: u8) -> (&'static str, &'static str, &'static str) {
-    match line {
-        0 => ("MARA KESH", "rail clerk", "handles relief-train manifests"),
-        1 => (
-            "DR. LEYA VARAN",
-            "clinic registrar",
-            "keeps the night ward ledger",
-        ),
-        2 => (
-            "OMAR SEN",
-            "ration clerk",
-            "issues household allotment cards",
-        ),
-        3 => (
-            "CAPTAIN OREN VEY",
-            "depot officer",
-            "on duty until the dawn bell",
-        ),
-        4 => (
-            "NERI TAL",
-            "foundry tenant",
-            "repairs small motors after shift",
-        ),
-        5 => ("KAVI ORAN", "exchange clerk", "keeps the line register"),
-        6 => ("TOMAS VALE", "hotel clerk", "keeps a camera by the desk"),
-        7 => ("JAVED RAHMAN", "mining clerk", "checks freight manifests"),
-        8 => (
-            "PARO SEN",
-            "colony organizer",
-            "knows the night shift workers",
-        ),
-        9 => ("RAFI ALAM", "resident", "feeds a one-eyed cat"),
-        10 => ("BIKRAM SEN", "market courier", "likes spiced tea"),
-        _ => ("MIRA HALEK", "station worker", "collects old timetables"),
-    }
+fn directory_user(line: u8) -> (String, String, String) {
+    (
+        format!("SUBSCRIBER {line:02}"),
+        "unassigned".into(),
+        "No story profile assigned".into(),
+    )
 }
 fn operator_line(cords: &[CordConnection]) -> Option<u8> {
     cords.iter().find_map(|c| match (&c.first, &c.second) {

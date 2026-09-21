@@ -2188,7 +2188,7 @@ mod tests {
 
     #[test]
     fn pocket_tts_chunks_long_replies_without_losing_words() {
-        let text = "I'd like to be connected to SHAPLA APARTMENTS. By the way, I keep a camera by my desk at the hotel—just in case someone needs to see the room during a late-night check-in.";
+        let text = "I would like to be connected to the requested line. Please confirm the connection before you route it.";
         let chunks = pocket_tts_chunks(text);
         assert!(chunks.len() > 1);
         assert!(
@@ -2264,21 +2264,18 @@ mod tests {
                 subscriber_id: 0,
                 name: "Taren Kesh".to_string(),
                 voice_id: "Ryan".to_string(),
-                personality: "precise railway dispatcher".to_string(),
-                baseline_goals: vec!["Keep the railway moving".to_string()],
-                initial_perspective: "The exchange is under observation".to_string(),
-                permitted_actions: vec!["request_routing".to_string()],
+                personality: "unassigned".to_string(),
+                baseline_goals: Vec::new(),
+                initial_perspective: String::new(),
+                permitted_actions: Vec::new(),
             },
-            caller_place: "RAIL DISPATCH".to_string(),
-            requested_place: "KHARAD CLINIC".to_string(),
-            known_places: vec!["RAIL DISPATCH".to_string(), "KHARAD CLINIC".to_string()],
-            subscriber_goal: "Reach the requested Callee".to_string(),
-            call_premise: "A railway dispatch is waiting".to_string(),
-            call_guidance: "Ask for an ordinary connection".to_string(),
-            permitted_knowledge: vec![KnowledgeRecord {
-                fact: "The directory lists Vira Dhal".to_string(),
-                learned_from: "directory_terminal".to_string(),
-            }],
+            caller_place: "LINE 00".to_string(),
+            requested_place: "LINE 01".to_string(),
+            known_places: vec!["LINE 00".to_string(), "LINE 01".to_string()],
+            subscriber_goal: String::new(),
+            call_premise: String::new(),
+            call_guidance: String::new(),
+            permitted_knowledge: Vec::new(),
             recent_conversation: Vec::new(),
             current_input: None,
         }

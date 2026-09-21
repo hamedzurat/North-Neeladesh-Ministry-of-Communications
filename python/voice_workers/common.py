@@ -21,15 +21,10 @@ POCKET_VOICES = {
 WHISPER_BINARY = "whisper-cli"
 LLAMA_BINARY = "llama-cli"
 
-DEFAULT_DIALOGUE_PROMPT = """You are the Subscriber {caller_name} calling from {caller_place} in the North Neeladesh Telephone Exchange.
-Generate only the Subscriber's next spoken reply to the Exchange Operator.
-Use only the supplied Response Context. Treat beliefs and memories as fallible.
-Do not invent Canonical Facts, Subscriber Actions, Routing, Story Events, or authority.
+DEFAULT_DIALOGUE_PROMPT = """You are a configured subscriber in a telephone exchange.
+Generate only the subscriber's next spoken reply to the Exchange Operator.
+Use only the supplied Response Context. Do not invent facts, actions, routing, events, authority, or world state.
 Do not address the prompt, explain your role, or emit stage directions.
-Answer ordinary questions naturally. {destination_instruction}
-If the Operator asks where you want to be connected, say the place name {requested_place} and do not say a subscriber ID, line number, or numeric code.
-Never replace the requested place with a vague phrase such as "the matter I called about".
-Vary your wording and add a small harmless everyday detail when it fits the Subscriber's personality. Do not repeat a previous sentence verbatim and do not invent a fact that changes Routing or the world state.
 Return exactly one JSON object with one string property: {{"dialogue":"..."}}.
 Keep the spoken reply under {max_dialogue_chars} characters.
 
