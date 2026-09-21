@@ -11,6 +11,18 @@ uv run --directory python/cabinet_frontend \
   python -m unittest discover -s cabinet_frontend/tests -t . -v
 ```
 
+## Voice relay
+
+The Pi voice relay is now implemented in `cabinet_frontend.voice_relay`. It uses
+the same Python deployment as the cabinet frontend; no Rust toolchain or voice
+daemon binary is required on the Pi. The setup script installs the relay as
+`north-neeladesh-voice-relay.service` alongside the cabinet service.
+
+The relay remains wire-compatible with the backend: tagged CBOR over connected
+UDP for control, status, and 16 kHz input PCM, plus RTP/L16 at 24 kHz for
+speaker audio. Configure `NN_VOICE_BACKEND_ADDRESS` during setup if the backend
+is not on localhost.
+
 ## Physical hardware smoke test
 
 Run this directly on the Pi after setup. It does not connect to the game
@@ -91,4 +103,4 @@ The rotary mapper arms `ring_line` after one full rotation (16 detents),
 matching the current encoder calibration. The line must remain connected to
 the Ring Generator; the backend remains responsible for accepting the ring.
 All physical pin values are defined in `cabinet_frontend/config.py`. Audio
-transport is intentionally left to `crates/voice-daemon`.
+transport runs through the bundled Python `cabinet_frontend.voice_relay` service.

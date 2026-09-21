@@ -211,28 +211,32 @@ LAN-reachable address, then configure the Pi to use that host:
 # On the laptop or arcade host. Restrict these ports with the local firewall.
 just backend-debug address=0.0.0.0:7878 voice_address=0.0.0.0:7879
 
-# On the Pi, for the Cabinet-side audio transport.
-just voice-daemon backend_address=192.168.1.8:7879
+# On the Pi, deploy the combined Python Cabinet Frontend bundle.
+export PI_HOST=taki@192.168.1.34
+./scripts/deploy_cabinet_frontend.sh
+ssh "$PI_HOST" \
+  'NN_BACKEND_ADDRESS=192.168.1.8:7878 NN_VOICE_BACKEND_ADDRESS=192.168.1.8:7879 /home/taki/Desktop/cabinet-frontend/scripts/setup_cabinet_frontend_pi.sh'
 ```
 
 Replace `192.168.1.8` with the host's LAN address if it changes. Deploy and configure the
 Cabinet Frontend from [`python/cabinet_frontend/README.md`](python/cabinet_frontend/README.md),
-using `NN_BACKEND_ADDRESS=192.168.1.8:7878`. Start the installed service on
-the Pi:
+using `NN_BACKEND_ADDRESS=192.168.1.8:7878` and
+`NN_VOICE_BACKEND_ADDRESS=192.168.1.8:7879`. Start the installed services on the Pi:
 
 ```sh
 sudo systemctl start north-neeladesh-cabinet-frontend.service
+sudo systemctl start north-neeladesh-voice-relay.service
 journalctl -u north-neeladesh-cabinet-frontend.service -f
 ```
 
 From the development machine, inspect both services on the Pi at
 `taki@192.168.1.34` with `./scripts/status_pi.sh`. The exact service names are
 `north-neeladesh-cabinet-frontend.service` and
-`north-neeladesh-voice-daemon.service`.
+`north-neeladesh-voice-relay.service`.
 
-The voice daemon is separate from the Cabinet Frontend process. It carries
+The Python voice relay is separate from the Cabinet Frontend process. It carries
 microphone PCM to the laptop backend and plays returned synthesized audio on
-the Cabinet device. The Cabinet Frontend carries controls and hardware output.
+the Cabinet device. Both services are deployed from the same Python bundle.
 
 ### Cabinet frontend
 
@@ -240,7 +244,7 @@ The Cabinet Frontend runs against the physical Raspberry Pi hardware. It reads
 the patch panel, switches, rotary encoder, and Directory buttons, then sends
 the resulting input snapshot to the backend. It drives the lamps, TM1637,
 e-paper display, and `/dev/usb/lp0` printer. Voice playback remains in the
-separate voice daemon.
+separate Python voice relay.
 
 Run the frontend tests with:
 

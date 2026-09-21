@@ -14,7 +14,7 @@ The daemon never advances Routing state. The backend remains the sole authority.
 
 `just voice-daemon` runs relay-only mode. It does not load STT, dialogue, or PocketTTS and it does not decide a Routing transition. `just backend-debug` configures those workers on the laptop. The relay reports capture/playback failures as typed voice status messages and stays alive so the backend can recover or retry the session.
 
-The backend uses the checked-in real worker adapters. Audio capture and playback on the relay use the Rust `cpal` audio library; the backend STT and dialogue invoke the pacman-installed whisper.cpp and llama.cpp runtimes. The Python workers run from the `python/` uv project; `--no-sync` prevents the backend from installing packages or downloading a model at runtime. Install the runtimes with `sudo pacman -S llama-cpp ggml-cuda whisper-cpp`, provision the model assets with `just voice-setup`, then run `just voice-preflight` before the first session.
+The backend uses the checked-in real worker adapters. The Pi relay uses Python and the system `arecord`/`aplay` tools, so the Pi needs no Rust toolchain or voice binary. The backend STT and dialogue invoke the pacman-installed whisper.cpp and llama.cpp runtimes. The Python workers run from the `python/` uv project; `--no-sync` prevents the backend from installing packages or downloading a model at runtime. Install the runtimes with `sudo pacman -S llama-cpp ggml-cuda whisper-cpp`, provision the model assets with `just voice-setup`, then run `just voice-preflight` before the first session.
 
 The smoke workers remain available for protocol-only CI and hardware-free development:
 
@@ -29,7 +29,7 @@ The real path requires these local assets and dependencies:
 - the `python/pyproject.toml` uv environment, containing `torch`, `huggingface-hub`, `qwen-tts`, and `pocket-tts`;
 - the model assets downloaded by `just voice-setup` into `~/.local/share/north-neeladesh/models`.
 
-The target laptop profile is Linux with a local system audio device, roughly 16 GiB of system memory, and a GPU for Ollama. The dialogue worker keeps Ollama model `qwen3.5:4b` resident with `keep_alive: -1` and disables reasoning with `think: false`. PocketTTS remains persistent and CPU-only. The current laptop run is a local debug profile. The target Raspberry Pi deployment will run only the cpal audio edge: microphone capture and speaker playback stay on the Pi, while the backend on this laptop coordinates STT, Ollama dialogue, and PocketTTS over the network. `NN_WHISPER_EXTRA_ARGS` and `NN_VOICE_WORKER_TIMEOUT` allow a pinned local runtime to provide device/thread settings without changing the daemon contract.
+The target laptop profile is Linux with a local system audio device, roughly 16 GiB of system memory, and a GPU for Ollama. The dialogue worker keeps Ollama model `qwen3.5:4b` resident with `keep_alive: -1` and disables reasoning with `think: false`. PocketTTS remains persistent and CPU-only. The current laptop run is a local debug profile. The target Raspberry Pi deployment will run the Python audio edge: microphone capture and speaker playback stay on the Pi, while the backend on this laptop coordinates STT, Ollama dialogue, and PocketTTS over the network. `NN_WHISPER_EXTRA_ARGS` and `NN_VOICE_WORKER_TIMEOUT` allow a pinned local runtime to provide device/thread settings without changing the daemon contract.
 
 Model setup and offline launch:
 
