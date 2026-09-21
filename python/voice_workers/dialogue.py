@@ -129,7 +129,7 @@ def persistent_main() -> int:
                     "think": False,
                     "format": "json",
                     "stream": False,
-                    "keep_alive": -1,
+                    "keep_alive": 120,
                     "options": {
                         "temperature": float(os.environ.get("NN_DIALOGUE_TEMPERATURE", "0.35")),
                         "num_predict": MAX_OUTPUT_TOKENS,
