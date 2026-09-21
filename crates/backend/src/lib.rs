@@ -215,6 +215,26 @@ impl Backend {
             .unwrap_or(&self.config.subscribers[0])
     }
 
+    fn intertwined(&self) -> bool {
+        self.story_thread == "intertwined"
+    }
+
+    fn neel_story_active(&self) -> bool {
+        self.story_thread == "neel_university" || self.intertwined()
+    }
+
+    fn shapla_story_active(&self) -> bool {
+        self.story_thread == "shapla_apartments" || self.intertwined()
+    }
+
+    fn is_neel_caller(&self, caller: u8) -> bool {
+        self.neel_story_active()
+            && matches!(
+                caller,
+                stories::neel_university::NEEL_LINE | stories::neel_university::SHADHIN_LINE
+            )
+    }
+
     pub fn new() -> Self {
         Self::new_exchange()
     }
@@ -377,16 +397,28 @@ impl Backend {
                 .collect(),
             subscriber_goal: String::new(),
             call_premise: String::new(),
-            call_guidance: if self.story_thread == "neel_university"
-                && caller == self.story_caller()
-            {
+            call_guidance: if self.is_neel_caller(caller) {
                 format!(
                     "{}\nStory place: {}\nOpening dialogue: {}",
-                    self.neel_story_beat.dialogue_prompt(),
+                    if caller == stories::neel_university::NEEL_LINE {
+                        stories::neel_university::Beat::ProfessorRouting.dialogue_prompt()
+                    } else {
+                        stories::neel_university::Beat::ArnabDirectory.dialogue_prompt()
+                    },
                     self.subscriber(caller).place,
-                    self.neel_story_beat.opening_dialogue().unwrap_or(""),
+                    if caller == stories::neel_university::NEEL_LINE {
+                        stories::neel_university::Beat::ProfessorRouting
+                            .opening_dialogue()
+                            .unwrap_or("")
+                    } else {
+                        stories::neel_university::Beat::ArnabDirectory
+                            .opening_dialogue()
+                            .unwrap_or("")
+                    },
                 )
-            } else if caller == stories::shapla_apartments::CALLER_LINE {
+            } else if self.shapla_story_active()
+                && caller == stories::shapla_apartments::CALLER_LINE
+            {
                 format!(
                     "{}\nStory place: {}\nOpening dialogue: {}",
                     self.story_beat.dialogue_prompt(),
@@ -403,7 +435,7 @@ impl Backend {
     }
 
     fn story_caller(&self) -> u8 {
-        if self.story_thread == "neel_university" {
+        if self.neel_story_active() && !self.intertwined() {
             match self.neel_story_beat {
                 stories::neel_university::Beat::ProfessorRouting => {
                     stories::neel_university::NEEL_LINE
@@ -419,11 +451,11 @@ impl Backend {
     }
 
     fn story_requested_callee(&self) -> u8 {
-        if self.story_thread == "neel_university"
+        if self.neel_story_active()
             && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory
         {
             stories::neel_university::BELA_DOG_LINE
-        } else if self.story_thread == "neel_university" {
+        } else if self.neel_story_active() {
             stories::neel_university::SHADHIN_LINE
         } else {
             0
@@ -576,7 +608,9 @@ impl Backend {
     }
 
     fn current_story_beat_name(&self) -> &'static str {
-        if self.story_thread == "neel_university" {
+        if self.intertwined() {
+            "Intertwined"
+        } else if self.story_thread == "neel_university" {
             self.neel_story_beat.name()
         } else {
             match self.story_beat {
@@ -589,7 +623,7 @@ impl Backend {
     }
 
     fn destination_is_allowed(&self, call: &ActiveCall, selected: u16) -> bool {
-        if self.story_thread == "neel_university"
+        if self.neel_story_active()
             && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory
             && call.caller == stories::neel_university::SHADHIN_LINE
         {
@@ -604,7 +638,7 @@ impl Backend {
     }
 
     fn story_direct_destination_allowed(&self, input: &InputState, caller: u8) -> bool {
-        self.story_thread == "neel_university"
+        self.neel_story_active()
             && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory
             && caller == stories::neel_university::SHADHIN_LINE
             && [
@@ -856,7 +890,7 @@ impl Backend {
         if !self.story_enabled {
             return;
         }
-        if self.story_thread == "shapla_apartments" {
+        if self.shapla_story_active() {
             self.state.line_lamps[stories::shapla_apartments::CALLER_LINE as usize] = true;
         }
     }
@@ -891,6 +925,19 @@ impl Backend {
 
     fn expire_story(&mut self) {
         if !self.story_enabled {
+            return;
+        }
+        if self.intertwined() {
+            let now = self.elapsed_seconds() as u64;
+            if self.neel_story_beat != stories::neel_university::Beat::Completed
+                && !self
+                    .calls
+                    .iter()
+                    .any(|call| self.is_neel_caller(call.caller))
+                && now >= self.story_started_elapsed_seconds.saturating_add(32)
+            {
+                self.neel_story_beat = stories::neel_university::Beat::Completed;
+            }
             return;
         }
         if self.calls.iter().any(|call| {
@@ -1037,7 +1084,8 @@ impl Backend {
             }
             self.calls.remove(index);
             if self.story_followup_call_started {
-                self.story_completed = true;
+                self.story_completed = !self.intertwined()
+                    || self.neel_story_beat == stories::neel_university::Beat::Completed;
             }
             return None;
         }
@@ -1048,7 +1096,7 @@ impl Backend {
         let active_ring_line = self.effective_ring_line(input);
         let requested_ring_line = effective_ring_line(input);
         let ring_delay = 1 + (self.rng % 3);
-        let neel_arnab_beat = self.story_thread == "neel_university"
+        let neel_arnab_beat = self.neel_story_active()
             && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory;
         let neel_arnab_destination = neel_arnab_beat
             && [
@@ -1363,11 +1411,11 @@ impl Backend {
                     call.caller, call.callee, self.money
                 ),
             );
-            if self.story_thread == "neel_university"
-                && call.caller == stories::neel_university::SHADHIN_LINE
-            {
+            if self.neel_story_active() && call.caller == stories::neel_university::SHADHIN_LINE {
                 self.neel_story_beat = stories::neel_university::Beat::Completed;
-                self.story_completed = true;
+                self.story_completed = !self.intertwined()
+                    || (self.story_beat == stories::shapla_apartments::Beat::HappyFollowup
+                        && self.story_followup_call_started);
                 if call.callee == stories::neel_university::BELA_CAT_LINE {
                     self.earned += 100;
                     self.money += 100;
@@ -1379,8 +1427,7 @@ impl Backend {
                         ),
                     );
                 }
-            } else if self.story_thread == "neel_university"
-                && call.caller == stories::neel_university::NEEL_LINE
+            } else if self.neel_story_active() && call.caller == stories::neel_university::NEEL_LINE
             {
                 self.neel_story_beat = stories::neel_university::Beat::ArnabDirectory;
                 self.story_followup_pending = true;
@@ -1527,14 +1574,20 @@ impl Backend {
 
     fn refill_calls(&mut self, count: usize) {
         self.ensure_story_call();
-        let story_slots = if self.story_enabled && self.story_thread == "neel_university" {
+        let story_slots = if self.story_enabled && self.intertwined() {
+            2
+        } else if self.story_enabled && self.story_thread == "neel_university" {
             2
         } else if self.story_enabled {
             1
         } else {
             0
         };
-        let ordinary_count = count.saturating_sub(story_slots);
+        let ordinary_count = if self.intertwined() {
+            0
+        } else {
+            count.saturating_sub(story_slots)
+        };
         let starting_shift = self.state.shift.phase != ShiftPhase::Active;
         if self.state.shift.phase == ShiftPhase::Settled {
             self.state.shift.number = self.state.shift.number.saturating_add(1);
@@ -1554,7 +1607,8 @@ impl Backend {
             self.next_call_arrival_elapsed_seconds = self.shift_started_elapsed_seconds;
         }
         let now = self.elapsed_seconds() as u64;
-        let target_count = ordinary_count.min(self.call_target) + story_slots.min(1);
+        let target_count = ordinary_count.min(self.call_target)
+            + story_slots.min(if self.intertwined() { 2 } else { 1 });
         while self.calls.len() < target_count
             && self.state.shift.number <= 3
             && now >= self.next_call_arrival_elapsed_seconds
@@ -1583,7 +1637,58 @@ impl Backend {
     }
 
     fn ensure_story_call(&mut self) {
-        if !self.story_enabled || self.story_completed {
+        if !self.story_enabled || (self.story_completed && !self.intertwined()) {
+            return;
+        }
+        if self.intertwined() {
+            let now = self.elapsed_seconds() as u64;
+            let shapla_completed = self.story_beat
+                == stories::shapla_apartments::Beat::HappyFollowup
+                && self.story_followup_call_started;
+            if !shapla_completed
+                && self.story_beat != stories::shapla_apartments::Beat::BadFollowup
+                && !self.calls.iter().any(|call| call.caller == 1)
+            {
+                if self.story_beat == stories::shapla_apartments::Beat::HappyFollowup {
+                    self.story_followup_call_started = true;
+                }
+                self.calls.push(ActiveCall {
+                    caller: 1,
+                    callee: 0,
+                    phase: CallPhase::Waiting,
+                    deadline: now + u64::MAX / 2,
+                    started_elapsed_seconds: now,
+                    connected_at: None,
+                    connected_elapsed_seconds: None,
+                    ring_started_at: None,
+                    ring_ready_at: None,
+                    ring_activated: false,
+                    disconnected_at: None,
+                    audio_duration_seconds: 0,
+                });
+            }
+            if self.neel_story_beat != stories::neel_university::Beat::Completed
+                && !self
+                    .calls
+                    .iter()
+                    .any(|call| self.is_neel_caller(call.caller))
+            {
+                let caller = self.story_caller_for_neel();
+                self.calls.push(ActiveCall {
+                    caller,
+                    callee: self.story_requested_callee(),
+                    phase: CallPhase::Waiting,
+                    deadline: now + self.neel_story_beat.patience_seconds(),
+                    started_elapsed_seconds: now,
+                    connected_at: None,
+                    connected_elapsed_seconds: None,
+                    ring_started_at: None,
+                    ring_ready_at: None,
+                    ring_activated: false,
+                    disconnected_at: None,
+                    audio_duration_seconds: 0,
+                });
+            }
             return;
         }
         let caller = self.story_caller();
@@ -1624,6 +1729,14 @@ impl Backend {
         });
     }
 
+    fn story_caller_for_neel(&self) -> u8 {
+        match self.neel_story_beat {
+            stories::neel_university::Beat::ProfessorRouting => stories::neel_university::NEEL_LINE,
+            stories::neel_university::Beat::ArnabDirectory
+            | stories::neel_university::Beat::Completed => stories::neel_university::SHADHIN_LINE,
+        }
+    }
+
     fn next_call(&mut self) -> (u8, u8) {
         loop {
             self.rng = self
@@ -1636,7 +1749,7 @@ impl Backend {
                 && (!self.story_enabled
                     || (caller != self.story_caller()
                         && callee != self.story_caller()
-                        && !(self.story_thread == "neel_university"
+                        && !(self.neel_story_active()
                             && [
                                 stories::neel_university::NEEL_LINE,
                                 stories::neel_university::SHADHIN_LINE,
@@ -1644,7 +1757,7 @@ impl Backend {
                                 stories::neel_university::BELA_CAT_LINE,
                             ]
                             .contains(&caller))
-                        && !(self.story_thread == "neel_university"
+                        && !(self.neel_story_active()
                             && [
                                 stories::neel_university::NEEL_LINE,
                                 stories::neel_university::SHADHIN_LINE,

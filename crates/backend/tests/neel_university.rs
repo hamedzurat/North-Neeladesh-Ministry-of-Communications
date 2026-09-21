@@ -121,3 +121,28 @@ fn professor_must_wait_for_delayed_ring_activation_before_direct_connection() {
         exchange_protocol::CallPhase::Held
     );
 }
+
+#[test]
+fn intertwined_thread_starts_both_story_calls_together() {
+    let mut backend = Backend::new_exchange();
+    let selected = backend.apply_debug_command(DebugRequest {
+        protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
+        command: DebugCommand::SelectStoryThread {
+            thread_id: "intertwined".into(),
+        },
+    });
+
+    assert!(selected.accepted);
+    assert_eq!(selected.snapshot.story_thread, "intertwined");
+
+    let response = backend.apply_input_message(input(&backend, 1, vec![], [0, 0, 0, 1]));
+    let callers = response
+        .output
+        .calls
+        .iter()
+        .map(|call| call.caller_line)
+        .collect::<Vec<_>>();
+    assert!(callers.contains(&1), "Shapla call missing: {callers:?}");
+    assert!(callers.contains(&2), "Neel call missing: {callers:?}");
+    assert_eq!(callers.len(), 2);
+}

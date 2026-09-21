@@ -47,6 +47,7 @@ just story-test neel_arnab_patience /tmp/neel-arnab-patience.log
 just story-test neel_bela_1031 /tmp/neel-wrong-bela.log
 just story-test neel_bela_1032 /tmp/neel-correct-bela.log
 just story-test neel_bela_1032_questions /tmp/neel-questions.log
+just story-test intertwined_success /tmp/intertwined-success.log
 just story-test-all
 ```
 
