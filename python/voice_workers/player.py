@@ -17,11 +17,11 @@ def task_guidance(task: str) -> str:
             "office, or another person's location, and do not address a place as a person."
         )
     if "arnab" in lowered and "cat" in lowered:
-        return "Ask only whether Arnab remembers if Bela Bose has a cat; keep it to one short natural question."
+        return "Ask Arnab directly whether Bela Bose has a cat; keep it to one short natural question. Arnab is not Professor Kashem."
     if "arnab" in lowered and ("directory" in lowered or "id" in lowered or "number" in lowered):
-        return "Ask exactly about Bela Bose's directory number; keep it to one short natural question. Do not ask about Shadhin Housing or Prof. Kashem."
+        return "Your entire reply must be one short question about Bela Bose's directory number, for example: Do you know Bela Bose's directory number? Do not mention Professor Kashem, Shadhin Housing, an office, or another person."
     if "arnab" in lowered:
-        return "Ask who Arnab wants to reach; the intended person is Bela Bose. Keep it to one short natural question and do not ask about directory numbers yet."
+        return "Ask Arnab who he wants to reach; the intended person is Bela Bose. Keep it to one short natural question, do not call Arnab Professor, and do not ask about directory numbers yet."
     if "water" in lowered:
         return (
             "This is a water-only response. Mention water naturally. Do not mention "
