@@ -38,7 +38,11 @@ just story-test path=random_conversation log=story-test-random-conversation.log
 just story-test neel_direct /tmp/neel-direct.log
 just story-test neel_misdirection /tmp/neel-misdirection.log
 just story-test neel_tap /tmp/neel-tap.log
+just story-test neel_tap_reverse /tmp/neel-tap-reverse.log
 just story-test neel_tap_late /tmp/neel-tap-late.log
+just story-test neel_rewire /tmp/neel-rewire.log
+just story-test neel_rewire_late /tmp/neel-rewire-late.log
+just story-test neel_patience /tmp/neel-patience.log
 just story-test neel_bela_1031 /tmp/neel-wrong-bela.log
 just story-test neel_bela_1032 /tmp/neel-correct-bela.log
 just story-test neel_bela_1032_questions /tmp/neel-questions.log

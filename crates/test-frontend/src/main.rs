@@ -737,6 +737,40 @@ fn run_neel_story(
         status: "accepted",
         text: "Neel University calls; Professor Routing is active.",
     })?;
+
+    if path.contains("patience") {
+        let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 33 })?;
+        state = exchange(
+            backend,
+            input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+        )?;
+        revision = state.state_revision;
+        let snapshot = debug_snapshot(debug)?;
+        if snapshot.snapshot.money != -4
+            || snapshot.snapshot.story_beat != "ProfessorRouting"
+            || !state
+                .output
+                .printer_output
+                .iter()
+                .any(|entry| entry.text.contains("-$4 missed call line 2"))
+        {
+            return Err(format!(
+                "Neel patience expiry was not recorded correctly: money={}, beat={}, printer={:?}",
+                snapshot.snapshot.money, snapshot.snapshot.story_beat, state.output.printer_output
+            )
+            .into());
+        }
+        log.row(CsvRow {
+            event: "patience",
+            sequence,
+            revision,
+            caller: 2,
+            destination: 3,
+            status: "accepted",
+            text: "Neel call expired: Beat 1 repeated with a -$4 printer entry.",
+        })?;
+        return Ok(());
+    }
     let operator = vec![cord(PortId::Subscriber(2), PortId::Operator)];
     state = exchange(
         backend,
@@ -889,7 +923,7 @@ fn run_neel_story(
         .find(|call| call.caller_line == 2)
         .map(|call| call.audio_duration_seconds)
         .unwrap_or(2);
-    if path.contains("tap") {
+    if path.contains("tap") || path.contains("rewire") {
         if path.contains("late") {
             let _ = debug_command(
                 debug,
@@ -898,17 +932,57 @@ fn run_neel_story(
                 },
             )?;
         }
-        let tap = vec![
-            cord(PortId::Subscriber(2), PortId::Tap(1)),
-            cord(PortId::Subscriber(3), PortId::Tap(2)),
-        ];
+        let tap = if path.contains("reverse") {
+            vec![
+                cord(PortId::Subscriber(2), PortId::Tap(2)),
+                cord(PortId::Subscriber(3), PortId::Tap(1)),
+            ]
+        } else {
+            vec![
+                cord(PortId::Subscriber(2), PortId::Tap(1)),
+                cord(PortId::Subscriber(3), PortId::Tap(2)),
+            ]
+        };
+        if path.contains("rewire") {
+            state = exchange(
+                backend,
+                input(&mut sequence, revision, vec![], false, [0, 0, 0, 3]),
+            )?;
+            revision = state.state_revision;
+            if path.contains("late") {
+                let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 6 })?;
+            }
+        }
         state = exchange(
             backend,
             tap_input(&mut sequence, revision, tap.clone(), true, [0, 0, 0, 3]),
         )?;
         revision = state.state_revision;
-        if !state.output.tap_bridge_audio_active {
+        if path.contains("rewire_late") {
+            if state.output.tap_bridge_audio_active {
+                return Err("late Neel rewire unexpectedly kept TAP audio active".into());
+            }
+        } else if !state.output.tap_bridge_audio_active {
             return Err("TAP did not become active for the Neel/Shadhin call".into());
+        }
+        if !path.contains("rewire_late") {
+            let monitoring = state
+                .output
+                .tap_bridge_monitoring
+                .as_ref()
+                .ok_or("TAP state did not identify the monitored connection")?;
+            let expected_caller_port = if path.contains("reverse") { 2 } else { 1 };
+            if monitoring.caller_line != 2
+                || monitoring.callee_line != 3
+                || monitoring.caller_tap_port != expected_caller_port
+            {
+                return Err(format!("unexpected TAP monitoring state: {monitoring:?}").into());
+            }
+        }
+        if !path.contains("rewire_late")
+            && (!state.output.line_lamps[2] || !state.output.line_lamps[3])
+        {
+            return Err("both Neel/Shadhin LEDs were not active during monitored audio".into());
         }
         log.row(CsvRow {
             event: "tap",
@@ -917,8 +991,24 @@ fn run_neel_story(
             caller: 2,
             destination: 3,
             status: "accepted",
-            text: "TAP is held and monitors the active call timeline.",
+            text: if path.contains("rewire_late") {
+                "TAP rewire was attempted after the buffer expired."
+            } else {
+                "TAP is held and monitors the active call timeline."
+            },
         })?;
+        if path.contains("rewire_late") {
+            log.row(CsvRow {
+                event: "rewire_expired",
+                sequence,
+                revision,
+                caller: 2,
+                destination: 3,
+                status: "accepted",
+                text: "The 5-second rewiring buffer expired; the old call was no longer monitorable.",
+            })?;
+            return Ok(());
+        }
         let _ = debug_command(
             debug,
             DebugCommand::AdvanceTime {
@@ -929,6 +1019,9 @@ fn run_neel_story(
             backend,
             tap_input(&mut sequence, revision, tap, false, [0, 0, 0, 3]),
         )?;
+        if state.output.line_lamps[2] {
+            return Err("Neel LED remained active after the loaded audio duration".into());
+        }
     } else {
         let _ = debug_command(
             debug,
@@ -1062,6 +1155,7 @@ fn run_neel_story(
         )
         .into());
     }
+    assert_printer_balance(&state, snapshot.snapshot.money)?;
     let outcome = format!(
         "Backend final money: ${} (started at ${}; delta ${}). Final beat: {}.",
         snapshot.snapshot.money,
@@ -1168,6 +1262,33 @@ fn tap_input(
     let mut message = input(sequence, revision, cords, false, digits);
     message.input.held_controls.tap = tap;
     message
+}
+
+fn assert_printer_balance(
+    state: &StateMessage,
+    expected_balance: i32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let money_entries = state
+        .output
+        .printer_output
+        .iter()
+        .filter(|entry| entry.text.contains("MONEY //"))
+        .collect::<Vec<_>>();
+    if money_entries.is_empty() {
+        return Err("backend produced no printer money entries".into());
+    }
+    let last_balance = money_entries
+        .last()
+        .and_then(|entry| entry.text.split("balance $").last())
+        .and_then(|value| value.parse::<i32>().ok());
+    if last_balance != Some(expected_balance) {
+        return Err(format!(
+            "printer balance {:?} disagrees with backend balance ${expected_balance}",
+            last_balance
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn exchange(stream: &mut TcpStream, message: InputMessage) -> io::Result<StateMessage> {
