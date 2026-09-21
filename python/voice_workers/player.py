@@ -10,6 +10,18 @@ from .common import fail, worker_timeout
 
 def task_guidance(task: str) -> str:
     lowered = task.lower()
+    if "prof. kashem" in lowered:
+        return (
+            "Ask one short, direct question: where would Prof. Kashem like the operator to "
+            "connect him? Do not ask for a phone number, directory ID, unit, apartment, "
+            "office, or another person's location, and do not address a place as a person."
+        )
+    if "arnab" in lowered and "cat" in lowered:
+        return "Ask only whether Arnab remembers if Bela Bose has a cat; keep it to one short natural question."
+    if "arnab" in lowered and ("directory" in lowered or "id" in lowered or "number" in lowered):
+        return "Ask exactly about Bela Bose's directory number; keep it to one short natural question. Do not ask about Shadhin Housing or Prof. Kashem."
+    if "arnab" in lowered:
+        return "Ask who Arnab wants to reach; the intended person is Bela Bose. Keep it to one short natural question and do not ask about directory numbers yet."
     if "water" in lowered:
         return (
             "This is a water-only response. Mention water naturally. Do not mention "
@@ -90,6 +102,7 @@ def main() -> int:
                 "think": False,
                 "format": "json",
                 "stream": False,
+                "options": {"temperature": 0.2, "num_predict": 80},
             }
         ).encode()
         http_request = urllib.request.Request(

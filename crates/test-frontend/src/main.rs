@@ -928,7 +928,7 @@ fn run_neel_story(
             let _ = debug_command(
                 debug,
                 DebugCommand::AdvanceTime {
-                    seconds: first_audio_duration.saturating_sub(1) as u32,
+                    seconds: (first_audio_duration / 2) as u32,
                 },
             )?;
         }

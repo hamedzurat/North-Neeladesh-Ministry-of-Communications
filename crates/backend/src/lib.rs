@@ -2573,52 +2573,6 @@ fn generate_operator_response(
 }
 
 fn generate_dialogue(context: &ResponseContext, transcript: &str) -> Result<String, VoiceError> {
-    let normalized = transcript.to_ascii_lowercase();
-    if context.call_guidance.contains("Prof. Kashem")
-        && ["where", "connect", "talk", "speak"]
-            .iter()
-            .any(|word| normalized.contains(word))
-    {
-        return Ok("I want to talk to Shadhin Housing.".into());
-    }
-    if context.call_guidance.contains("Arnab Bhattacharjee") {
-        if normalized.contains("dog") {
-            return Ok("No, I remember Bela has a cat.".into());
-        }
-        if normalized.contains("cat") {
-            return Ok("Yes, I remember Bela has a cat.".into());
-        }
-        if normalized.contains("id") || normalized.contains("number") {
-            return Ok("Her ID is around 1024 or something like that.".into());
-        }
-        if normalized.contains("who") || normalized.contains("bela") {
-            return Ok(
-                "Yes, I am trying to reach Bela Bose, but I do not know her housing.".into(),
-            );
-        }
-    }
-    if context.call_guidance.contains("Opening dialogue:")
-        && ["where", "location", "address", "located"]
-            .iter()
-            .any(|word| normalized.contains(word))
-    {
-        return Ok("Shapla Apartments.".into());
-    }
-    if normalized.contains("what is your name") || normalized.contains("what should i call") {
-        return Ok("Nusrat. Please help my mother.".into());
-    }
-    if normalized.contains("what do you do") || normalized.contains("line of work") {
-        return Ok("I am a senior architect, but that does not matter right now.".into());
-    }
-    if normalized.contains("pet") {
-        return Ok("I cannot think about that right now; please help her.".into());
-    }
-    if context
-        .call_guidance
-        .contains("Respond briefly and neutrally")
-    {
-        return Ok("Things are under control. Thank you for checking.".into());
-    }
     Ok(with_persistent_dialogue(|dialogue| dialogue.generate(context, transcript))?.dialogue)
 }
 
