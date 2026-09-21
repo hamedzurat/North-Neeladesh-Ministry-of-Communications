@@ -46,7 +46,7 @@ class HardwareFrontendIntegrationTests(unittest.TestCase):
         observed: dict[str, object] = {}
         codec = JsonCodec()
         response = {
-            "protocol_version": 2,
+            "protocol_version": 3,
             "input_sequence": 1,
             "accepted": True,
             "error": None,
@@ -54,6 +54,7 @@ class HardwareFrontendIntegrationTests(unittest.TestCase):
             "output": {
                 "line_lamps": [True] + [False] * 11,
                 "game_phase": "ready",
+                "run_generation": 0,
                 "clock": {"shift": 1, "elapsed_seconds": 65},
                 "speaker_active": False,
                 "interference_level": 0,

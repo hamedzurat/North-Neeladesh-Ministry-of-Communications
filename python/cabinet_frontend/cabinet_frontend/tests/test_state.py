@@ -6,10 +6,11 @@ from cabinet_frontend.state import PhysicalInput, input_message
 
 
 class StateTests(unittest.TestCase):
-    def test_input_message_pads_crank_history_to_backend_array_length(self) -> None:
+    def test_input_message_uses_current_ring_line(self) -> None:
         message = input_message(PhysicalInput(), 1, 0, "test", [])
 
-        self.assertEqual(message["input"]["crank_rotation_timestamps"], [0, 0, 0, 0])
+        self.assertEqual(message["protocol_version"], 3)
+        self.assertEqual(message["input"]["ring_line"], -1)
 
 
 if __name__ == "__main__":

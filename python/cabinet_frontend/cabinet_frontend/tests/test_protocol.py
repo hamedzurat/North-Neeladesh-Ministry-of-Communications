@@ -45,7 +45,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_backend_port_zero_is_a_valid_subscriber_port(self) -> None:
         message = {
-            "protocol_version": 2,
+            "protocol_version": 3,
             "input_sequence": 1,
             "expected_state_revision": 0,
             "input": {
@@ -57,7 +57,7 @@ class ProtocolTests(unittest.TestCase):
                     "tap": False,
                 },
                 "directory_digits": [0, 0, 0, 1],
-                "crank_rotation_timestamps": [0, 0, 0, 0],
+                "ring_line": -1,
                 "tuning": {"coarse": 0, "fine": 0},
                 "debug": {
                     "firmware_version": "test",
@@ -77,7 +77,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_invalid_topology_is_rejected_before_transmission(self) -> None:
         message = {
-            "protocol_version": 2,
+            "protocol_version": 3,
             "input_sequence": 1,
             "expected_state_revision": 0,
             "input": {
@@ -92,7 +92,7 @@ class ProtocolTests(unittest.TestCase):
                     "tap": False,
                 },
                 "directory_digits": [0, 0, 0, 1],
-                "crank_rotation_timestamps": [0, 0, 0, 0],
+                "ring_line": -1,
                 "tuning": {"coarse": 0, "fine": 0},
                 "debug": {
                     "firmware_version": "test",
@@ -109,5 +109,5 @@ class ProtocolTests(unittest.TestCase):
             codec = CborCodec()
         except RuntimeError as error:
             self.skipTest(str(error))
-        value = {"protocol_version": 2, "input_sequence": 1, "accepted": True}
+        value = {"protocol_version": 3, "input_sequence": 1, "accepted": True}
         self.assertEqual(codec.decode(codec.encode(value)), value)

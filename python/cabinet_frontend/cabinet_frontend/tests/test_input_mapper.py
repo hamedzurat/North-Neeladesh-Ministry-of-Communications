@@ -93,39 +93,55 @@ class InputMapperTests(unittest.TestCase):
             },
         )
 
-    def test_maps_pairs_and_records_completed_rotations(self) -> None:
+    def test_maps_pairs_and_arms_ring_line_after_rotation(self) -> None:
         source = PhysicalInputSource(
             Rotary([1, 0]),
-            Scanner([(0, 1), (2, 9)]),
-            {0: "subscriber_0", 1: "operator", 2: "subscriber_2"},
+            Scanner([(0, 13)]),
+            {0: "subscriber_0", 13: "ring_generator"},
             (0, 0, 0, 1),
             pair_scan_interval=10,
-            clock_ms=iter([1234]).__next__,
             crank_detents_per_rotation=1,
         )
 
         first = source.poll(now=0)
         second = source.poll(now=1)
 
-        self.assertEqual(first.cord_topology, [{"first": "subscriber_0", "second": "operator"}])
-        self.assertEqual(first.crank_rotation_timestamps, [1234])
+        self.assertEqual(
+            first.cord_topology,
+            [{"first": "subscriber_0", "second": "ring_generator"}],
+        )
+        self.assertEqual(first.ring_line, 0)
         self.assertEqual(second.cord_topology, first.cord_topology)
-        self.assertEqual(second.crank_rotation_timestamps, [1234])
+        self.assertEqual(second.ring_line, 0)
 
-    def test_limits_rotation_history_to_four_timestamps(self) -> None:
+    def test_clears_ring_line_when_generator_is_disconnected(self) -> None:
         source = PhysicalInputSource(
-            Rotary([1, 1, 1, 1, 1]),
-            Scanner([]),
-            {},
+            Rotary([1, 0]),
+            Scanner([(0, 13)]),
+            {0: "subscriber_0", 1: "subscriber_1", 13: "ring_generator"},
             (0, 0, 0, 1),
-            clock_ms=iter([1, 2, 3, 4, 5]).__next__,
+            pair_scan_interval=1,
             crank_detents_per_rotation=1,
         )
 
-        for index in range(5):
-            snapshot = source.poll(now=float(index))
+        self.assertEqual(source.poll(now=0).ring_line, 0)
+        source.scanner.pairs = [(0, 1)]
+        snapshot = source.poll(now=1)
 
-        self.assertEqual(snapshot.crank_rotation_timestamps, [2, 3, 4, 5])
+        self.assertEqual(snapshot.ring_line, -1)
+
+    def test_arms_ring_line_without_waiting_for_pair_rescan(self) -> None:
+        source = PhysicalInputSource(
+            Rotary([0, 1]),
+            Scanner([(0, 13)]),
+            {0: "subscriber_0", 13: "ring_generator"},
+            (0, 0, 0, 1),
+            pair_scan_interval=10,
+            crank_detents_per_rotation=1,
+        )
+
+        source.poll(now=0)
+        self.assertEqual(source.poll(now=1).ring_line, 0)
 
     def test_sixteen_encoder_detents_emit_one_crank_rotation(self) -> None:
         source = PhysicalInputSource(
@@ -133,14 +149,13 @@ class InputMapperTests(unittest.TestCase):
             Scanner([]),
             {},
             (0, 0, 0, 1),
-            clock_ms=iter([1600]).__next__,
             crank_detents_per_rotation=16,
         )
 
         for index in range(16):
             snapshot = source.poll(now=float(index))
 
-        self.assertEqual(snapshot.crank_rotation_timestamps, [1600])
+        self.assertEqual(snapshot.ring_line, -1)
 
     def test_sixteen_encoder_detents_emit_one_crank_rotation_in_reverse(self) -> None:
         source = PhysicalInputSource(
@@ -148,14 +163,13 @@ class InputMapperTests(unittest.TestCase):
             Scanner([]),
             {},
             (0, 0, 0, 1),
-            clock_ms=iter([1600]).__next__,
             crank_detents_per_rotation=16,
         )
 
         for index in range(16):
             snapshot = source.poll(now=float(index))
 
-        self.assertEqual(snapshot.crank_rotation_timestamps, [1600])
+        self.assertEqual(snapshot.ring_line, -1)
 
     def test_input_faults_are_retained_without_losing_last_topology(self) -> None:
         source = PhysicalInputSource(

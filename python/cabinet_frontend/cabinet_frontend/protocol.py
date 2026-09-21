@@ -69,7 +69,7 @@ class ProtocolValidationError(ValueError):
 
 def validate_input_message(message: dict[str, Any]) -> None:
     _require_keys(message, "protocol_version", "input_sequence", "expected_state_revision", "input")
-    if message["protocol_version"] != 2:
+    if message["protocol_version"] != 3:
         raise ProtocolValidationError("unsupported input protocol version")
     if not isinstance(message["input_sequence"], int) or message["input_sequence"] <= 0:
         raise ProtocolValidationError("input_sequence must be a positive integer")
@@ -79,7 +79,7 @@ def validate_input_message(message: dict[str, Any]) -> None:
         "cord_topology",
         "held_controls",
         "directory_digits",
-        "crank_rotation_timestamps",
+        "ring_line",
         "tuning",
         "debug",
     )
@@ -113,15 +113,9 @@ def validate_input_message(message: dict[str, Any]) -> None:
     ):
         raise ProtocolValidationError("directory_digits must contain four digits")
 
-    timestamps = input_state["crank_rotation_timestamps"]
-    if (
-        not isinstance(timestamps, list)
-        or len(timestamps) != 4
-        or any(not isinstance(value, int) or value < 0 for value in timestamps)
-    ):
-        raise ProtocolValidationError("crank_rotation_timestamps must contain four timestamps")
-    if timestamps != sorted(timestamps):
-        raise ProtocolValidationError("crank_rotation_timestamps must be chronological")
+    ring_line = input_state["ring_line"]
+    if type(ring_line) is not int or not -1 <= ring_line < 12:
+        raise ProtocolValidationError("ring_line must be -1 or a subscriber line")
 
     tuning = _map(input_state["tuning"], "tuning")
     for key in ("coarse", "fine"):
@@ -149,7 +143,7 @@ def validate_state_message(message: dict[str, Any]) -> None:
         "state_revision",
         "output",
     )
-    if message["protocol_version"] != 2:
+    if message["protocol_version"] != 3:
         raise ProtocolValidationError("unsupported state protocol version")
     _require_int_range(message["input_sequence"], "input_sequence", 1, None)
     _require_int_range(message["state_revision"], "state_revision", 0, None)
@@ -165,6 +159,7 @@ def validate_state_message(message: dict[str, Any]) -> None:
         output,
         "line_lamps",
         "game_phase",
+        "run_generation",
         "clock",
         "speaker_active",
         "interference_level",
@@ -188,6 +183,7 @@ def validate_state_message(message: dict[str, Any]) -> None:
         raise ProtocolValidationError("output.line_lamps must contain twelve booleans")
     if not isinstance(output["game_phase"], str):
         raise ProtocolValidationError("output.game_phase must be a string")
+    _require_int_range(output["run_generation"], "output.run_generation", 0, None)
     if not isinstance(output["speaker_active"], bool):
         raise ProtocolValidationError("output.speaker_active must be boolean")
     if not isinstance(output["tap_bridge_audio_active"], bool):

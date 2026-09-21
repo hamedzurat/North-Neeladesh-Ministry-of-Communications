@@ -27,7 +27,7 @@ class PhysicalInput:
     cord_topology: list[dict[str, str]] = field(default_factory=list)
     held_controls: HeldControls = field(default_factory=HeldControls)
     directory_digits: list[int] = field(default_factory=lambda: [0, 0, 0, 1])
-    crank_rotation_timestamps: list[int] = field(default_factory=list)
+    ring_line: int = -1
     tuning: dict[str, int] = field(default_factory=lambda: {"coarse": 0, "fine": 0})
 
 
@@ -38,17 +38,15 @@ def input_message(
     firmware_version: str,
     device_faults: list[str],
 ) -> dict[str, Any]:
-    timestamps = physical.crank_rotation_timestamps[-4:]
-    timestamps = [0] * (4 - len(timestamps)) + timestamps
     return {
-        "protocol_version": 2,
+        "protocol_version": 3,
         "input_sequence": sequence,
         "expected_state_revision": expected_state_revision,
         "input": {
             "cord_topology": physical.cord_topology,
             "held_controls": physical.held_controls.to_wire(),
             "directory_digits": physical.directory_digits,
-            "crank_rotation_timestamps": timestamps,
+            "ring_line": physical.ring_line,
             "tuning": physical.tuning,
             "debug": {
                 "firmware_version": firmware_version,

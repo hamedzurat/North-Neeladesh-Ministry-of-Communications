@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from typing import Protocol
 
 from .state import HeldControls, PhysicalInput
@@ -39,7 +38,6 @@ class PhysicalInputSource:
         pin_to_port: dict[int, str],
         directory_digits: tuple[int, int, int, int],
         pair_scan_interval: float = 2.0,
-        clock_ms: Callable[[], int] | None = None,
         controls: Controls | None = None,
         crank_detents_per_rotation: int = 2,
         status_interval: float = 5.0,
@@ -50,7 +48,6 @@ class PhysicalInputSource:
         self.pin_to_port = pin_to_port
         self.directory_digits = list(directory_digits)
         self.pair_scan_interval = pair_scan_interval
-        self.clock_ms = clock_ms or (lambda: int(time.monotonic() * 1000))
         self.controls = controls
         if status_interval <= 0:
             raise ValueError("status_interval must be positive")
@@ -62,7 +59,7 @@ class PhysicalInputSource:
             raise ValueError("crank_detents_per_rotation must be positive")
         self.crank_detents_per_rotation = crank_detents_per_rotation
         self.crank_detents = 0
-        self.rotation_timestamps: list[int] = []
+        self.ring_line = -1
         self.topology: list[dict[str, str]] = []
         self.held_controls = HeldControls()
         self.next_scan_at = 0.0
@@ -74,6 +71,8 @@ class PhysicalInputSource:
         now = time.monotonic() if now is None else now
         self.faults.clear()
         event = 0
+        completed_rotation = False
+        rotation_armed = False
         try:
             event = self.rotary.read()
             if event:
@@ -82,18 +81,25 @@ class PhysicalInputSource:
                 self.crank_detents += 1
                 if self.crank_detents >= self.crank_detents_per_rotation:
                     self.crank_detents -= self.crank_detents_per_rotation
-                    timestamp = self.clock_ms()
-                    self.rotation_timestamps.append(timestamp)
-                    self.rotation_timestamps = self.rotation_timestamps[-4:]
-                    print(f"CRANK {timestamp}", flush=True)
+                    completed_rotation = True
         except Exception as error:  # noqa: BLE001 - hardware libraries vary their error types
             self.faults.append(f"rotary: {type(error).__name__}: {error}")
         if now >= self.next_scan_at:
             try:
                 self.topology = self._scan_topology()
+                physical_ring_line = self._ring_generator_line()
+                if completed_rotation:
+                    self.ring_line = physical_ring_line
+                    print(f"CRANK ring_line={self.ring_line}", flush=True)
+                    rotation_armed = True
+                elif physical_ring_line != self.ring_line:
+                    self.ring_line = -1
             except Exception as error:  # noqa: BLE001 - hardware libraries vary their error types
                 self.faults.append(f"pair_detector: {type(error).__name__}: {error}")
             self.next_scan_at = now + self.pair_scan_interval
+        if completed_rotation and not rotation_armed:
+            self.ring_line = self._ring_generator_line()
+            print(f"CRANK ring_line={self.ring_line}", flush=True)
         if self.controls is None:
             held_controls = HeldControls()
         else:
@@ -110,7 +116,7 @@ class PhysicalInputSource:
             cord_topology=list(self.topology),
             held_controls=held_controls,
             directory_digits=directory_digits,
-            crank_rotation_timestamps=list(self.rotation_timestamps),
+            ring_line=self.ring_line,
             tuning={"coarse": self.tuning[0], "fine": self.tuning[1]},
         )
         self._log_status(physical, event, now)
@@ -132,7 +138,7 @@ class PhysicalInputSource:
             tuple(
                 (connection["first"], connection["second"]) for connection in physical.cord_topology
             ),
-            tuple(physical.crank_rotation_timestamps),
+            physical.ring_line,
             tuple(self.faults),
         )
         if status == self._last_status and now < self._next_status_log:
@@ -143,7 +149,7 @@ class PhysicalInputSource:
             f"digits={''.join(map(str, physical.directory_digits))} "
             f"patch={patch_panel} "
             f"rotary={rotary_event:+d} "
-            f"crank={physical.crank_rotation_timestamps[-1] if physical.crank_rotation_timestamps else '-'}"
+            f"ring_line={physical.ring_line}"
         )
         if self.faults:
             message += f" faults={';'.join(self.faults)}"
@@ -160,6 +166,15 @@ class PhysicalInputSource:
                 continue
             cords.append({"first": first, "second": second})
         return cords[:8]
+
+    def _ring_generator_line(self) -> int:
+        for connection in self.topology:
+            first, second = connection["first"], connection["second"]
+            if first == "ring_generator" and second.startswith("subscriber_"):
+                return int(second.removeprefix("subscriber_"))
+            if second == "ring_generator" and first.startswith("subscriber_"):
+                return int(first.removeprefix("subscriber_"))
+        return -1
 
     def close(self) -> None:
         for name, component in (("rotary", self.rotary), ("pair_detector", self.scanner)):

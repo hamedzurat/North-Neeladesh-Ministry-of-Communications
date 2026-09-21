@@ -87,7 +87,8 @@ ssh taki@192.168.1.34 \
 - E-paper buttons GPIO 4, 6, 13, and 26 increment directory digits 1 through
   4, respectively.
 
-The rotary mapper emits one crank timestamp per 16 detents, matching the
-current encoder calibration. All physical pin values are defined in
-`cabinet_frontend/config.py`. Audio transport is intentionally left to
-`crates/voice-daemon`.
+The rotary mapper arms `ring_line` after one full rotation (16 detents),
+matching the current encoder calibration. The line must remain connected to
+the Ring Generator; the backend remains responsible for accepting the ring.
+All physical pin values are defined in `cabinet_frontend/config.py`. Audio
+transport is intentionally left to `crates/voice-daemon`.

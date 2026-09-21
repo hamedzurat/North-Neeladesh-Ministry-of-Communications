@@ -8,7 +8,7 @@ Each message is framed as:
 u32 big-endian payload length | CBOR payload
 ```
 
-The maximum payload is 4 MiB. The normal frontend protocol version is `2`; the development debug protocol version is `2`. The game cabinet has twelve subscriber lines, one two-jack Tap Bridge, and Police/EMS service controls.
+The maximum payload is 4 MiB. The normal frontend protocol version is `3`; the development debug protocol version is `2`. The game cabinet has twelve subscriber lines, one two-jack Tap Bridge, and Police/EMS service controls.
 
 ## InputMessage
 
@@ -16,7 +16,7 @@ The wire shape is exactly:
 
 ```text
 {
-  "protocol_version": 2,
+  "protocol_version": 3,
   "input_sequence": u64,
   "expected_state_revision": u64,
   "input": {
@@ -25,7 +25,7 @@ The wire shape is exactly:
       "ptt": bool, "police": bool, "ems": bool, "tap": bool
     },
     "directory_digits": [u8; 4],
-    "crank_rotation_timestamps": [u64; 4],
+    "ring_line": i16,
     "tuning": {"coarse": u16, "fine": u16},
     "debug": {
       "firmware_version": string|null,
@@ -40,7 +40,7 @@ The wire shape is exactly:
 
 `PortId` is always one CBOR text string: `subscriber_0` through `subscriber_11`, `operator`, `ring_generator`, or `tap_1` and `tap_2` (the two jacks belonging to one Tap Bridge). A topology has at most eight cords, and every endpoint may occur in at most one cord. Valid physical topologies are accepted even when they do not advance the current call.
 
-The crank array contains the timestamps, in milliseconds, of the last four completed full local rotations. Odin records a timestamp when a rotation completes. It does not send a rotation count or computed speed; the backend validates the chronological history and decides whether a new timestamp satisfies ringing.
+`ring_line` is the subscriber line armed by the most recent completed crank rotation, or `-1` when no line is armed. The frontend only arms a line while its Ring Generator cord is connected; the backend validates the resulting circuit.
 
 ## StateMessage
 
@@ -48,7 +48,7 @@ The response wire shape is exactly:
 
 ```text
 {
-  "protocol_version": 2,
+  "protocol_version": 3,
   "input_sequence": u64,
   "accepted": bool,
   "error": {"code": string, "message": string}|null,
