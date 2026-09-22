@@ -989,14 +989,10 @@ impl Backend {
                 >= self.story_started_elapsed_seconds.saturating_add(patience)
         {
             if self.story_thread == "neel_university" {
-                if self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory {
-                    println!(
-                        "[TRANSITION] Neel beat {:?} -> Completed (patience expired)",
-                        self.neel_story_beat
-                    );
-                    self.neel_story_beat = stories::neel_university::Beat::Completed;
-                    self.story_completed = true;
-                }
+                println!(
+                    "[TRANSITION] Neel beat {:?} patience expired -> retry",
+                    self.neel_story_beat
+                );
             } else {
                 self.story_beat = stories::shapla_apartments::Beat::BadFollowup;
             }
