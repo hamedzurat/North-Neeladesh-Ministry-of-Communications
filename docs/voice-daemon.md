@@ -20,7 +20,14 @@ backend configures those workers and remains authoritative. The relay reports
 capture/playback failures as typed voice status messages and stays alive so the
 backend can recover or retry the session.
 
-The backend uses the checked-in real worker adapters. The Pi relay uses Python and the system `arecord`/`aplay` tools, so the Pi needs no Rust toolchain or voice binary. The backend STT and dialogue invoke the pacman-installed whisper.cpp and llama.cpp runtimes. The Python workers run from the `python/` uv project; `--no-sync` prevents the backend from installing packages or downloading a model at runtime. Install the runtimes with `sudo pacman -S llama-cpp ggml-cuda whisper-cpp`, provision the model assets with `just voice-setup`, then run `just voice-preflight` before the first session.
+The backend uses the checked-in real worker adapters. The Pi relay uses Python,
+PipeWire's `pw-record`, and `aplay`, so the Pi needs no Rust toolchain or voice
+binary. The backend STT and dialogue invoke the pacman-installed whisper.cpp and
+llama.cpp runtimes. The Python workers run from the `python/` uv project;
+`--no-sync` prevents the backend from installing packages or downloading a
+model at runtime. Install the runtimes with `sudo pacman -S llama-cpp ggml-cuda
+whisper-cpp`, provision the model assets with `just voice-setup`, then run
+`just voice-preflight` before the first session.
 
 The real path requires these local assets and dependencies:
 

@@ -22,7 +22,6 @@ VOICE_AUDIO_SAMPLE_RATE :: 24000
 VOICE_AUDIO_PACKET_SAMPLES :: 480
 VOICE_AUDIO_PAYLOAD_TYPE :: u8(96)
 VOICE_MAX_CAPTURE_SAMPLES :: VOICE_INPUT_SAMPLE_RATE * 15
-VOICE_CAPTURE_PATH :: "/tmp/north-neeladesh-odin-capture.raw"
 
 voice_start :: proc(app: ^Input_State) {
 	app.voice.session_id = 1
@@ -50,6 +49,12 @@ voice_start :: proc(app: ^Input_State) {
 	app.voice.endpoint = endpoint
 	app.voice.connected = true
 	app.voice.status = "VOICE RELAY ONLINE"
+	app.voice.capture = nn_pw_capture_start(VOICE_INPUT_SAMPLE_RATE, 1, VOICE_MAX_CAPTURE_SAMPLES)
+	if app.voice.capture == nil {
+		app.voice.status = "PIPEWIRE CAPTURE UNAVAILABLE"
+		voice_send_status_error(&app.voice, "failed", "capture_start_failed", "unable to open the native PipeWire microphone stream")
+		return
+	}
 	voice_send_status(&app.voice, "ready")
 	app.voice.last_ready_at = 0
 	if rl.IsAudioDeviceReady() {
@@ -67,6 +72,9 @@ voice_poll :: proc(app: ^Input_State, now: f64) {
 	if now - app.voice.last_ready_at >= 4.0 {
 		voice_send_status(&app.voice, "ready")
 		app.voice.last_ready_at = now
+	}
+	if app.voice.capture != nil && nn_pw_capture_failed(app.voice.capture) != 0 {
+		app.voice.status = "PIPEWIRE CAPTURE FAILED"
 	}
 	buffer: [65535]byte
 	for {
@@ -148,22 +156,11 @@ voice_send_status_error :: proc(voice: ^Voice_State, status, error_code, error_m
 
 voice_start_capture :: proc(voice: ^Voice_State) {
 	if voice.capturing do return
-	file, err := os.create(VOICE_CAPTURE_PATH)
-	if err != nil {
-		voice_send_status_error(voice, "failed", "capture_file_failed", "unable to create the microphone capture file")
+	if voice.capture == nil {
+		voice_send_status_error(voice, "failed", "capture_start_failed", "PipeWire microphone capture is unavailable")
 		return
 	}
-	command := []string{"arecord", "-q", "-t", "raw", "-f", "S16_LE", "-c", "1", "-r", "16000", "-"}
-	if configured, ok := os.lookup_env("NN_VOICE_CAPTURE_COMMAND", context.temp_allocator); ok && configured != "" {
-		command = []string{"sh", "-c", configured}
-	}
-	process, start_err := os.process_start(os.Process_Desc{command = command, stdout = file})
-	os.close(file)
-	if start_err != nil {
-		voice_send_status_error(voice, "failed", "capture_start_failed", "unable to start the microphone capture command")
-		return
-	}
-	voice.capture_process = process
+	nn_pw_capture_begin(voice.capture)
 	voice.capturing = true
 	voice.playback_finishing = false
 	voice.accept_audio = false
@@ -177,39 +174,20 @@ voice_release_capture :: proc(voice: ^Voice_State) {
 		voice_send_status(voice, "ready")
 		return
 	}
-	_ = os.process_kill(voice.capture_process)
-	_, _ = os.process_wait(voice.capture_process)
 	voice.capturing = false
-	file, err := os.open(VOICE_CAPTURE_PATH)
-	if err == nil {
-		defer os.close(file)
-		size, size_err := os.file_size(file)
-		if size_err == nil {
-			byte_count := min(i64(VOICE_MAX_CAPTURE_SAMPLES * 2), max(i64(0), size))
-			bytes := make([]byte, int(byte_count))
-			read_count, read_err := os.read(file, bytes)
-			if read_err == nil {
-				voice_send_input_audio(voice, bytes[:read_count])
-			} else {
-				voice_send_status_error(voice, "failed", "capture_read_failed", "unable to read the microphone capture")
-			}
-			delete(bytes)
-		} else {
-			voice_send_status_error(voice, "failed", "capture_read_failed", "unable to inspect the microphone capture")
-		}
-	} else {
-		voice_send_status_error(voice, "failed", "capture_read_failed", "unable to read the microphone capture")
-	}
-	_ = os.remove(VOICE_CAPTURE_PATH)
+	samples := make([]i16, VOICE_MAX_CAPTURE_SAMPLES)
+	count := nn_pw_capture_read(voice.capture, &samples[0], VOICE_MAX_CAPTURE_SAMPLES)
+	voice_send_input_samples(voice, samples[:count])
+	delete(samples)
 }
 
 voice_cancel_capture :: proc(voice: ^Voice_State) {
 	if voice.capturing {
-		_ = os.process_kill(voice.capture_process)
-		_, _ = os.process_wait(voice.capture_process)
 		voice.capturing = false
 	}
-	_ = os.remove(VOICE_CAPTURE_PATH)
+	if voice.capture != nil {
+		nn_pw_capture_begin(voice.capture)
+	}
 	voice_send_status(voice, "cancelled")
 }
 
@@ -227,10 +205,32 @@ voice_send_input_audio :: proc(voice: ^Voice_State, bytes: []byte) {
 	}
 }
 
+voice_send_input_samples :: proc(voice: ^Voice_State, samples: []i16) {
+	if len(samples) == 0 {
+		voice_send_input_chunk(voice, nil, 0, true)
+		return
+	}
+	chunk_count := (len(samples) + VOICE_INPUT_PACKET_SAMPLES - 1) / VOICE_INPUT_PACKET_SAMPLES
+	for chunk_index in 0 ..< chunk_count {
+		start := chunk_index * VOICE_INPUT_PACKET_SAMPLES
+		end := min(len(samples), start + VOICE_INPUT_PACKET_SAMPLES)
+		voice_send_input_sample_chunk(voice, samples[start:end], chunk_index, chunk_index + 1 == chunk_count)
+	}
+}
+
 voice_send_input_chunk :: proc(voice: ^Voice_State, bytes: []byte, chunk_index: int, complete: bool) {
-	values := make([]cbor.Value, len(bytes) / 2)
-	for index in 0 ..< len(values) {
-		sample := i16(u16(bytes[index * 2]) | u16(bytes[index * 2 + 1]) << 8)
+	samples := make([]i16, len(bytes) / 2)
+	for index in 0 ..< len(samples) {
+		samples[index] = i16(u16(bytes[index * 2]) | u16(bytes[index * 2 + 1]) << 8)
+	}
+	voice_send_input_sample_chunk(voice, samples, chunk_index, complete)
+	delete(samples)
+}
+
+voice_send_input_sample_chunk :: proc(voice: ^Voice_State, samples: []i16, chunk_index: int, complete: bool) {
+	values := make([]cbor.Value, len(samples))
+	for index in 0 ..< len(samples) {
+		sample := samples[index]
 		if sample < 0 { values[index] = cbor.Negative_U16(u16(-1 - sample)) }
 		else { values[index] = u16(sample) }
 	}
@@ -324,12 +324,11 @@ voice_finish_playback :: proc(voice: ^Voice_State) {
 }
 
 voice_close :: proc(voice: ^Voice_State) {
-	if voice.capturing {
-		_ = os.process_kill(voice.capture_process)
-		_, _ = os.process_wait(voice.capture_process)
-		voice.capturing = false
+	voice.capturing = false
+	if voice.capture != nil {
+		nn_pw_capture_destroy(voice.capture)
+		voice.capture = nil
 	}
-	_ = os.remove(VOICE_CAPTURE_PATH)
 	if voice.playback_ready {
 		rl.StopAudioStream(voice.playback_stream)
 		rl.UnloadAudioStream(voice.playback_stream)

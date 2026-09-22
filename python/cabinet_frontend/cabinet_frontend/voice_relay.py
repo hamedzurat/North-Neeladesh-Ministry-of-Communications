@@ -9,6 +9,7 @@ import struct
 import subprocess
 import threading
 import time
+from collections import deque
 from collections.abc import Sequence
 from typing import Any, Protocol
 
@@ -112,6 +113,83 @@ class AlsaCapture:
             self.process.wait()
             self.process = None
         self.buffer.clear()
+
+
+class PipeWireCapture:
+    """Keep a PipeWire microphone stream open and retain a bounded PCM ring."""
+
+    def __init__(self, max_samples: int = MAX_CAPTURE_SAMPLES) -> None:
+        self.command = _command(
+            None,
+            "pw-record --raw --format s16 --channels 1 --rate 16000 -",
+        )
+        self.max_samples = max_samples
+        self.process: subprocess.Popen[bytes] | None = None
+        self.reader: threading.Thread | None = None
+        self.samples: deque[int] = deque(maxlen=max_samples)
+        self.lock = threading.Lock()
+        self.error: BaseException | None = None
+        self._start_worker()
+
+    def _start_worker(self) -> None:
+        self.process = subprocess.Popen(
+            self.command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=0,
+        )
+        assert self.process.stdout is not None
+
+        def read() -> None:
+            try:
+                while True:
+                    chunk = self.process.stdout.read(8192)
+                    if not chunk:
+                        return
+                    usable = len(chunk) - len(chunk) % 2
+                    values = struct.unpack(f"<{usable // 2}h", chunk[:usable])
+                    with self.lock:
+                        self.samples.extend(values)
+            except OSError as error:  # pragma: no cover - OS failure path
+                self.error = error
+
+        self.reader = threading.Thread(target=read, daemon=True, name="pipewire-capture")
+        self.reader.start()
+
+    def start(self) -> None:
+        if self.process is None or self.process.poll() is not None:
+            raise RuntimeError("PipeWire microphone stream is not running")
+        if self.error is not None:
+            raise RuntimeError(f"PipeWire microphone read failed: {self.error}")
+        with self.lock:
+            self.samples.clear()
+
+    def finish(self) -> list[int]:
+        if self.process is None or self.process.poll() is not None:
+            raise RuntimeError("PipeWire microphone stream is not running")
+        if self.error is not None:
+            raise RuntimeError(f"PipeWire microphone read failed: {self.error}")
+        with self.lock:
+            values = list(self.samples)
+            self.samples.clear()
+        return values
+
+    def cancel(self) -> None:
+        with self.lock:
+            self.samples.clear()
+
+    def close(self) -> None:
+        process = self.process
+        self.process = None
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        if self.reader is not None:
+            self.reader.join(timeout=1)
 
 
 class AlsaPlayback:
@@ -312,8 +390,15 @@ class VoiceRelay:
     def close(self) -> None:
         self.closed = True
         self.capture.cancel()
+        close_capture = getattr(self.capture, "close", None)
+        if close_capture is not None:
+            close_capture()
         self.playback.finish()
         self.connection.close()
+
+
+def _capture(command: str | None) -> Capture:
+    return AlsaCapture(command) if command and command.strip() else PipeWireCapture()
 
 
 def run_embedded(stop: threading.Event) -> None:
@@ -338,7 +423,7 @@ def run_embedded(stop: threading.Event) -> None:
             connection = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             connection.connect((host, int(port_text)))
             connection.settimeout(5.0)
-            relay = VoiceRelay(connection, AlsaCapture(capture), AlsaPlayback(playback))
+            relay = VoiceRelay(connection, _capture(capture), AlsaPlayback(playback))
             relay.run(stop)
         except Exception as error:  # noqa: BLE001 - keep hardware frontend alive
             if not stop.is_set():
@@ -363,7 +448,7 @@ def run_forever() -> None:
             connection = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             connection.connect((host, int(port_text)))
             connection.settimeout(5.0)
-            relay = VoiceRelay(connection, AlsaCapture(capture), AlsaPlayback(playback))
+            relay = VoiceRelay(connection, _capture(capture), AlsaPlayback(playback))
             relay.run()
         except KeyboardInterrupt:
             return

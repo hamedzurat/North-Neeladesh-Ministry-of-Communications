@@ -19,8 +19,8 @@ if [[ ! -x "$VENV/bin/python" ]]; then
     exit 1
 fi
 
-if [[ -z "${NN_VOICE_CAPTURE_COMMAND:-}" ]] && ! command -v arecord >/dev/null 2>&1; then
-    printf 'arecord is required for the default voice capture path.\n' >&2
+if [[ -z "${NN_VOICE_CAPTURE_COMMAND:-}" ]] && ! command -v pw-record >/dev/null 2>&1; then
+    printf 'pw-record is required for the default PipeWire voice capture path.\n' >&2
     exit 1
 fi
 if [[ -z "${NN_VOICE_PLAYBACK_COMMAND:-}" ]] && ! command -v aplay >/dev/null 2>&1; then

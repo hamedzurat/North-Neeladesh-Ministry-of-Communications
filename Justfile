@@ -28,6 +28,7 @@ frontend-raylib:
     cp -a /usr/lib/odin/vendor/raylib target/odin-vendor/raylib
     ln -sf /usr/lib/libraylib.so target/odin-vendor/raylib/linux/libraylib.so.600
     ln -sf /usr/lib/libraylib.so target/odin-vendor/raylib/linux/libraylib.a
+    cc -shared -fPIC $(pkg-config --cflags libpipewire-0.3) frontend/pipewire_capture.c $(pkg-config --libs libpipewire-0.3) -lpthread -o target/libnn_pipewire_capture.so
 
 frontend-check: frontend-raylib
     /bin/odin check frontend -collection:nn_vendor=target/odin-vendor
@@ -36,7 +37,7 @@ frontend-font:
     python scripts/extract_ttc_face.py /usr/share/fonts/TTF/Iosevka-Regular.ttc target/Iosevka-Regular.ttf
 
 frontend-build: frontend-check frontend-font
-    /bin/odin build frontend -collection:nn_vendor=target/odin-vendor -define:RAYLIB_SHARED=true -out:target/north-neeladesh-frontend
+    /bin/odin build frontend -collection:nn_vendor=target/odin-vendor -define:RAYLIB_SHARED=true -extra-linker-flags:"-Ltarget -Wl,-rpath,'$$ORIGIN'" -out:target/north-neeladesh-frontend
 
 frontend backend_address="127.0.0.1:7878": frontend-build
     NN_BACKEND_ADDRESS={{ backend_address }} ./target/north-neeladesh-frontend

@@ -17,7 +17,11 @@ The Pi voice relay is implemented in `cabinet_frontend.voice_relay` and runs
 inside the cabinet frontend process; no Rust toolchain, voice daemon binary, or
 second service is required on the Pi.
 
-The relay remains wire-compatible with the backend: tagged CBOR over connected
+The relay keeps one bounded PipeWire capture stream open for the lifetime of the
+frontend. It clears the ring on each PTT, Police, or EMS start and sends the
+captured window on release. Set `NN_VOICE_CAPTURE_COMMAND` only to use a custom
+capture command instead. The relay remains wire-compatible with the backend:
+tagged CBOR over connected
 UDP for control, status, and 16 kHz input PCM, plus RTP/L16 at 24 kHz for
 speaker audio. Configure `NN_VOICE_BACKEND_ADDRESS` during setup if the backend
 is not on localhost.

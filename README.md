@@ -117,8 +117,8 @@ This builds the frontend and opens a borderless full-screen window connected to
 `127.0.0.1:7878`. Close the window to stop it. With an Operator cord
 connected, hold `PTT / OPERATOR` to test the complete voice path. The default
 voice endpoint is `127.0.0.1:7879`; override it with
-`NN_VOICE_BACKEND_ADDRESS`. Override the raw 16 kHz `arecord` capture command
-with `NN_VOICE_CAPTURE_COMMAND` when needed.
+`NN_VOICE_BACKEND_ADDRESS`. Odin uses a native PipeWire capture client and
+keeps that stream alive for the lifetime of the frontend.
 
 For wire-level troubleshooting instead:
 
@@ -244,7 +244,7 @@ uv run --directory python/cabinet_frontend \
 
 Voice failure must produce a diagnostic; it must not create a fake Routing or
 Story event. For the real microphone/speaker path, run `just frontend` as
-described in the GUI test run. The Odin relay uses `arecord` by default and
+described in the GUI test run. Odin uses a native PipeWire capture stream and
 Raylib for playback; the Python Cabinet Frontend remains the equivalent relay
 for Raspberry Pi hardware.
 

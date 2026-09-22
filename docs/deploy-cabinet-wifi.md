@@ -42,8 +42,9 @@ ssh taki@192.168.1.34 \
    /home/taki/Desktop/cabinet-frontend/scripts/setup_cabinet_frontend_pi.sh'
 ```
 
-The setup script installs the locked Python environment, checks `arecord` and
-`aplay`, configures GPIO/audio permissions, and writes one systemd service:
+The setup script installs the locked Python environment, checks the Pi's
+`pw-record`/`aplay` tools, configures GPIO/audio permissions, and writes one
+systemd service:
 
 ```text
 north-neeladesh-cabinet-frontend.service

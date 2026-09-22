@@ -77,7 +77,7 @@ poll_backend :: proc(app: ^Input_State, now: f64) {
 		drop_connection(app, "TRANSPORT LOST // RETRYING")
 		return
 	}
-	if !app.waiting_for_response && now - app.last_send >= 0.10 {
+	if !app.waiting_for_response && now - app.last_send >= 0.02 {
 		if !send_input_message(app) {
 			drop_connection(app, "TRANSPORT LOST // RETRYING")
 			return

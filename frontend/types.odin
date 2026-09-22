@@ -1,7 +1,6 @@
 package frontend
 
 import "core:net"
-import "core:os"
 import rl "nn_vendor:raylib"
 
 PROTOCOL_VERSION :: 3
@@ -80,8 +79,7 @@ Voice_State :: struct {
 	state_revision: u64,
 	last_ready_at: f64,
 	capturing: bool,
-	capture_process: os.Process,
-	capture_path: string,
+	capture: rawptr,
 	playback_stream: rl.AudioStream,
 	playback_ready: bool,
 	playback_finishing: bool,
