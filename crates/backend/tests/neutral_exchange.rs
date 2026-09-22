@@ -27,18 +27,18 @@ fn next_input(backend: &Backend) -> InputMessage {
 }
 
 #[test]
-fn production_exchange_starts_three_callers() {
+fn production_exchange_starts_both_story_callers() {
     let mut backend = Backend::new_exchange();
     let response = backend.apply_input_message(first_input(&backend));
 
     assert!(response.accepted);
-    assert_eq!(response.output.calls.len(), 3);
+    assert_eq!(response.output.calls.len(), 2);
 
     let response = backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
         command: DebugCommand::AdvanceTime { seconds: 8 },
     });
-    assert_eq!(response.snapshot.active_calls.len(), 3);
+    assert_eq!(response.snapshot.active_calls.len(), 2);
 }
 
 #[test]
@@ -53,7 +53,7 @@ fn reset_preserves_demo_call_capacity() {
 fn patience_starts_when_each_call_is_shown() {
     let mut backend = Backend::new_exchange();
     let first = backend.apply_input_message(first_input(&backend));
-    assert_eq!(first.output.calls.len(), 3);
+    assert_eq!(first.output.calls.len(), 2);
 
     backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
@@ -63,5 +63,5 @@ fn patience_starts_when_each_call_is_shown() {
 
     assert!(response.accepted);
     assert_eq!(backend.money(), -4);
-    assert_eq!(response.output.calls.len(), 3);
+    assert_eq!(response.output.calls.len(), 2);
 }

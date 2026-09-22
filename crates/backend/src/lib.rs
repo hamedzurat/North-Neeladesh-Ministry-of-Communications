@@ -220,7 +220,7 @@ impl Backend {
     }
 
     fn intertwined(&self) -> bool {
-        self.story_thread == "intertwined"
+        self.story_enabled && self.story_thread == "intertwined"
     }
 
     fn neel_story_active(&self) -> bool {
@@ -304,7 +304,7 @@ impl Backend {
             story_followup_pending: false,
             story_followup_call_started: false,
             story_completed: false,
-            story_thread: "shapla_apartments".into(),
+            story_thread: "intertwined".into(),
             story_conversation: Vec::new(),
             ring_active_line: -1,
         };
@@ -880,6 +880,15 @@ impl Backend {
         }
         if talking {
             self.voice_turn_controls = input.held_controls.clone();
+            println!(
+                "[TRANSITION] voice start caller={:?} turn={} ptt={} police={} ems={} tap={}",
+                caller,
+                self.voice_turn_id,
+                self.voice_turn_controls.ptt,
+                self.voice_turn_controls.police,
+                self.voice_turn_controls.ems,
+                self.voice_turn_controls.tap
+            );
             self.cancelled_voice_turn = None;
             self.voice_turn_id = self.next_voice_turn_id;
             self.next_voice_turn_id = self.next_voice_turn_id.wrapping_add(1);
@@ -899,6 +908,16 @@ impl Backend {
                 VoiceControl::ReleasePtt
             },
         });
+        if !talking {
+            println!(
+                "[TRANSITION] voice release caller={:?} turn={} service_turn={} captured_controls_police={} captured_controls_ems={}",
+                caller,
+                self.voice_turn_id,
+                self.voice_turn_controls.police || self.voice_turn_controls.ems,
+                self.voice_turn_controls.police,
+                self.voice_turn_controls.ems
+            );
+        }
         self.voice_state_revision = revision;
     }
 
@@ -1040,12 +1059,20 @@ impl Backend {
         &mut self,
         classification: stories::shapla_apartments::Classification,
     ) {
-        let controls = self.story_controls.clone();
+        let controls = self.voice_turn_controls.clone();
         let police = controls.police;
         let ems = controls.ems;
+        println!(
+            "[TRANSITION] story classification={:?} police={} ems={} beat_before={:?}",
+            classification, police, ems, self.story_beat
+        );
         if let Some(next) =
             stories::shapla_apartments::next_beat(self.story_beat, classification, police, ems)
         {
+            println!(
+                "[TRANSITION] story beat {:?} -> {:?}",
+                self.story_beat, next
+            );
             self.story_beat = next;
             self.story_followup_pending = true;
             self.story_started_elapsed_seconds = self.elapsed_seconds() as u64;
@@ -1258,6 +1285,10 @@ impl Backend {
         let has_opening_audio = self.story_enabled
             && (Self::opening_dialogue(caller).is_some()
                 || story_audio_path(caller, callee).is_some());
+        println!(
+            "[TRANSITION] call {} -> {} phase={:?} connect_requested has_opening_audio={} story_thread={}",
+            caller, callee, call.phase, has_opening_audio, self.story_thread
+        );
         if self.tts_prepared && !has_opening_audio {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
@@ -1408,6 +1439,13 @@ impl Backend {
 
     fn finish_call(&mut self, index: usize, missed: bool) {
         let call = self.calls.remove(index);
+        println!(
+            "[TRANSITION] call {} -> {} phase={:?} -> {}",
+            call.caller,
+            call.callee,
+            call.phase,
+            if missed { "Missed" } else { "Completed" }
+        );
         self.call_history.push(DebugCallRecord {
             caller_line: call.caller,
             requested_callee_line: call.callee,
@@ -1863,6 +1901,10 @@ impl Backend {
         match request.command {
             DebugCommand::ResetRun => self.reset_run(),
             DebugCommand::SelectStoryThread { thread_id } => {
+                println!(
+                    "[TRANSITION] story thread {} -> {}",
+                    self.story_thread, thread_id
+                );
                 self.story_thread = thread_id;
                 self.reset_run();
             }
@@ -2477,6 +2519,14 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                         Some(VoiceStatus::GeneratingResponse)
                                     };
                                     state.voice_transcript = Some(transcript.to_string());
+                                    println!(
+                                        "[TRANSITION] voice transcript caller={} service_turn={} controls_police={} controls_ems={} text={:?}",
+                                        caller,
+                                        service_turn,
+                                        state.voice_turn_controls.police,
+                                        state.voice_turn_controls.ems,
+                                        transcript
+                                    );
                                     if service_turn
                                         && caller == stories::shapla_apartments::CALLER_LINE
                                     {
@@ -2487,15 +2537,25 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                         };
                                         match classify_story(transcript, service) {
                                             Ok(classification) => {
+                                                println!(
+                                                    "[TRANSITION] service classification service={:?} result={:?}",
+                                                    service, classification
+                                                );
                                                 state.apply_story_classification(classification)
                                             }
-                                            Err(error) => append_printer(
-                                                &mut state.state,
-                                                &format!(
-                                                    "STORY CLASSIFIER ERROR // {}",
-                                                    error.message
-                                                ),
-                                            ),
+                                            Err(error) => {
+                                                println!(
+                                                    "[TRANSITION] service classification failed service={:?} code={} message={}",
+                                                    service, error.code, error.message
+                                                );
+                                                append_printer(
+                                                    &mut state.state,
+                                                    &format!(
+                                                        "STORY CLASSIFIER ERROR // {}",
+                                                        error.message
+                                                    ),
+                                                )
+                                            }
                                         }
                                     }
                                     if let Some(id) = conversation_id {
