@@ -1326,7 +1326,7 @@ impl Backend {
             .ok_or_else(|| {
                 VoiceError::new("subscriber_not_configured", "caller is not configured")
             })?;
-        let callee_profile = config
+        let _callee_profile = config
             .subscribers
             .iter()
             .find(|subscriber| subscriber.line == callee)
@@ -1363,30 +1363,11 @@ impl Backend {
                 }
             }
         }
-        let text = match caller {
-            stories::shapla_apartments::CALLER_LINE => {
-                stories::shapla_apartments::OPENING_DIALOGUE.to_string()
-            }
-            stories::neel_university::NEEL_LINE => stories::neel_university::Beat::ProfessorRouting
-                .opening_dialogue()
-                .unwrap_or("")
-                .to_string(),
-            stories::neel_university::SHADHIN_LINE => {
-                stories::neel_university::Beat::ArnabDirectory
-                    .opening_dialogue()
-                    .unwrap_or("")
-                    .to_string()
-            }
-            _ => format!(
-                "{}: Please connect me to {}. {}: I am at {}.",
-                caller_profile.name,
-                callee_profile.place,
-                callee_profile.name,
-                callee_profile.place,
-            ),
+        let Some(text) = Self::opening_dialogue(caller) else {
+            return Ok(Vec::new());
         };
         let samples =
-            with_persistent_pocket_tts(|tts| tts.synthesize(&caller_profile.voice_id, &text))?;
+            with_persistent_pocket_tts(|tts| tts.synthesize(&caller_profile.voice_id, text))?;
         if samples.is_empty() {
             return Err(VoiceError::new(
                 "tts_empty_output",
@@ -1394,6 +1375,21 @@ impl Backend {
             ));
         }
         Ok(samples)
+    }
+
+    fn opening_dialogue(caller: u8) -> Option<&'static str> {
+        match caller {
+            stories::shapla_apartments::CALLER_LINE => {
+                Some(stories::shapla_apartments::OPENING_DIALOGUE)
+            }
+            stories::neel_university::NEEL_LINE => {
+                stories::neel_university::Beat::ProfessorRouting.opening_dialogue()
+            }
+            stories::neel_university::SHADHIN_LINE => {
+                stories::neel_university::Beat::ArnabDirectory.opening_dialogue()
+            }
+            _ => None,
+        }
     }
 
     fn finish_call(&mut self, index: usize, missed: bool) {

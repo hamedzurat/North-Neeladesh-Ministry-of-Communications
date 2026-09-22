@@ -1404,6 +1404,9 @@ fn pocket_tts_chunks(text: &str) -> Vec<String> {
             current.push(' ');
         }
         current.push_str(word);
+        if word.ends_with(['.', '!', '?']) {
+            chunks.push(std::mem::take(&mut current));
+        }
     }
     if !current.is_empty() {
         chunks.push(current);
