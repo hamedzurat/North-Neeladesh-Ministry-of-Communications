@@ -166,6 +166,8 @@ pub struct Backend {
     last_response: Option<StateMessage>,
     audio_queue: VecDeque<Vec<u8>>,
     audio_call: Option<(u8, u8)>,
+    audio_replay: Vec<Vec<u8>>,
+    audio_replay_call: Option<(u8, u8)>,
     audio_sequence: u16,
     audio_timestamp: u32,
     audio_tap_was_active: bool,
@@ -271,6 +273,8 @@ impl Backend {
             last_response: None,
             audio_queue: VecDeque::new(),
             audio_call: None,
+            audio_replay: Vec::new(),
+            audio_replay_call: None,
             audio_sequence: 0,
             audio_timestamp: 0,
             audio_tap_was_active: false,
@@ -487,6 +491,8 @@ impl Backend {
         self.next_call_arrival_elapsed_seconds = 0;
         self.audio_queue.clear();
         self.audio_call = None;
+        self.audio_replay.clear();
+        self.audio_replay_call = None;
         self.audio_sequence = 0;
         self.audio_timestamp = 0;
         self.audio_tap_was_active = false;
@@ -1333,11 +1339,9 @@ impl Backend {
         self.audio_call = Some((caller, callee));
         let sequence = self.audio_sequence;
         let timestamp = self.audio_timestamp;
+        let mut packets = Vec::new();
         for (index, chunk) in samples.chunks(VOICE_AUDIO_PACKET_SAMPLES).enumerate() {
-            if self.audio_queue.len() >= MAX_AUDIO_PACKETS {
-                self.audio_queue.pop_front();
-            }
-            self.audio_queue.push_back(
+            packets.push(
                 RtpL16Packet {
                     marker: index == 0,
                     sequence: sequence.wrapping_add(index as u16),
@@ -1347,6 +1351,14 @@ impl Backend {
                 }
                 .encode(),
             );
+        }
+        self.audio_replay = packets.clone();
+        self.audio_replay_call = Some((caller, callee));
+        for packet in packets {
+            if self.audio_queue.len() >= MAX_AUDIO_PACKETS {
+                self.audio_queue.pop_front();
+            }
+            self.audio_queue.push_back(packet);
         }
         self.audio_sequence =
             sequence.wrapping_add(samples.len().div_ceil(VOICE_AUDIO_PACKET_SAMPLES) as u16);
@@ -1467,6 +1479,8 @@ impl Backend {
         if self.audio_call == Some((call.caller, call.callee)) {
             self.audio_queue.clear();
             self.audio_call = None;
+            self.audio_replay.clear();
+            self.audio_replay_call = None;
         }
         self.resolved = self.resolved.saturating_add(1);
         if missed {
@@ -1494,6 +1508,10 @@ impl Backend {
                 ),
             );
             if self.neel_story_active() && call.caller == stories::neel_university::SHADHIN_LINE {
+                println!(
+                    "[TRANSITION] Neel beat {:?} -> Completed after call {} -> {}",
+                    self.neel_story_beat, call.caller, call.callee
+                );
                 self.neel_story_beat = stories::neel_university::Beat::Completed;
                 self.story_completed = !self.intertwined()
                     || (self.story_beat == stories::shapla_apartments::Beat::HappyFollowup
@@ -1511,6 +1529,10 @@ impl Backend {
                 }
             } else if self.neel_story_active() && call.caller == stories::neel_university::NEEL_LINE
             {
+                println!(
+                    "[TRANSITION] Neel beat {:?} -> ArnabDirectory after call {} -> {}",
+                    self.neel_story_beat, call.caller, call.callee
+                );
                 self.neel_story_beat = stories::neel_university::Beat::ArnabDirectory;
                 self.story_followup_pending = true;
             }
@@ -2783,19 +2805,24 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                 if !state.state.tap_bridge_audio_active {
                     state.audio_tap_was_active = false;
                 } else if !state.audio_tap_was_active {
-                    if let Some((caller, callee)) = state.audio_call
-                        && let Some(call) = state
-                            .calls
-                            .iter()
-                            .find(|call| (call.caller, call.callee) == (caller, callee))
-                        && let Some(connected_at) = call.connected_at
+                    if state.audio_queue.is_empty()
+                        && state.audio_call.is_some()
+                        && state.audio_replay_call == state.audio_call
                     {
-                        let packets_to_skip = connected_at.elapsed().as_millis() as usize
-                            / ((VOICE_AUDIO_PACKET_SAMPLES as u128) * 1000
-                                / u128::from(VOICE_AUDIO_SAMPLE_RATE))
-                                as usize;
-                        let skip = packets_to_skip.min(state.audio_queue.len());
-                        state.audio_queue.drain(..skip);
+                        println!(
+                            "[TRANSITION] tap replay call={:?} packets={}",
+                            state.audio_call,
+                            state.audio_replay.len()
+                        );
+                        let replay = state.audio_replay.clone();
+                        state.audio_queue.extend(replay);
+                    } else {
+                        println!(
+                            "[TRANSITION] tap active call={:?} queued_packets={} replay_packets={}",
+                            state.audio_call,
+                            state.audio_queue.len(),
+                            state.audio_replay.len()
+                        );
                     }
                     state.audio_tap_was_active = true;
                 }
