@@ -73,8 +73,20 @@
     function renderGraph(id,nodes,active) {
       const container=document.getElementById(id); const prefix=id.replace(/[^a-z]/gi,''); const activeIndex=nodes.indexOf(active); const names=nodes.map((node,index)=>`n${index}["${node}"]`).join('\n');
       const links=id==='shapla-graph'?'n0 --> n1\nn0 --> n2\nn0 --> n3':nodes.slice(1).map((_,index)=>`n${index} --> n${index+1}`).join('\n');
-      const classes=nodes.map((_,index)=>`class n${index} ${index===activeIndex?'active':(activeIndex>=0 && index<activeIndex?'done':'idle')};`).join('\n');
-      const diagram=`flowchart LR\n${names}\n${links}\nclassDef active fill:#ffd21f,stroke:#111,stroke-width:4px,color:#111;\nclassDef done fill:#58d68d,stroke:#111,stroke-width:2px,color:#111;\nclassDef idle fill:#ded8c7,stroke:#111,stroke-width:2px,color:#111;\n${classes}`;
+       const classes=nodes.map((_,index)=>`class n${index} ${index===activeIndex?'active':(activeIndex>=0 && index<activeIndex?'done':'idle')};`).join('\n');
+       const edgeCount=id==='shapla-graph'?3:nodes.length-1;
+       const edgeStyles=Array.from({length:edgeCount},(_,index)=>{
+         let color='#9b9b9b';
+         if(id==='shapla-graph') {
+           const target=[1,2,3][index];
+           color=target===activeIndex?'#ffd21f':(target<activeIndex?'#58d68d':'#9b9b9b');
+         } else {
+           const target=index+1;
+           color=target===activeIndex?'#ffd21f':(target<activeIndex?'#58d68d':'#9b9b9b');
+         }
+         return `linkStyle ${index} stroke:${color},stroke-width:3px;`;
+       }).join('\n');
+       const diagram=`flowchart LR\n${names}\n${links}\nclassDef active fill:#ffd21f,stroke:#111,stroke-width:4px,color:#111;\nclassDef done fill:#58d68d,stroke:#111,stroke-width:2px,color:#111;\nclassDef idle fill:#ded8c7,stroke:#111,stroke-width:2px,color:#111;\n${classes}\n${edgeStyles}`;
       container.innerHTML=`<div class="mermaid" id="${prefix}-diagram">${diagram}</div>`;
       if (window.mermaid) { window.mermaid.initialize({startOnLoad:false,theme:'base',securityLevel:'strict'}); window.mermaid.run({nodes:[document.getElementById(`${prefix}-diagram`)]}).catch(()=>renderGraphFallback(container,nodes,active,activeIndex)); } else renderGraphFallback(container,nodes,active,activeIndex);
     }
