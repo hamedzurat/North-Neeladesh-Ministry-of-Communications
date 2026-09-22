@@ -44,8 +44,8 @@ it while the systemd frontend service is active.
 From the repository root:
 
 ```sh
-PI_HOST=taki@192.168.1.34 ./scripts/deploy_cabinet_frontend.sh
-ssh taki@192.168.1.34 /home/taki/Desktop/cabinet-frontend/scripts/setup_cabinet_frontend_pi.sh
+PI_HOST=taki@192.168.1.34 BACKEND_HOST=192.168.1.8 \
+  ./scripts/deploy_cabinet_frontend.sh
 ```
 
 The setup script installs the locked project and its stable dependencies into
@@ -60,7 +60,7 @@ sudo systemctl start north-neeladesh-cabinet-frontend.service
 journalctl -u north-neeladesh-cabinet-frontend.service -f
 ```
 
-From the development machine, inspect both services on the Pi:
+From the development machine, inspect the frontend service on the Pi:
 
 ```sh
 ./scripts/status_pi.sh
@@ -69,14 +69,17 @@ From the development machine, inspect both services on the Pi:
 This connects to `taki@192.168.1.34` over SSH and runs `systemctl` there. Set
 `PI_HOST` to override the SSH target.
 
-The frontend defaults to the authoritative backend at `127.0.0.1:7878`. If the
-backend runs on the arcade host or laptop instead, pass its address during
-setup, for example:
+The frontend defaults to the authoritative backend at `127.0.0.1`. For a
+Wi-Fi/LAN backend, set one host value during setup. It configures game TCP on
+port `7878` and voice UDP on port `7879`:
 
 ```sh
 ssh taki@192.168.1.34 \
-  'NN_BACKEND_ADDRESS=192.168.1.8:7878 /home/taki/Desktop/cabinet-frontend/scripts/setup_cabinet_frontend_pi.sh'
+  'NN_BACKEND_HOST=192.168.1.8 /home/taki/Desktop/cabinet-frontend/scripts/setup_cabinet_frontend_pi.sh'
 ```
+
+Use `NN_BACKEND_ADDRESS=HOST:PORT` or `NN_VOICE_BACKEND_ADDRESS=HOST:PORT`
+only when overriding the default ports independently.
 
 ## Physical mapping
 

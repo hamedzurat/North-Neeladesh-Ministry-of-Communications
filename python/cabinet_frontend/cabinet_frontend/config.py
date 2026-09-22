@@ -97,7 +97,11 @@ class HardwareConfig:
 
     @classmethod
     def from_environment(cls) -> HardwareConfig:
-        address = os.environ.get("NN_BACKEND_ADDRESS", "127.0.0.1:7878")
+        backend_host = os.environ.get("NN_BACKEND_HOST")
+        address = os.environ.get(
+            "NN_BACKEND_ADDRESS",
+            f"{backend_host}:7878" if backend_host else "127.0.0.1:7878",
+        )
         host, port = parse_backend_address(address)
         return cls(
             backend_address=(host, port),

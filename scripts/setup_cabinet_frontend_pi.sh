@@ -8,6 +8,11 @@ SERVICE_NAME="north-neeladesh-cabinet-frontend"
 SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME.service"
 RULE_PATH="/etc/udev/rules.d/99-north-neeladesh-cabinet-leds.rules"
 BACKEND_ADDRESS="${NN_BACKEND_ADDRESS:-127.0.0.1:7878}"
+if [[ -n "${NN_BACKEND_HOST:-}" ]]; then
+    BACKEND_ADDRESS="${NN_BACKEND_ADDRESS:-$NN_BACKEND_HOST:7878}"
+fi
+BACKEND_HOST="${BACKEND_ADDRESS%:*}"
+VOICE_BACKEND_ADDRESS="${NN_VOICE_BACKEND_ADDRESS:-$BACKEND_HOST:7879}"
 
 if [[ ! -x "$VENV/bin/python" ]]; then
     printf 'Missing Python virtual environment: %s\n' "$VENV" >&2
@@ -57,7 +62,7 @@ User=$APP_USER
 SupplementaryGroups=gpio i2c spi audio
 WorkingDirectory=$APP_ROOT
 Environment=NN_BACKEND_ADDRESS=$BACKEND_ADDRESS
-Environment="NN_VOICE_BACKEND_ADDRESS=${NN_VOICE_BACKEND_ADDRESS:-127.0.0.1:7879}"
+Environment="NN_VOICE_BACKEND_ADDRESS=$VOICE_BACKEND_ADDRESS"
 Environment="NN_VOICE_CAPTURE_COMMAND=${NN_VOICE_CAPTURE_COMMAND:-}"
 Environment="NN_VOICE_PLAYBACK_COMMAND=${NN_VOICE_PLAYBACK_COMMAND:-}"
 Environment=PYTHONPATH=$APP_ROOT:/home/$APP_USER/Desktop

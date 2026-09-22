@@ -324,7 +324,10 @@ def run_embedded(stop: threading.Event) -> None:
     thread captures immediately when that control arrives. It is deliberately
     part of the frontend process rather than a separately launched daemon.
     """
-    address = os.environ.get("NN_VOICE_BACKEND_ADDRESS", "127.0.0.1:7879")
+    backend_host = os.environ.get("NN_BACKEND_HOST")
+    backend_address = os.environ.get("NN_BACKEND_ADDRESS")
+    default_host = backend_host or (backend_address.rsplit(":", 1)[0] if backend_address else "127.0.0.1")
+    address = os.environ.get("NN_VOICE_BACKEND_ADDRESS", f"{default_host}:7879")
     host, port_text = address.rsplit(":", 1)
     capture = os.environ.get("NN_VOICE_CAPTURE_COMMAND")
     playback = os.environ.get("NN_VOICE_PLAYBACK_COMMAND")

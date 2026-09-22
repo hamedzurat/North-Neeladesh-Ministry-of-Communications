@@ -199,15 +199,14 @@ just backend-debug address=0.0.0.0:7878 voice_address=0.0.0.0:7879
 
 # On the Pi, deploy the combined Python Cabinet Frontend bundle.
 export PI_HOST=taki@192.168.1.34
-./scripts/deploy_cabinet_frontend.sh
-ssh "$PI_HOST" \
-  'NN_BACKEND_ADDRESS=192.168.1.8:7878 NN_VOICE_BACKEND_ADDRESS=192.168.1.8:7879 /home/taki/Desktop/cabinet-frontend/scripts/setup_cabinet_frontend_pi.sh'
+BACKEND_HOST=192.168.1.8 ./scripts/deploy_cabinet_frontend.sh
 ```
 
-Replace `192.168.1.8` with the host's LAN address if it changes. Deploy and configure the
-Cabinet Frontend from [`python/cabinet_frontend/README.md`](python/cabinet_frontend/README.md),
-using `NN_BACKEND_ADDRESS=192.168.1.8:7878` and
-`NN_VOICE_BACKEND_ADDRESS=192.168.1.8:7879`. Start the installed services on the Pi:
+Replace `192.168.1.8` with the laptop's Wi-Fi/LAN address. The deploy script
+prints the exact Pi setup command; `NN_BACKEND_HOST` configures both game TCP
+(`7878`) and voice UDP (`7879`), so no second voice IP setting is needed. The
+backend must listen on LAN interfaces, not only localhost. Start the installed
+service on the Pi:
 
 ```sh
 sudo systemctl start north-neeladesh-cabinet-frontend.service

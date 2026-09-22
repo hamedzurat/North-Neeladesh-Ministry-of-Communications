@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PI_HOST="${PI_HOST:-taki@192.168.1.34}"
 REMOTE_ROOT="${REMOTE_ROOT:-/home/taki/Desktop/cabinet-frontend}"
+BACKEND_HOST="${BACKEND_HOST:-}"
 
 if ! command -v rsync >/dev/null 2>&1; then
     printf 'rsync is required for deployment.\n' >&2
@@ -26,4 +27,10 @@ rsync --archive --compress \
     "$PI_HOST:$REMOTE_ROOT/scripts/setup_cabinet_frontend_pi.sh"
 
 printf 'Copied cabinet frontend to %s:%s\n' "$PI_HOST" "$REMOTE_ROOT"
-printf 'Next: ssh %s %s/scripts/setup_cabinet_frontend_pi.sh\n' "$PI_HOST" "$REMOTE_ROOT"
+if [[ -n "$BACKEND_HOST" ]]; then
+    printf 'Next: ssh %s NN_BACKEND_HOST=%s %s/scripts/setup_cabinet_frontend_pi.sh\n' \
+        "$PI_HOST" "$BACKEND_HOST" "$REMOTE_ROOT"
+else
+    printf 'Next: ssh %s NN_BACKEND_HOST=<LAPTOP_WIFI_IP> %s/scripts/setup_cabinet_frontend_pi.sh\n' \
+        "$PI_HOST" "$REMOTE_ROOT"
+fi
