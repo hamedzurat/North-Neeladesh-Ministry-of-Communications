@@ -2683,11 +2683,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                     }
                     state.audio_tap_was_active = true;
                 }
-                let packets = if state.state.tap_bridge_audio_active {
-                    state.audio_queue.drain(..).collect::<Vec<_>>()
-                } else {
-                    Vec::new()
-                };
+                let packets = state.audio_queue.drain(..).collect::<Vec<_>>();
                 (packets, peer)
             })
             .unwrap_or_default();
