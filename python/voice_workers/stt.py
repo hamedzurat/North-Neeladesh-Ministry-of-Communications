@@ -8,7 +8,14 @@ import sys
 import tempfile
 import wave
 
-from .common import WHISPER_BINARY, WHISPER_MODEL, fail, recognition_prompt, worker_timeout
+from .common import (
+    WHISPER_BINARY,
+    WHISPER_MODEL,
+    fail,
+    normalize_transcript,
+    recognition_prompt,
+    worker_timeout,
+)
 
 SAMPLE_RATE = 16_000
 MAX_PCM_BYTES = SAMPLE_RATE * 2 * 60
@@ -69,7 +76,7 @@ def main() -> int:
         line = line.strip()
         if line and not line.startswith(("whisper_", "main:")):
             transcript_lines.append(line)
-    transcript = " ".join(transcript_lines).strip()
+    transcript = normalize_transcript(" ".join(transcript_lines).strip())
     if not transcript:
         fail("whisper.cpp returned an empty transcript")
     sys.stdout.write(transcript)

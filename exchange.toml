@@ -7,6 +7,16 @@ shift_duration_seconds = 90
 call_arrival_interval_seconds = 0
 story_seed = 1
 
+# Speech-recognition vocabulary and common Whisper substitutions.
+voice_vocabulary = [
+    "Shapla Apartments",
+    "Neel University",
+    "Shadhin Housing",
+    "Meghna Abashon",
+    "Padma Nibash",
+]
+voice_aliases = { "shop lab admins" = "Shapla Apartments", "shop lab apartments" = "Shapla Apartments", "shapla apartments" = "Shapla Apartments" }
+
 dialogue_prompt_template = '''You are a configured subscriber in a telephone exchange.
 Generate only the subscriber's next spoken reply to the Exchange Operator.
 Use only the supplied Response Context. Do not invent facts, actions, routing, events, authority, or world state.

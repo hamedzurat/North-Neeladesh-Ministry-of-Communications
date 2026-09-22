@@ -1,5 +1,6 @@
 import math
 import os
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -52,14 +53,19 @@ def dialogue_prompt_template() -> str:
 
 
 def recognition_prompt() -> str:
-    """Return configured names and places as Whisper's initial vocabulary."""
+    """Return configured names, places, and speech vocabulary for Whisper."""
     path = Path(os.environ.get("NN_EXCHANGE_CONFIG", Path(__file__).resolve().parents[2] / "exchange.toml"))
     try:
         with path.open("rb") as config_file:
-            subscribers = tomllib.load(config_file).get("subscribers", [])
+            config = tomllib.load(config_file)
+            subscribers = config.get("subscribers", [])
+            vocabulary = config.get("voice_vocabulary", [])
     except (OSError, tomllib.TOMLDecodeError):
         return ""
     terms: list[str] = []
+    for value in vocabulary:
+        if isinstance(value, str) and value.strip() and value not in terms:
+            terms.append(value.strip())
     for subscriber in subscribers:
         if not isinstance(subscriber, dict):
             continue
@@ -68,6 +74,25 @@ def recognition_prompt() -> str:
             if isinstance(value, str) and value.strip() and value not in terms:
                 terms.append(value.strip())
     return ", ".join(terms)
+
+
+def normalize_transcript(transcript: str) -> str:
+    """Apply configured, deterministic corrections to known Whisper aliases."""
+    path = Path(os.environ.get("NN_EXCHANGE_CONFIG", Path(__file__).resolve().parents[2] / "exchange.toml"))
+    try:
+        with path.open("rb") as config_file:
+            aliases = tomllib.load(config_file).get("voice_aliases", {})
+    except (OSError, tomllib.TOMLDecodeError):
+        return transcript
+    if not isinstance(aliases, dict):
+        return transcript
+    result = transcript
+    for alias, canonical in sorted(aliases.items(), key=lambda item: len(str(item[0])), reverse=True):
+        if not isinstance(alias, str) or not isinstance(canonical, str):
+            continue
+        pattern = r"(?<!\w)" + re.escape(alias) + r"(?!\w)"
+        result = re.sub(pattern, canonical, result, flags=re.IGNORECASE)
+    return result
 
 
 def fail(message: str) -> NoReturn:
