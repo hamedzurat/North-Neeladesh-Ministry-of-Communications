@@ -12,7 +12,6 @@ from .common import (
     WHISPER_BINARY,
     WHISPER_MODEL,
     fail,
-    normalize_transcript,
     recognition_prompt,
     worker_timeout,
 )
@@ -76,7 +75,7 @@ def main() -> int:
         line = line.strip()
         if line and not line.startswith(("whisper_", "main:")):
             transcript_lines.append(line)
-    transcript = normalize_transcript(" ".join(transcript_lines).strip())
+    transcript = " ".join(transcript_lines).strip()
     if not transcript:
         fail("whisper.cpp returned an empty transcript")
     sys.stdout.write(transcript)

@@ -1,6 +1,5 @@
 import math
 import os
-import re
 import sys
 import tomllib
 from pathlib import Path
@@ -71,28 +70,14 @@ def recognition_prompt() -> str:
             continue
         for key in ("place", "name"):
             value = subscriber.get(key)
-            if isinstance(value, str) and value.strip() and value not in terms:
-                terms.append(value.strip())
+            if not isinstance(value, str) or not value.strip():
+                continue
+            value = value.strip()
+            if value.upper().startswith(("LINE ", "SUBSCRIBER ")):
+                continue
+            if value.casefold() not in {term.casefold() for term in terms}:
+                terms.append(value)
     return ", ".join(terms)
-
-
-def normalize_transcript(transcript: str) -> str:
-    """Apply configured, deterministic corrections to known Whisper aliases."""
-    path = Path(os.environ.get("NN_EXCHANGE_CONFIG", Path(__file__).resolve().parents[2] / "exchange.toml"))
-    try:
-        with path.open("rb") as config_file:
-            aliases = tomllib.load(config_file).get("voice_aliases", {})
-    except (OSError, tomllib.TOMLDecodeError):
-        return transcript
-    if not isinstance(aliases, dict):
-        return transcript
-    result = transcript
-    for alias, canonical in sorted(aliases.items(), key=lambda item: len(str(item[0])), reverse=True):
-        if not isinstance(alias, str) or not isinstance(canonical, str):
-            continue
-        pattern = r"(?<!\w)" + re.escape(alias) + r"(?!\w)"
-        result = re.sub(pattern, canonical, result, flags=re.IGNORECASE)
-    return result
 
 
 def fail(message: str) -> NoReturn:

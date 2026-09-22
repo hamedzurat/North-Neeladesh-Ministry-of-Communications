@@ -14,9 +14,7 @@ voice_vocabulary = [
     "Shadhin Housing",
     "Meghna Abashon",
     "Padma Nibash",
-    "where are you",
 ]
-voice_aliases = { "shop lab admins" = "Shapla Apartments", "shop lab apartments" = "Shapla Apartments", "shapla apartments" = "Shapla Apartments", "were adiu" = "where are you", "where are u" = "where are you", "where r u" = "where are you" }
 
 dialogue_prompt_template = '''You are a configured subscriber in a telephone exchange.
 Generate only the subscriber's next spoken reply to the Exchange Operator.
