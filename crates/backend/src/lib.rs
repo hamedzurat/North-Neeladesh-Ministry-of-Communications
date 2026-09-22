@@ -11,15 +11,16 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 
 use exchange_protocol::{
-    CallPhase, CallStatus, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION, DebugActiveCall,
-    DebugCallRecord, DebugCommand, DebugCounters, DebugFrontendState, DebugRequest, DebugResponse,
-    DebugRunState, DebugSnapshot, DebugSubscriberState, DebugVoiceConversation, FrameError,
-    GamePhase, HeldControls, InputMessage, InputState, OutputDebug, PROTOCOL_VERSION, PortId,
-    PrinterEntry, ProtocolError, RtpL16Packet, ShiftPhase, ShiftStatus, StateMessage, StateOutput,
-    TEXT_PROTOCOL_VERSION, TapBridgeMonitoring, TextInputMessage, TextResponseMessage, TextStatus,
-    TuningState, VOICE_AUDIO_PACKET_SAMPLES, VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION,
-    VoiceControl, VoiceControlMessage, VoiceStatus, VoiceStatusMessage, decode_voice_input_audio,
-    decode_voice_status, encode_voice_control, encode_voice_status, read_frame, write_frame,
+    BackendDiagnostic, CallPhase, CallStatus, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION,
+    DebugActiveCall, DebugCallRecord, DebugCommand, DebugCounters, DebugFrontendState,
+    DebugRequest, DebugResponse, DebugRunState, DebugSnapshot, DebugSubscriberState,
+    DebugVoiceConversation, FrameError, GamePhase, HeldControls, InputMessage, InputState,
+    OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, RtpL16Packet, ShiftPhase,
+    ShiftStatus, StateMessage, StateOutput, TEXT_PROTOCOL_VERSION, TapBridgeMonitoring,
+    TextInputMessage, TextResponseMessage, TextStatus, TuningState, VOICE_AUDIO_PACKET_SAMPLES,
+    VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl, VoiceControlMessage,
+    VoiceStatus, VoiceStatusMessage, decode_voice_input_audio, decode_voice_status,
+    encode_voice_control, encode_voice_status, read_frame, write_frame,
 };
 #[allow(dead_code)]
 mod voice_workers;
@@ -1362,10 +1363,28 @@ impl Backend {
                 }
             }
         }
-        let text = format!(
-            "{}: Please connect me to {}. {}: I am at {}.",
-            caller_profile.name, callee_profile.place, callee_profile.name, callee_profile.place,
-        );
+        let text = match caller {
+            stories::shapla_apartments::CALLER_LINE => {
+                stories::shapla_apartments::OPENING_DIALOGUE.to_string()
+            }
+            stories::neel_university::NEEL_LINE => stories::neel_university::Beat::ProfessorRouting
+                .opening_dialogue()
+                .unwrap_or("")
+                .to_string(),
+            stories::neel_university::SHADHIN_LINE => {
+                stories::neel_university::Beat::ArnabDirectory
+                    .opening_dialogue()
+                    .unwrap_or("")
+                    .to_string()
+            }
+            _ => format!(
+                "{}: Please connect me to {}. {}: I am at {}.",
+                caller_profile.name,
+                callee_profile.place,
+                callee_profile.name,
+                callee_profile.place,
+            ),
+        };
         let samples =
             with_persistent_pocket_tts(|tts| tts.synthesize(&caller_profile.voice_id, &text))?;
         if samples.is_empty() {
@@ -1476,7 +1495,11 @@ impl Backend {
         );
     }
 
-    fn fail_generated_call(&mut self, caller: u8, callee: u8) {
+    fn fail_generated_call(&mut self, caller: u8, callee: u8, error: &VoiceError) {
+        self.state.debug.messages.push(BackendDiagnostic {
+            code: error.code.clone(),
+            message: format!("opening audio {caller}->{callee}: {}", error.message),
+        });
         if let Some(index) = self
             .calls
             .iter()
@@ -2947,12 +2970,17 @@ pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) ->
             let worker_backend = Arc::clone(&backend);
             let call_config = config.clone();
             thread::spawn(move || {
-                if let Ok(samples) = Backend::generate_call_audio(call_config, caller, callee) {
-                    if let Ok(mut state) = worker_backend.lock() {
-                        state.install_generated_audio(caller, callee, samples);
+                match Backend::generate_call_audio(call_config, caller, callee) {
+                    Ok(samples) => {
+                        if let Ok(mut state) = worker_backend.lock() {
+                            state.install_generated_audio(caller, callee, samples);
+                        }
                     }
-                } else if let Ok(mut state) = worker_backend.lock() {
-                    state.fail_generated_call(caller, callee);
+                    Err(error) => {
+                        if let Ok(mut state) = worker_backend.lock() {
+                            state.fail_generated_call(caller, callee, &error);
+                        }
+                    }
                 }
             });
         }
