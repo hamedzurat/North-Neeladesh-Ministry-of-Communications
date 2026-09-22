@@ -20,6 +20,7 @@ VOICE_INPUT_SAMPLE_RATE :: 16000
 VOICE_INPUT_PACKET_SAMPLES :: 320
 VOICE_AUDIO_SAMPLE_RATE :: 24000
 VOICE_AUDIO_PACKET_SAMPLES :: 480
+VOICE_PLAYBACK_BUFFER_SAMPLES :: VOICE_AUDIO_PACKET_SAMPLES * 4
 VOICE_AUDIO_PAYLOAD_TYPE :: u8(96)
 VOICE_AUDIO_SSRC :: u32(0x4e45_5554)
 VOICE_MAX_CAPTURE_SAMPLES :: VOICE_INPUT_SAMPLE_RATE * 15
@@ -59,7 +60,7 @@ voice_start :: proc(app: ^Input_State) {
 	voice_send_status(&app.voice, "ready")
 	app.voice.last_ready_at = 0
 	if rl.IsAudioDeviceReady() {
-		rl.SetAudioStreamBufferSizeDefault(VOICE_AUDIO_PACKET_SAMPLES)
+		rl.SetAudioStreamBufferSizeDefault(VOICE_PLAYBACK_BUFFER_SAMPLES)
 		app.voice.playback_stream = rl.LoadAudioStream(VOICE_AUDIO_SAMPLE_RATE, 16, 1)
 		app.voice.playback_ready = rl.IsAudioStreamValid(app.voice.playback_stream)
 		if app.voice.playback_ready {
@@ -302,21 +303,21 @@ voice_handle_rtp :: proc(voice: ^Voice_State, packet: []byte) {
 voice_update_playback :: proc(app: ^Input_State) {
 	voice := &app.voice
 	if !voice.playback_ready do return
-	if len(voice.playback_queue) < VOICE_AUDIO_PACKET_SAMPLES {
+	if len(voice.playback_queue) < VOICE_PLAYBACK_BUFFER_SAMPLES {
 		if !voice.playback_finishing || len(voice.playback_queue) == 0 || !rl.IsAudioStreamProcessed(voice.playback_stream) do return
-		pad := make([dynamic]i16, VOICE_AUDIO_PACKET_SAMPLES)
+		pad := make([dynamic]i16, VOICE_PLAYBACK_BUFFER_SAMPLES)
 		copy(pad[:], voice.playback_queue[:])
-		rl.UpdateAudioStream(voice.playback_stream, rawptr(&pad[0]), VOICE_AUDIO_PACKET_SAMPLES)
+		rl.UpdateAudioStream(voice.playback_stream, rawptr(&pad[0]), VOICE_PLAYBACK_BUFFER_SAMPLES)
 		delete(pad)
 		resize(&voice.playback_queue, 0)
 		voice.playback_finishing = false
 		return
 	}
 	if !rl.IsAudioStreamProcessed(voice.playback_stream) do return
-	chunk := voice.playback_queue[:VOICE_AUDIO_PACKET_SAMPLES]
-	rl.UpdateAudioStream(voice.playback_stream, rawptr(&chunk[0]), VOICE_AUDIO_PACKET_SAMPLES)
-	copy(voice.playback_queue[:], voice.playback_queue[VOICE_AUDIO_PACKET_SAMPLES:])
-	resize(&voice.playback_queue, len(voice.playback_queue) - VOICE_AUDIO_PACKET_SAMPLES)
+	chunk := voice.playback_queue[:VOICE_PLAYBACK_BUFFER_SAMPLES]
+	rl.UpdateAudioStream(voice.playback_stream, rawptr(&chunk[0]), VOICE_PLAYBACK_BUFFER_SAMPLES)
+	copy(voice.playback_queue[:], voice.playback_queue[VOICE_PLAYBACK_BUFFER_SAMPLES:])
+	resize(&voice.playback_queue, len(voice.playback_queue) - VOICE_PLAYBACK_BUFFER_SAMPLES)
 }
 
 voice_finish_playback :: proc(voice: ^Voice_State) {
