@@ -32,6 +32,32 @@ class Spy:
 
 
 class OutputMapperTests(unittest.TestCase):
+    def test_logs_all_authoritative_active_calls_when_the_queue_changes(self) -> None:
+        components = [Spy() for _ in range(4)]
+        messages: list[str] = []
+        mapper = OutputMapper(*components, status_sink=messages.append)
+        output = {
+            "line_lamps": [],
+            "clock": {"elapsed_seconds": 0},
+            "calls": [
+                {"caller_line": 1, "requested_callee_line": 0, "phase": "Waiting"},
+                {"caller_line": 2, "requested_callee_line": 3, "phase": "OperatorSession"},
+            ],
+            "service_call": None,
+        }
+
+        mapper.apply(output)
+        mapper.apply(output)
+        mapper.apply({**output, "calls": []})
+
+        self.assertEqual(
+            messages,
+            [
+                "CALLS // LINE 1 -> LINE 0 (Waiting), LINE 2 -> LINE 3 (OperatorSession)",
+                "CALLS // none",
+            ],
+        )
+
     def test_applies_state_and_does_not_repeat_static_output(self) -> None:
         components = [Spy() for _ in range(4)]
         mapper = OutputMapper(*components)

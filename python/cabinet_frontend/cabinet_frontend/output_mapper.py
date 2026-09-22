@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from functools import partial
 from typing import Any
 
@@ -17,6 +18,7 @@ class OutputMapper:
         line_lamp_count: int = 12,
         epaper_page_interval: float = 8.0,
         clock: Any = time.monotonic,
+        status_sink: Callable[[str], None] = print,
     ) -> None:
         self.line_lamps = line_lamps
         self.seven_segment = seven_segment
@@ -32,6 +34,9 @@ class OutputMapper:
         self._next_page_at = 0.0
         self._seen_printer_entries: set[int] = set()
         self._last_run_generation: int | None = None
+        self._last_calls: tuple[tuple[int, int, str], ...] | None = None
+        self._last_service: tuple[str, str] | None = None
+        self.status_sink = status_sink
         self.faults: list[str] = []
 
     def apply(self, output: dict[str, Any], now: float | None = None) -> None:
@@ -69,7 +74,10 @@ class OutputMapper:
         run_generation = int(output.get("run_generation", 0))
         if self._last_run_generation is not None and run_generation != self._last_run_generation:
             self._seen_printer_entries.clear()
+            self._last_calls = None
+            self._last_service = None
         self._last_run_generation = run_generation
+        self._log_authoritative_activity(output)
         printer_entries = output.get("printer_output", [])
         for entry in printer_entries:
             entry_id = int(entry.get("entry_id", -1))
@@ -78,6 +86,38 @@ class OutputMapper:
                 "printer", partial(self.printer.write, printer_text)
             ):
                 self._seen_printer_entries.add(entry_id)
+
+    def _log_authoritative_activity(self, output: dict[str, Any]) -> None:
+        if "calls" not in output and "service_call" not in output:
+            return
+        calls = tuple(
+            (
+                int(call.get("caller_line", -1)),
+                int(call.get("requested_callee_line", -1)),
+                str(call.get("phase", "")),
+            )
+            for call in output.get("calls", [])
+            if isinstance(call, dict)
+        )
+        if calls != self._last_calls:
+            self._last_calls = calls
+            if calls:
+                rendered = ", ".join(
+                    f"LINE {caller} -> LINE {callee} ({phase})"
+                    for caller, callee, phase in calls
+                )
+                self.status_sink(f"CALLS // {rendered}")
+            else:
+                self.status_sink("CALLS // none")
+
+        service = output.get("service_call")
+        service_state = None
+        if isinstance(service, dict):
+            service_state = (str(service.get("service", "")), str(service.get("phase", "")))
+        if service_state != self._last_service:
+            self._last_service = service_state
+            if service_state is not None:
+                self.status_sink(f"SERVICE // {service_state[0]} {service_state[1]}")
 
     def _try(self, name: str, operation: Any) -> bool:
         try:

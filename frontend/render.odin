@@ -48,6 +48,13 @@ ref_draw_lamp :: proc(position: rl.Vector2, lit := false) {
 	if lit do rl.DrawCircleLines(i32(position.x), i32(position.y), 13, rl.Color{244, 188, 67, 120})
 }
 
+ref_call_for_line :: proc(app: ^Input_State, line: int) -> Maybe(Call) {
+	for call in app.backend_output.calls {
+		if int(call.caller_line) == line do return call
+	}
+	return nil
+}
+
 ref_draw_subscriber_lines :: proc(app: ^Input_State, jacks: ^[ENDPOINT_COUNT]rl.Vector2) {
 	area := ref_rect(20, 20, 900, 490)
 	ref_panel(area)
@@ -68,6 +75,10 @@ ref_draw_subscriber_lines :: proc(app: ^Input_State, jacks: ^[ENDPOINT_COUNT]rl.
 		lamp_position := ref_point(cell.x + cell.width / 2, cell.y + 99)
 		jack_position := ref_point(cell.x + cell.width / 2, cell.y + 170)
 		ref_draw_lamp(lamp_position, app.backend_output.line_lamps[index])
+		if call, ok := ref_call_for_line(app, index).?; ok {
+			ref_text(fmt.tprintf("%d -> %d", call.caller_line, call.requested_callee_line), cell.x + 12, cell.y + 121, 9, BLUE)
+			ref_text(call.phase, cell.x + 12, cell.y + 137, 8, MUTED)
+		}
 		ref_draw_jack(jack_position)
 		jacks[index] = jack_position
 	}
