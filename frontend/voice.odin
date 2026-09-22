@@ -173,6 +173,7 @@ voice_start_capture :: proc(voice: ^Voice_State) {
 
 voice_release_capture :: proc(voice: ^Voice_State) {
 	if !voice.capturing {
+		voice_send_input_audio(voice, nil)
 		voice_send_status(voice, "ready")
 		return
 	}

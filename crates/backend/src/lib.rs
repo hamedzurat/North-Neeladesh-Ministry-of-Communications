@@ -2521,6 +2521,39 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                 return;
                             }
                         };
+                        if transcript.trim().is_empty() {
+                            let completed = VoiceStatusMessage {
+                                protocol_version: VOICE_PROTOCOL_VERSION,
+                                session_id: input.session_id,
+                                turn_id: input.turn_id,
+                                state_revision: input.state_revision,
+                                status: VoiceStatus::Completed,
+                                transcript: None,
+                                response_text: None,
+                                error: None,
+                            };
+                            if let Ok(mut state) = worker_backend.lock() {
+                                state.voice_status = Some(VoiceStatus::Completed);
+                                state.voice_speaker_active = false;
+                                let finished_elapsed_seconds = state.elapsed_seconds();
+                                if let Some(id) = conversation_id {
+                                    if let Some(conversation) = state
+                                        .voice_conversations
+                                        .iter_mut()
+                                        .find(|conversation| conversation.id == id)
+                                    {
+                                        conversation.status = Some(VoiceStatus::Completed);
+                                        conversation.finished_elapsed_seconds =
+                                            Some(finished_elapsed_seconds);
+                                        conversation.transcript = None;
+                                    }
+                                }
+                            }
+                            if let Ok(datagram) = encode_voice_status(&completed) {
+                                let _ = worker_socket.send_to(&datagram, address);
+                            }
+                            return;
+                        }
                         if voice_turn_cancelled(&worker_backend, input.turn_id) {
                             return;
                         }
@@ -2674,6 +2707,9 @@ fn generate_operator_response(
     service_turn: bool,
     transcript_sink: &dyn Fn(&str),
 ) -> Result<(String, String, Vec<i16>), VoiceError> {
+    if samples.is_empty() {
+        return Ok((String::new(), String::new(), Vec::new()));
+    }
     let stt_command =
         CommandSpec::from_words(&env::var("NN_VOICE_STT_COMMAND").map_err(|_| {
             VoiceError::new(

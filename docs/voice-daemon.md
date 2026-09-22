@@ -12,8 +12,9 @@ The daemon never advances Routing state. The backend remains the sole authority.
 
 ## Worker contracts
 
-The Odin relay is compiled into `./frontend`; the Python relay is
-`cabinet_frontend.voice_relay` for Raspberry Pi hardware. Neither relay loads
+The Odin relay is compiled into `./frontend`; the Python relay runs as an
+embedded `cabinet_frontend.voice_relay` thread inside the Raspberry Pi
+frontend. Neither relay loads
 STT, dialogue, or PocketTTS and neither decides a Routing transition. The
 backend configures those workers and remains authoritative. The relay reports
 capture/playback failures as typed voice status messages and stays alive so the

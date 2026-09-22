@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -13,6 +14,7 @@ from .input_mapper import InputSource, PhysicalInputSource
 from .output_mapper import OutputMapper
 from .protocol import BackendClient
 from .state import input_message
+from .voice_relay import run_embedded
 
 
 class HardwareFrontend:
@@ -108,15 +110,28 @@ def run_forever(
     while True:
         client = None
         frontend = None
+        voice_stop: threading.Event | None = None
+        voice_thread: threading.Thread | None = None
         try:
             client = factory()
             print("CABINET FRONTEND // backend connected", flush=True)
+            voice_stop = threading.Event()
+            voice_thread = threading.Thread(
+                target=run_embedded,
+                args=(voice_stop,),
+                name="cabinet-voice-relay",
+                daemon=True,
+            )
+            voice_thread.start()
             frontend = create_frontend(config, client)
             while True:
                 frontend.step()
                 # Sample physical controls faster than the normal backend cadence.
                 sleep(min(config.poll_interval, 0.02))
         except KeyboardInterrupt:
+            if voice_stop is not None and voice_thread is not None:
+                voice_stop.set()
+                voice_thread.join(timeout=2.0)
             if frontend is not None:
                 frontend.close()
             elif client is not None:
@@ -124,6 +139,9 @@ def run_forever(
             return
         except Exception as error:  # noqa: BLE001 - restart after any device/transport failure
             print(f"CABINET FRONTEND OFFLINE // {error}", flush=True)
+            if voice_stop is not None and voice_thread is not None:
+                voice_stop.set()
+                voice_thread.join(timeout=2.0)
             if frontend is not None:
                 frontend.close()
             elif client is not None:

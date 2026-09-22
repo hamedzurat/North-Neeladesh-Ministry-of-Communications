@@ -204,6 +204,7 @@ class VoiceRelay:
         self.turn_id = 1
         self.state_revision = 0
         self.last_sequence: int | None = None
+        self.closed = False
 
     def send_status(
         self,
@@ -263,7 +264,14 @@ class VoiceRelay:
                 self.capture.start()
                 self.send_status("listening")
             elif control == "release_ptt":
-                samples = self.capture.finish()
+                try:
+                    samples = self.capture.finish()
+                except RuntimeError as error:
+                    # A very short tap can race the start edge. Treat the
+                    # unmatched release as an empty turn, not a device fault.
+                    if "not started" not in str(error).lower():
+                        raise
+                    samples = []
                 self.send_input_audio(samples)
             elif control == "cancel":
                 self.capture.cancel()
@@ -292,18 +300,52 @@ class VoiceRelay:
             self.last_sequence = sequence
             self.playback.write(samples)
 
-    def run(self) -> None:
+    def run(self, stop: threading.Event | None = None) -> None:
         self.send_status("ready")
-        while True:
+        while not self.closed and not (stop is not None and stop.is_set()):
             try:
                 self.handle_datagram(self.connection.recv(65_535))
             except TimeoutError:
-                self.send_status("ready")
+                if not self.closed and not (stop is not None and stop.is_set()):
+                    self.send_status("ready")
 
     def close(self) -> None:
+        self.closed = True
         self.capture.cancel()
         self.playback.finish()
         self.connection.close()
+
+
+def run_embedded(stop: threading.Event) -> None:
+    """Run the audio edge inside the Cabinet Frontend process.
+
+    The game input loop remains the source of truth for PTT, Police, and EMS.
+    The backend turns those held-control edges into UDP controls, and this
+    thread captures immediately when that control arrives. It is deliberately
+    part of the frontend process rather than a separately launched daemon.
+    """
+    address = os.environ.get("NN_VOICE_BACKEND_ADDRESS", "127.0.0.1:7879")
+    host, port_text = address.rsplit(":", 1)
+    capture = os.environ.get("NN_VOICE_CAPTURE_COMMAND")
+    playback = os.environ.get("NN_VOICE_PLAYBACK_COMMAND")
+    while not stop.is_set():
+        connection: socket.socket | None = None
+        relay: VoiceRelay | None = None
+        try:
+            connection = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            connection.connect((host, int(port_text)))
+            connection.settimeout(5.0)
+            relay = VoiceRelay(connection, AlsaCapture(capture), AlsaPlayback(playback))
+            relay.run(stop)
+        except Exception as error:  # noqa: BLE001 - keep hardware frontend alive
+            if not stop.is_set():
+                print(f"CABINET VOICE OFFLINE // {error}", flush=True)
+        finally:
+            if relay is not None:
+                relay.close()
+            elif connection is not None:
+                connection.close()
+        stop.wait(1.0)
 
 
 def run_forever() -> None:

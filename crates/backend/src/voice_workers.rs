@@ -403,14 +403,22 @@ impl OperatorSession {
             Ok(samples) => samples,
             Err(error) => return self.fail(error),
         };
+        if samples.is_empty() {
+            self.phase = SessionPhase::Completed;
+            self.emit(VoiceStatus::Completed, None, None, None)?;
+            return Ok(SubscriberResponse {
+                dialogue: String::new(),
+            });
+        }
         self.emit(VoiceStatus::Transcribing, None, None, None)?;
         let transcript = match self.stt.transcribe(&samples) {
             Ok(transcript) if !transcript.trim().is_empty() => transcript,
             Ok(_) => {
-                return self.fail(VoiceError::new(
-                    "empty_transcript",
-                    "speech recognition returned no transcript",
-                ));
+                self.phase = SessionPhase::Completed;
+                self.emit(VoiceStatus::Completed, None, None, None)?;
+                return Ok(SubscriberResponse {
+                    dialogue: String::new(),
+                });
             }
             Err(error) => return self.fail(error),
         };
@@ -2244,6 +2252,18 @@ mod tests {
         }
     }
 
+    struct EmptyCapture;
+
+    impl MicrophoneCapture for EmptyCapture {
+        fn start(&mut self) -> Result<(), VoiceError> {
+            Ok(())
+        }
+
+        fn finish(&mut self) -> Result<Vec<i16>, VoiceError> {
+            Ok(Vec::new())
+        }
+    }
+
     struct FakeStt;
     impl SpeechToText for FakeStt {
         fn transcribe(&mut self, samples: &[i16]) -> Result<String, VoiceError> {
@@ -2371,6 +2391,27 @@ mod tests {
             VoiceStatus::Completed
         );
         assert_eq!(output.statuses.last().unwrap().turn_id, 2);
+    }
+
+    #[test]
+    fn empty_ptt_release_is_a_quiet_completed_turn() {
+        let mut session = OperatorSession::new(
+            9,
+            14,
+            context(),
+            Box::new(EmptyCapture),
+            Box::new(FakeStt),
+            Box::new(FakeDialogue),
+            Box::new(FakeTts),
+            Box::new(FakeOutput::default()),
+        )
+        .unwrap();
+
+        session.start_ptt().unwrap();
+        let response = session.release_ptt().unwrap();
+
+        assert_eq!(response.dialogue, "");
+        assert_eq!(session.phase(), SessionPhase::Completed);
     }
 
     #[test]

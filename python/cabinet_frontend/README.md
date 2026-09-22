@@ -13,10 +13,9 @@ uv run --directory python/cabinet_frontend \
 
 ## Voice relay
 
-The Pi voice relay is now implemented in `cabinet_frontend.voice_relay`. It uses
-the same Python deployment as the cabinet frontend; no Rust toolchain or voice
-daemon binary is required on the Pi. The setup script installs the relay as
-`north-neeladesh-voice-relay.service` alongside the cabinet service.
+The Pi voice relay is implemented in `cabinet_frontend.voice_relay` and runs
+inside the cabinet frontend process; no Rust toolchain, voice daemon binary, or
+second service is required on the Pi.
 
 The relay remains wire-compatible with the backend: tagged CBOR over connected
 UDP for control, status, and 16 kHz input PCM, plus RTP/L16 at 24 kHz for
@@ -103,4 +102,4 @@ The rotary mapper arms `ring_line` after one full rotation (16 detents),
 matching the current encoder calibration. The line must remain connected to
 the Ring Generator; the backend remains responsible for accepting the ring.
 All physical pin values are defined in `cabinet_frontend/config.py`. Audio
-transport runs through the bundled Python `cabinet_frontend.voice_relay` service.
+transport runs through the embedded Python `cabinet_frontend.voice_relay` thread.

@@ -6,8 +6,6 @@ APP_ROOT="${NN_CABINET_ROOT:-/home/$APP_USER/Desktop/cabinet-frontend}"
 VENV="${NN_HARDWARE_VENV:-/home/$APP_USER/venv}"
 SERVICE_NAME="north-neeladesh-cabinet-frontend"
 SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME.service"
-VOICE_SERVICE_NAME="north-neeladesh-voice-relay"
-VOICE_SERVICE_PATH="/etc/systemd/system/$VOICE_SERVICE_NAME.service"
 RULE_PATH="/etc/udev/rules.d/99-north-neeladesh-cabinet-leds.rules"
 BACKEND_ADDRESS="${NN_BACKEND_ADDRESS:-127.0.0.1:7878}"
 
@@ -56,9 +54,12 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$APP_USER
-SupplementaryGroups=gpio i2c spi
+SupplementaryGroups=gpio i2c spi audio
 WorkingDirectory=$APP_ROOT
 Environment=NN_BACKEND_ADDRESS=$BACKEND_ADDRESS
+Environment="NN_VOICE_BACKEND_ADDRESS=${NN_VOICE_BACKEND_ADDRESS:-127.0.0.1:7879}"
+Environment="NN_VOICE_CAPTURE_COMMAND=${NN_VOICE_CAPTURE_COMMAND:-}"
+Environment="NN_VOICE_PLAYBACK_COMMAND=${NN_VOICE_PLAYBACK_COMMAND:-}"
 Environment=PYTHONPATH=$APP_ROOT:/home/$APP_USER/Desktop
 ExecStart=$VENV/bin/python -m cabinet_frontend
 Restart=on-failure
@@ -68,37 +69,14 @@ RestartSec=2
 WantedBy=multi-user.target
 SERVICE
 
-sudo tee "$VOICE_SERVICE_PATH" >/dev/null <<SERVICE
-[Unit]
-Description=North Neeladesh Python Voice Relay
-After=network-online.target sound.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=$APP_USER
-SupplementaryGroups=audio
-WorkingDirectory=$APP_ROOT
-Environment="NN_VOICE_BACKEND_ADDRESS=${NN_VOICE_BACKEND_ADDRESS:-127.0.0.1:7879}"
-Environment="NN_VOICE_CAPTURE_COMMAND=${NN_VOICE_CAPTURE_COMMAND:-}"
-Environment="NN_VOICE_PLAYBACK_COMMAND=${NN_VOICE_PLAYBACK_COMMAND:-}"
-ExecStart=$VENV/bin/python -m cabinet_frontend.voice_relay
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
 sudo systemctl daemon-reload
 sudo systemctl disable --now north-neeladesh-voice-daemon.service 2>/dev/null || true
+sudo systemctl disable --now north-neeladesh-voice-relay.service 2>/dev/null || true
 sudo systemctl enable "$SERVICE_NAME.service"
-sudo systemctl enable "$VOICE_SERVICE_NAME.service"
 
 printf '\nInstalled %s.service.\n' "$SERVICE_NAME"
 printf 'The service is enabled but not started.\n'
 printf 'Start: sudo systemctl start %s.service\n' "$SERVICE_NAME"
 printf 'Logs:  journalctl -u %s.service -f\n' "$SERVICE_NAME"
-printf 'Voice relay: sudo systemctl start %s.service\n' "$VOICE_SERVICE_NAME"
-printf 'Voice logs:  journalctl -u %s.service -f\n' "$VOICE_SERVICE_NAME"
+printf 'Voice capture/control/playback runs inside %s.service.\n' "$SERVICE_NAME"
 printf 'A new login may be required for the updated GPIO groups.\n'

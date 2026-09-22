@@ -211,26 +211,23 @@ using `NN_BACKEND_ADDRESS=192.168.1.8:7878` and
 
 ```sh
 sudo systemctl start north-neeladesh-cabinet-frontend.service
-sudo systemctl start north-neeladesh-voice-relay.service
 journalctl -u north-neeladesh-cabinet-frontend.service -f
 ```
 
-From the development machine, inspect both services on the Pi at
-`taki@192.168.1.34` with `./scripts/status_pi.sh`. The exact service names are
-`north-neeladesh-cabinet-frontend.service` and
-`north-neeladesh-voice-relay.service`.
+From the development machine, inspect the frontend service on the Pi at
+`taki@192.168.1.34` with `./scripts/status_pi.sh`.
 
-The Python voice relay is separate from the Cabinet Frontend process. It carries
-microphone PCM to the laptop backend and plays returned synthesized audio on
-the Cabinet device. Both services are deployed from the same Python bundle.
+The Python voice relay runs inside the Cabinet Frontend process. PTT, Police,
+and EMS edges start capture through the same frontend lifecycle; the backend
+remains authoritative for STT, dialogue, classification, and TTS.
 
 ### Cabinet frontend
 
 The Cabinet Frontend runs against the physical Raspberry Pi hardware. It reads
 the patch panel, switches, rotary encoder, and Directory buttons, then sends
 the resulting input snapshot to the backend. It drives the lamps, TM1637,
-e-paper display, and `/dev/usb/lp0` printer. Voice playback remains in the
-separate Python voice relay.
+e-paper display, and `/dev/usb/lp0` printer. Voice capture, transport, and
+playback run in the same process.
 
 Run the frontend tests with:
 
