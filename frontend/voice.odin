@@ -59,6 +59,7 @@ voice_start :: proc(app: ^Input_State) {
 	voice_send_status(&app.voice, "ready")
 	app.voice.last_ready_at = 0
 	if rl.IsAudioDeviceReady() {
+		rl.SetAudioStreamBufferSizeDefault(VOICE_AUDIO_PACKET_SAMPLES)
 		app.voice.playback_stream = rl.LoadAudioStream(VOICE_AUDIO_SAMPLE_RATE, 16, 1)
 		app.voice.playback_ready = rl.IsAudioStreamValid(app.voice.playback_stream)
 		if app.voice.playback_ready {
