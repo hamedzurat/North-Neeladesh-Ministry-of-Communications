@@ -267,6 +267,7 @@ ref_draw_speaker :: proc(app: ^Input_State, delta: f32) {
 		rl.DrawRectangleRounded(ref_rect(x, area.y + 57 - height, 12, height), 0.3, 3, active ? BLUE : BORDER)
 	}
 	ref_text(fmt.tprintf("%s // STATIC %d%%", active ? "SPEAKER ACTIVE" : "SPEAKER STANDBY", app.backend_output.interference_level), area.x + 14, area.y + 12, 11, MUTED)
+	if app.voice.status != "" do ref_text(app.voice.status, area.x + 270, area.y + 12, 10, app.voice.connected ? GREEN : AMBER)
 }
 
 ref_draw_printer :: proc(app: ^Input_State) {

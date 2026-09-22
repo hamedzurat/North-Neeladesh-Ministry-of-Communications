@@ -45,7 +45,7 @@ just frontend-build
 
 ## GUI Test Run
 
-This is the complete local Odin setup, including real voice transport. Use four
+This is the complete local Odin setup, including real voice transport. Use three
 terminals. Do not start the Cabinet Frontend in this run; it is the alternative
 arcade client described later.
 
@@ -94,10 +94,10 @@ At the end, click `Reset run` and verify that Calls, counters, elapsed time,
 printer output, and retained voice evidence return to the
 start state.
 
-### Terminal 3: voice daemon
+### Terminal 3: Odin gameplay GUI
 
-The daemon is required for microphone capture and speaker playback. It is the
-Cabinet-side audio transport; the backend still runs STT, dialogue, and TTS.
+The Odin frontend now owns microphone capture, voice UDP control/status, and
+speaker playback. The backend still runs STT, dialogue, and TTS.
 
 Before the first real voice run, provision the local model assets:
 
@@ -109,30 +109,16 @@ just voice-preflight
 `voice-setup` also downloads the PocketTTS voice prompt into the ignored
 `python/.models/` directory.
 
-Then start the daemon:
-
-```sh
-just voice-daemon
-```
-
-For a no-microphone test, use the synthetic capture path instead:
-
-```sh
-just voice-demo
-```
-
-Without either `voice-daemon` or `voice-demo`, PTT may send a backend request,
-but there will be no microphone-to-STT-to-TTS-to-speaker path.
-
-### Terminal 4: Odin gameplay GUI
-
 ```sh
 just frontend
 ```
 
 This builds the frontend and opens a borderless full-screen window connected to
 `127.0.0.1:7878`. Close the window to stop it. With an Operator cord
-connected, hold `PTT / OPERATOR` to test the complete voice path.
+connected, hold `PTT / OPERATOR` to test the complete voice path. The default
+voice endpoint is `127.0.0.1:7879`; override it with
+`NN_VOICE_BACKEND_ADDRESS`. Override the raw 16 kHz `arecord` capture command
+with `NN_VOICE_CAPTURE_COMMAND` when needed.
 
 For wire-level troubleshooting instead:
 
@@ -257,23 +243,11 @@ uv run --directory python/cabinet_frontend \
 
 ## Voice Diagnostics
 
-For a hardware-free relay check, keep the backend running and use another
-terminal:
-
-```sh
-just voice-smoke
-```
-
-For a synthetic capture demo that still exercises the backend workers and
-audio return path:
-
-```sh
-just voice-demo
-```
-
 Voice failure must produce a diagnostic; it must not create a fake Routing or
-Story event. For the real microphone/speaker path, use `just voice-daemon` as
-described in the GUI test run.
+Story event. For the real microphone/speaker path, run `just frontend` as
+described in the GUI test run. The Odin relay uses `arecord` by default and
+Raylib for playback; the Python Cabinet Frontend remains the equivalent relay
+for Raspberry Pi hardware.
 
 ## Debug Surface Reference
 

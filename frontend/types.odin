@@ -1,6 +1,7 @@
 package frontend
 
 import "core:net"
+import "core:os"
 import rl "nn_vendor:raylib"
 
 PROTOCOL_VERSION :: 3
@@ -70,6 +71,25 @@ State_Output :: struct {
 	backend_messages: [dynamic]string,
 }
 
+Voice_State :: struct {
+	socket: net.UDP_Socket,
+	endpoint: net.Endpoint,
+	connected: bool,
+	session_id: u64,
+	turn_id: u64,
+	state_revision: u64,
+	capturing: bool,
+	capture_process: os.Process,
+	capture_path: string,
+	playback_stream: rl.AudioStream,
+	playback_ready: bool,
+	playback_finishing: bool,
+	playback_queue: [dynamic]i16,
+	last_audio_sequence: u16,
+	has_audio_sequence: bool,
+	status: string,
+}
+
 Input_State :: struct {
 	backend_output: State_Output,
 	intent: Input_Intent,
@@ -96,8 +116,9 @@ Input_State :: struct {
 	active_action: int,
 	crank_fill: f32,
 	crank_flash: f32,
-	speaker_phase: f32,
-	receipt_scroll: f32,
+    speaker_phase: f32,
+    receipt_scroll: f32,
+    voice: Voice_State,
 }
 
 REF_LINE_LABELS := [LINE_COUNT]cstring {

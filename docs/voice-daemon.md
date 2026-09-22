@@ -1,26 +1,25 @@
-# Voice Daemon
+# Voice Transport
 
-The voice daemon is a separate Cabinet-side transport and recovery process. The laptop backend owns the bounded Operator Session:
+The Odin and Python Cabinet Frontends own the Cabinet-side transport and recovery loop. The laptop backend owns the bounded Operator Session:
 
 ```text
-PTT start -> daemon microphone capture -> PTT release -> PCM over UDP
+PTT start -> frontend microphone capture -> PTT release -> PCM over UDP
            -> laptop STT -> bounded Response Context -> laptop dialogue
-            -> laptop Qwen3-TTS or PocketTTS -> RTP/L16 audio over UDP -> daemon speaker
+             -> laptop Qwen3-TTS or PocketTTS -> RTP/L16 audio over UDP -> frontend speaker
 ```
 
 The daemon never advances Routing state. The backend remains the sole authority. A worker failure emits `failed` status and a diagnostic; it does not create a routing decision.
 
 ## Worker contracts
 
-`just voice-daemon` runs relay-only mode. It does not load STT, dialogue, or PocketTTS and it does not decide a Routing transition. `just backend-debug` configures those workers on the laptop. The relay reports capture/playback failures as typed voice status messages and stays alive so the backend can recover or retry the session.
+The Odin relay is compiled into `./frontend`; the Python relay is
+`cabinet_frontend.voice_relay` for Raspberry Pi hardware. Neither relay loads
+STT, dialogue, or PocketTTS and neither decides a Routing transition. The
+backend configures those workers and remains authoritative. The relay reports
+capture/playback failures as typed voice status messages and stays alive so the
+backend can recover or retry the session.
 
 The backend uses the checked-in real worker adapters. The Pi relay uses Python and the system `arecord`/`aplay` tools, so the Pi needs no Rust toolchain or voice binary. The backend STT and dialogue invoke the pacman-installed whisper.cpp and llama.cpp runtimes. The Python workers run from the `python/` uv project; `--no-sync` prevents the backend from installing packages or downloading a model at runtime. Install the runtimes with `sudo pacman -S llama-cpp ggml-cuda whisper-cpp`, provision the model assets with `just voice-setup`, then run `just voice-preflight` before the first session.
-
-The smoke workers remain available for protocol-only CI and hardware-free development:
-
-```sh
-just voice-smoke
-```
 
 The real path requires these local assets and dependencies:
 
@@ -36,7 +35,7 @@ Model setup and offline launch:
 ```sh
 just voice-setup
 just voice-preflight
-just voice-daemon
+just frontend
 ```
 
 The paths above are automatic defaults. `NN_VOICE_MODEL_ROOT`, `NN_WHISPER_MODEL`,
@@ -47,7 +46,7 @@ used. The active neutral Call selects the subscriber voice context for each requ
 
 `python/voice_workers/` contains the real model adapters. They are launched by the laptop backend as `python -m voice_workers.<worker>` inside the uv environment. The backend includes the selected Qwen3-TTS CustomVoice `voice_id` in each PTT control message. The relay sends captured PCM to the backend and plays the backend's RTP/L16 output locally. Their required stdin/stdout contracts are:
 
-- the default Rust capture path records from the system audio input, converts it to bounded signed 16-bit mono PCM at 16 kHz, and resamples when the device uses another native rate;
+- the Odin and Python capture paths record bounded signed 16-bit mono PCM at 16 kHz from the system audio input;
 - `voice_workers.stt`: writes the supplied PCM to a temporary WAV, invokes local whisper.cpp `base.en`, and writes one final UTF-8 transcript.
 - `voice_workers.dialogue`: sends each bounded Response Context and transcript to local Ollama using `qwen3.5:4b`, `think: false`, JSON format, and `keep_alive: -1`. It requests a dialogue-only JSON object and rejects malformed or overlong output. It cannot emit a Story Event, Routing, or state mutation.
 - `voice_workers.tts`: accepts only the Qwen3-TTS 1.7B request contract, uses the Subscriber profile's Qwen3-TTS CustomVoice speaker, and writes framed signed 16-bit little-endian mono PCM at 24 kHz to the persistent daemon worker. It synthesizes sentence-sized chunks and flushes each completed chunk immediately. Qwen's current API simulates incremental text input but does not expose true decoder-frame streaming.
@@ -59,14 +58,12 @@ Each provider command has a bounded 30-second deadline. The Rust adapter bounds 
 ## Manual test
 
 1. Run `just voice-preflight`, then start the backend with `just backend-debug`.
-2. Start the relay with `just voice-daemon` on the laptop or Raspberry Pi.
-3. Start Odin with `just frontend` and connect Subscriber 0 to the Operator Jack.
-4. Hold the PTT control in Odin. The backend forwards `StartPtt`; the daemon captures microphone audio and reports `listening`.
-5. Release PTT. The backend reports `transcribing`, `generating_response`, `synthesizing`, `playing`, and `completed`; the relay sends captured PCM to the backend and plays returned RTP/L16 audio.
+2. Start Odin with `just frontend` and connect Subscriber 0 to the Operator Jack.
+3. Hold the PTT control in Odin. The backend forwards `StartPtt`; the embedded relay captures microphone audio and reports `listening`.
+4. Release PTT. The backend reports `transcribing`, `generating_response`, `synthesizing`, `playing`, and `completed`; the relay sends captured PCM to the backend and plays returned RTP/L16 audio.
 6. Confirm the transcript and response in the development debug surface, `speaker_active` in the next backend snapshot, and no Routing receipt was created by voice processing. The relay log should only show connection, recovery, and audio failure summaries.
 
-With no microphone connected, use `just voice-demo` instead of `just voice-daemon`. It uses the synthetic capture as a relay input; the backend still runs the real local STT, Qwen3 dialogue, and Qwen3-TTS workers and the relay plays returned audio. This verifies frontend PTT, backend control forwarding, worker recovery, and audio output without putting model ownership on the relay.
-
-For an isolated protocol test, run `just voice-smoke` against a running backend. Once a microphone is connected, switch back to `just voice-daemon`; the capture path will use the system default input device.
-
-The backend UDP port can be changed with `--voice-bind`; pass the matching address as the first positional argument to `just voice-daemon`, for example `just voice-daemon 127.0.0.1:8879`.
+The backend UDP port can be changed with `--voice-bind`; set the matching
+`NN_VOICE_BACKEND_ADDRESS` before `just frontend`. The Rust package currently
+remains in the workspace because the backend imports its worker adapters; its
+standalone relay binary is no longer part of the Odin run.

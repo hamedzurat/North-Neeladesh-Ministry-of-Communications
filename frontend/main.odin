@@ -17,6 +17,8 @@ main :: proc() {
 	defer if FONT.texture.id != rl.GetFontDefault().texture.id do rl.UnloadFont(FONT)
 	rl.SetTextureFilter(FONT.texture, .BILINEAR)
 	rl.SetTargetFPS(60)
+	rl.InitAudioDevice()
+	defer if rl.IsAudioDeviceReady() do rl.CloseAudioDevice()
 
 	app := Input_State{}
 	app.backend_output = initial_backend_output()
@@ -25,6 +27,7 @@ main :: proc() {
 	set_status(&app, "BACKEND OFFLINE // RETRYING")
 	app.drag_endpoint = -1
 	app.active_action = -1
+	voice_start(&app)
 	defer destroy_input_state(&app)
 
 	for !rl.WindowShouldClose() {
@@ -32,6 +35,8 @@ main :: proc() {
 		delta := rl.GetFrameTime()
 		poll_backend(&app, rl.GetTime())
 		update_reference_controls(&app, delta)
+		voice_poll(&app)
+		voice_update_playback(&app)
 
 		rl.BeginDrawing()
 		rl.ClearBackground(BACKGROUND)

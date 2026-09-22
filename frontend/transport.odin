@@ -282,6 +282,7 @@ destroy_snapshot_storage :: proc(snapshot: ^State_Output) {
 }
 
 destroy_input_state :: proc(app: ^Input_State) {
+	voice_close(&app.voice)
 	close_socket(app)
 	delete(app.retry_frame)
 	app.retry_frame = nil

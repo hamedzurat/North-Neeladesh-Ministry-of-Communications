@@ -57,17 +57,8 @@ protocol-harness:
 protocol-manual address="127.0.0.1:7878":
     cargo run -p exchange-protocol-harness -- --connect {{ address }}
 
-voice-daemon backend_address="127.0.0.1:7879" capture_command="" playback_command="":
-    NN_VOICE_BACKEND_ADDRESS={{ backend_address }} NN_VOICE_CAPTURE_COMMAND="{{ capture_command }}" NN_VOICE_PLAYBACK_COMMAND="{{ playback_command }}" cargo run -p exchange-voice-daemon
-
-voice-demo backend_address="127.0.0.1:7879" capture_command="sh scripts/voice_smoke_capture.sh" playback_command="":
-    NN_VOICE_BACKEND_ADDRESS={{ backend_address }} NN_VOICE_CAPTURE_COMMAND="{{ capture_command }}" NN_VOICE_PLAYBACK_COMMAND="{{ playback_command }}" cargo run -p exchange-voice-daemon
-
 voice-setup:
     uv run --project python python -m voice_workers.setup
-
-voice-smoke backend_address="127.0.0.1:7879" capture_command="sh scripts/voice_smoke_capture.sh" playback_command="sh scripts/voice_smoke_playback.sh":
-    NN_VOICE_BACKEND_ADDRESS={{ backend_address }} NN_VOICE_CAPTURE_COMMAND="{{ capture_command }}" NN_VOICE_PLAYBACK_COMMAND="{{ playback_command }}" cargo run -p exchange-voice-daemon
 
 voice-preflight:
     uv run --project python --no-sync python -m voice_workers.preflight

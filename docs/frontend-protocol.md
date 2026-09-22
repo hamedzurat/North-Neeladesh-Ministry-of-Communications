@@ -116,16 +116,16 @@ The Odin frontend probes the backend before creating a window. If the backend la
 
 ## Voice boundary
 
-The separate voice relay uses the backend's UDP voice socket, normally `127.0.0.1:7879`. Status datagrams begin with tag `0x01` and contain a CBOR `VoiceStatusMessage`. PTT control datagrams begin with tag `0x02` and contain a CBOR `VoiceControlMessage`. Captured relay audio begins with tag `0x03` and contains a bounded CBOR `VoiceInputAudioMessage`; the `complete` flag terminates a sequence of 20 ms PCM chunks. Synthesized audio is RTP version 2 with the `L16/24000/1` payload type `96`; samples are signed 16-bit network-order PCM. The relay announces `ready`, then the backend forwards accepted PTT start and release edges to the relay. The laptop backend runs STT, dialogue/LLM, and Qwen3-TTS; the relay only captures, forwards, plays, and reports recovery status.
+The frontend voice relay uses the backend's UDP voice socket, normally `127.0.0.1:7879`. Status datagrams begin with tag `0x01` and contain a CBOR `VoiceStatusMessage`. PTT control datagrams begin with tag `0x02` and contain a CBOR `VoiceControlMessage`. Captured relay audio begins with tag `0x03` and contains a bounded CBOR `VoiceInputAudioMessage`; the `complete` flag terminates a sequence of 20 ms PCM chunks. Synthesized audio is RTP version 2 with the `L16/24000/1` payload type `96`; samples are signed 16-bit network-order PCM. The Odin frontend and Python Cabinet Frontend both announce `ready`, capture, forward, play, and report recovery status. The laptop backend runs STT, dialogue/LLM, and Qwen3-TTS; the client relay only captures, forwards, plays, and reports recovery status.
 
 Voice status and audio do not advance the authoritative Routing state. Each backend PTT control includes the selected Subscriber voice ID so the daemon does not choose a voice independently. A failed worker produces a backend diagnostic and no Story Event or Routing.
 
 Manual verification:
 
-1. Run `just backend-debug`, `just debug-surface`, `just frontend`, and `just voice-daemon` in four terminals.
+1. Run `just backend-debug`, `just debug-surface`, and `just frontend` in three terminals.
 2. Complete the three-Shift exchange through the Cabinet controls and voice path.
 3. Verify that Directory lookup, Ring Generator cranking, Held Callers, Tap Bridge listen control, Police completion, printer receipts, and backend-owned Shift transitions appear on the Cabinet.
 4. Repeat the run with a missed Call or omitted Police Service Call. Verify the typed Service Error and that an authored Ending is still reached.
 5. Change the Directory Terminal digits and verify the e-paper pages update for the neutral exchange; use an unlisted ID to confirm the no-record display.
 
-For one real voice session, run `uv sync --project python` once during provisioning, configure the offline model assets, run `just voice-preflight`, then run `just backend-debug` and `just voice-daemon`. PTT is controlled by the Cabinet Frontend; the relay stays listening while idle and carries only audio/status traffic. Use `just voice-smoke` for a hardware-free relay test; see `docs/voice-daemon.md` for the model and device configuration.
+For one real voice session, run `uv sync --project python` once during provisioning, configure the offline model assets, run `just voice-preflight`, then run `just backend-debug` and `just frontend`. PTT is controlled by the Odin Frontend; its embedded relay stays listening while idle and carries only audio/status traffic. The Python Cabinet Frontend provides the equivalent relay for Raspberry Pi deployments.
