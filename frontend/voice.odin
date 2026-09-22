@@ -21,6 +21,7 @@ VOICE_INPUT_PACKET_SAMPLES :: 320
 VOICE_AUDIO_SAMPLE_RATE :: 24000
 VOICE_AUDIO_PACKET_SAMPLES :: 480
 VOICE_AUDIO_PAYLOAD_TYPE :: u8(96)
+VOICE_AUDIO_SSRC :: u32(0x4e45_5554)
 VOICE_MAX_CAPTURE_SAMPLES :: VOICE_INPUT_SAMPLE_RATE * 15
 
 voice_start :: proc(app: ^Input_State) {
@@ -275,7 +276,7 @@ voice_handle_rtp :: proc(voice: ^Voice_State, packet: []byte) {
 	}
 	if len(payload) % 2 != 0 do return
 	ssrc := u32(packet[8]) << 24 | u32(packet[9]) << 16 | u32(packet[10]) << 8 | u32(packet[11])
-	if ssrc != u32(voice.session_id) do return
+	if ssrc != VOICE_AUDIO_SSRC do return
 	marker := packet[1] & 0x80 != 0
 	if !voice.accept_audio && !marker do return
 	if marker {
