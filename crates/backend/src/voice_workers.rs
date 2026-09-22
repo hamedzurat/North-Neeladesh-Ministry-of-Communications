@@ -1356,10 +1356,8 @@ impl PersistentPocketTtsCommand {
 
 impl TextToSpeech for PersistentPocketTtsCommand {
     fn synthesize(&mut self, voice_id: &str, text: &str) -> Result<Vec<i16>, VoiceError> {
-        let mut output = Vec::new();
-        for chunk in pocket_tts_chunks(text) {
-            output.extend(self.inner.synthesize(voice_id, &chunk)?);
-        }
+        let input = pocket_tts_single_pass_text(text);
+        let output = self.inner.synthesize(voice_id, &input)?;
         if output.is_empty() {
             return Err(VoiceError::new(
                 "tts_empty_output",
@@ -1375,10 +1373,8 @@ impl TextToSpeech for PersistentPocketTtsCommand {
         text: &str,
         emit: &mut dyn FnMut(&[i16]) -> Result<(), VoiceError>,
     ) -> Result<usize, VoiceError> {
-        let mut emitted = 0;
-        for chunk in pocket_tts_chunks(text) {
-            emitted += self.inner.synthesize_stream(voice_id, &chunk, emit)?;
-        }
+        let input = pocket_tts_single_pass_text(text);
+        let emitted = self.inner.synthesize_stream(voice_id, &input, emit)?;
         if emitted == 0 {
             return Err(VoiceError::new(
                 "tts_empty_output",
@@ -1387,6 +1383,12 @@ impl TextToSpeech for PersistentPocketTtsCommand {
         }
         Ok(emitted)
     }
+}
+
+fn pocket_tts_single_pass_text(text: &str) -> String {
+    text.replace(". ", ", ")
+        .replace("! ", ", ")
+        .replace("? ", ", ")
 }
 
 const POCKET_TTS_MAX_CHARS: usize = 96;
