@@ -886,6 +886,8 @@ impl Backend {
         }
         if talking {
             self.voice_turn_controls = input.held_controls.clone();
+            self.voice_turn_id = self.next_voice_turn_id;
+            self.next_voice_turn_id = self.next_voice_turn_id.wrapping_add(1);
             println!(
                 "[TRANSITION] voice start caller={:?} turn={} ptt={} police={} ems={} tap={}",
                 caller,
@@ -896,8 +898,6 @@ impl Backend {
                 self.voice_turn_controls.tap
             );
             self.cancelled_voice_turn = None;
-            self.voice_turn_id = self.next_voice_turn_id;
-            self.next_voice_turn_id = self.next_voice_turn_id.wrapping_add(1);
         }
         let voice_id = caller
             .map(|line| self.subscriber(line).voice_id.clone())
@@ -969,20 +969,8 @@ impl Backend {
             return;
         }
         if self.intertwined() {
-            let now = self.elapsed_seconds() as u64;
-            if self.neel_story_beat != stories::neel_university::Beat::Completed
-                && !self
-                    .calls
-                    .iter()
-                    .any(|call| self.is_neel_caller(call.caller))
-                && now >= self.story_started_elapsed_seconds.saturating_add(32)
-            {
-                println!(
-                    "[TRANSITION] Neel beat {:?} -> Completed (patience expired)",
-                    self.neel_story_beat
-                );
-                self.neel_story_beat = stories::neel_university::Beat::Completed;
-            }
+            // Intertwined stories wait independently. Playing Shapla must not
+            // expire Neel into a completed state before the operator reaches it.
             return;
         }
         if self.calls.iter().any(|call| {
@@ -1800,7 +1788,12 @@ impl Backend {
                     caller,
                     callee: self.story_requested_callee(),
                     phase: CallPhase::Waiting,
-                    deadline: now + self.neel_story_beat.patience_seconds(),
+                    deadline: now
+                        + if self.intertwined() {
+                            u64::MAX / 2
+                        } else {
+                            self.neel_story_beat.patience_seconds()
+                        },
                     started_elapsed_seconds: now,
                     connected_at: None,
                     connected_elapsed_seconds: None,
