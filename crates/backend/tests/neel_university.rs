@@ -61,6 +61,7 @@ fn neel_thread_selects_professor_routing_and_authored_directory_records() {
         .iter()
         .flat_map(|page| &page.lines)
         .collect::<Vec<_>>();
+    assert_eq!(response.output.directory_pages[0].heading, "MEGHNA ABASHON");
     assert!(dog.iter().any(|line| *line == "SUBSCRIBER // Bela Bose"));
     assert!(dog.iter().any(|line| *line == "NOTE // Meghna Abashon"));
 
@@ -71,6 +72,7 @@ fn neel_thread_selects_professor_routing_and_authored_directory_records() {
         .iter()
         .flat_map(|page| &page.lines)
         .collect::<Vec<_>>();
+    assert_eq!(response.output.directory_pages[0].heading, "PADMA NIBASH");
     assert!(cat.iter().any(|line| *line == "NOTE // Padma Nibash"));
 }
 
