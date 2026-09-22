@@ -66,20 +66,42 @@
       document.getElementById('stats').innerHTML=[['RUN',snapshot.run.number],['ELAPSED',snapshot.run.elapsed_seconds+'s'],['MONEY','$'+snapshot.money],['CALLS',snapshot.counters?.active_call_count||activeCalls.length],['ROUTINGS',snapshot.counters?.completed_routings||0],['SHIFT',snapshot.shift.number],['VOICE',statusText(voice.status)],['REVISION',snapshot.run.state_revision]].map(item=>`<div class="stat"><span class="label">${item[0]}</span><span class="number">${esc(item[1])}</span></div>`).join('');
       renderGraph('shapla-graph',['EmergencyCall','HappyFollowup','NeutralFollowup','BadFollowup'],snapshot.shapla_story_beat||snapshot.story_beat); renderGraph('neel-graph',['ProfessorRouting','ArnabDirectory','Completed'],snapshot.neel_story_beat||snapshot.story_beat);
       document.getElementById('voice-id').textContent=voice.session_id?`session ${voice.session_id} / turn ${voice.turn_id}`:'no active session'; document.getElementById('voice-state').innerHTML=`<div class="eyebrow">STATUS</div><div class="status">${esc(statusText(voice.status))}</div><div class="muted">speaker active: ${esc(voice.speaker_active)}</div>`; document.getElementById('voice-transcript').textContent=voice.transcript||'-'; document.getElementById('voice-response').textContent=voice.response_text||'-';
-      document.getElementById('active-calls').innerHTML=table(activeCalls,['caller_line','requested_callee_line','phase','patience_remaining_seconds','audio_duration_seconds']); document.getElementById('topology-status').textContent=`${activeCalls.length} active call${activeCalls.length===1?'':'s'}`; document.getElementById('errors').innerHTML=failures.length?failures.slice(-4).reverse().map(error=>`<div class="card failed"><b>${esc(error.code)}</b><br>${esc(error.message)}</div>`).join(''):'<div class="empty">No failures retained.</div>';
+       document.getElementById('active-calls').innerHTML=activeCallTable(activeCalls); document.getElementById('topology-status').textContent=`${activeCalls.length} active call${activeCalls.length===1?'':'s'}`; document.getElementById('errors').innerHTML=failures.length?failures.slice(-4).reverse().map(error=>`<div class="card failed"><b>${esc(error.code)}</b><br>${esc(error.message)}</div>`).join(''):'<div class="empty">No failures retained.</div>';
       document.getElementById('frontend-input').innerHTML=highlightJson(snapshot.frontend?.last_input_json,'No frontend input received.'); document.getElementById('frontend-output').innerHTML=highlightJson(snapshot.frontend?.last_output_json,'No backend output sent.'); document.getElementById('frontend-all').textContent=JSON.stringify(snapshot.frontend||{},null,2);
       document.getElementById('calls-table').innerHTML='<h3>Call history</h3>'+table(snapshot.call_history||[],['caller_line','requested_callee_line','final_phase','outcome','reason','finished_elapsed_seconds']); document.getElementById('subscribers').innerHTML='<h3>Subscribers</h3>'+table(snapshot.subscribers||[],['id','name','line','status','availability','pressure','status_flags']); document.getElementById('voice-history').innerHTML=conversations.length?[...conversations].reverse().map(conversationCard).join(''):'<div class="empty">No voice conversations retained.</div>';
-    }
+     }
+     function activeCallTable(items) {
+       if(!items||!items.length) return '<div class="empty">None.</div>';
+       return '<table><tr><th>caller</th><th>destination</th><th>phase</th><th>patience</th><th>audio</th></tr>'+items.map(item=>{
+         const waiting=['waiting','ringing','awaiting_routing','operator_session'].includes(item.phase);
+         const patience=waiting?`${item.patience_remaining_seconds||0}s`:'—';
+         const audio=['held','connected'].includes(item.phase)?`${item.audio_duration_seconds||0}s`:'—';
+         return `<tr><td>${esc(item.caller_line)}</td><td>${esc(item.requested_callee_line)}</td><td>${esc(item.phase)}</td><td>${patience}</td><td>${audio}</td></tr>`;
+       }).join('')+'</table>';
+     }
     function renderGraph(id,nodes,active) {
       const container=document.getElementById(id); const prefix=id.replace(/[^a-z]/gi,''); const activeIndex=nodes.indexOf(active); const names=nodes.map((node,index)=>`n${index}["${node}"]`).join('\n');
       const links=id==='shapla-graph'?'n0 --> n1\nn0 --> n2\nn0 --> n3':nodes.slice(1).map((_,index)=>`n${index} --> n${index+1}`).join('\n');
-       const classes=nodes.map((_,index)=>`class n${index} ${index===activeIndex?'active':(activeIndex>=0 && index<activeIndex?'done':'idle')};`).join('\n');
+       const classes=nodes.map((_,index)=>{
+         let state='idle';
+         if(id==='shapla-graph') {
+           if(activeIndex===index) state='active';
+           else if(activeIndex>0 && index===0) state='done';
+         } else if(activeIndex===2) {
+           state='done';
+         } else if(activeIndex===index) {
+           state='active';
+         } else if(activeIndex>index) {
+           state='done';
+         }
+         return `class n${index} ${state};`;
+       }).join('\n');
        const edgeCount=id==='shapla-graph'?3:nodes.length-1;
        const edgeStyles=Array.from({length:edgeCount},(_,index)=>{
          let color='#9b9b9b';
          if(id==='shapla-graph') {
            const target=[1,2,3][index];
-           color=target===activeIndex?'#ffd21f':(target<activeIndex?'#58d68d':'#9b9b9b');
+           color=target===activeIndex?'#ffd21f':'#9b9b9b';
          } else {
            const target=index+1;
            color=target===activeIndex?'#ffd21f':(target<activeIndex?'#58d68d':'#9b9b9b');

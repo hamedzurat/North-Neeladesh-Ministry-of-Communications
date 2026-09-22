@@ -171,7 +171,7 @@ pub struct Backend {
     audio_sequence: u16,
     audio_timestamp: u32,
     audio_tap_was_active: bool,
-    pending_tts: Vec<(u8, u8)>,
+    pending_tts: Vec<(u8, u8, bool)>,
     tts_prepared: bool,
     last_ptt: bool,
     voice_peer: Option<SocketAddr>,
@@ -977,6 +977,10 @@ impl Backend {
                     .any(|call| self.is_neel_caller(call.caller))
                 && now >= self.story_started_elapsed_seconds.saturating_add(32)
             {
+                println!(
+                    "[TRANSITION] Neel beat {:?} -> Completed (patience expired)",
+                    self.neel_story_beat
+                );
                 self.neel_story_beat = stories::neel_university::Beat::Completed;
             }
             return;
@@ -998,6 +1002,10 @@ impl Backend {
         {
             if self.story_thread == "neel_university" {
                 if self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory {
+                    println!(
+                        "[TRANSITION] Neel beat {:?} -> Completed (patience expired)",
+                        self.neel_story_beat
+                    );
                     self.neel_story_beat = stories::neel_university::Beat::Completed;
                     self.story_completed = true;
                 }
@@ -1156,6 +1164,8 @@ impl Backend {
             .any(|line| selected == u16::from(*line) || directory_line(selected) == Some(*line));
         let requires_ring = !neel_arnab_beat;
         let call = &mut self.calls[index];
+        let call_caller = call.caller;
+        let call_callee = call.callee;
         if neel_arnab_beat && call.caller == stories::neel_university::SHADHIN_LINE {
             for target in [
                 stories::neel_university::BELA_DOG_LINE,
@@ -1274,12 +1284,14 @@ impl Backend {
             self.finish_call(index, false);
         }
         if connect {
-            self.connect_call(index);
+            let tap_audio =
+                input.held_controls.tap && valid_tap_circuit(input, call_caller, call_callee);
+            self.connect_call(index, tap_audio);
         }
         error
     }
 
-    fn connect_call(&mut self, index: usize) {
+    fn connect_call(&mut self, index: usize, tap_audio: bool) {
         let connected_elapsed_seconds = self.elapsed_seconds() as u64;
         let Some((caller, callee)) = self.calls.get(index).map(|call| (call.caller, call.callee))
         else {
@@ -1312,7 +1324,7 @@ impl Backend {
             call.phase = CallPhase::Held;
             call.connected_at = None;
             call.audio_duration_seconds = 0;
-            self.pending_tts.push((caller, callee));
+            self.pending_tts.push((caller, callee, tap_audio));
         }
     }
 
@@ -1365,7 +1377,7 @@ impl Backend {
         self.audio_timestamp = timestamp.wrapping_add(samples.len() as u32);
     }
 
-    fn take_pending_tts(&mut self) -> Vec<(u8, u8)> {
+    fn take_pending_tts(&mut self) -> Vec<(u8, u8, bool)> {
         std::mem::take(&mut self.pending_tts)
     }
 
@@ -1373,6 +1385,7 @@ impl Backend {
         config: GameConfig,
         caller: u8,
         callee: u8,
+        tap_audio: bool,
     ) -> Result<Vec<i16>, VoiceError> {
         let caller_profile = config
             .subscribers
@@ -1388,7 +1401,8 @@ impl Backend {
             .ok_or_else(|| {
                 VoiceError::new("subscriber_not_configured", "callee is not configured")
             })?;
-        if let Some(path) = story_audio_path(caller, callee)
+        if tap_audio
+            && let Some(path) = story_audio_path(caller, callee)
             && path.is_file()
         {
             let output = Command::new("ffmpeg")
@@ -1616,7 +1630,7 @@ impl Backend {
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
         for index in ready {
-            self.connect_call(index);
+            self.connect_call(index, false);
         }
     }
 
@@ -3092,14 +3106,14 @@ pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) ->
             let response = state.apply_input_message(request);
             (response, state.take_pending_tts(), state.config.clone())
         };
-        for (caller, callee) in pending_tts {
-            eprintln!(
-                "[VOICE-DEBUG] dispatching opening audio to TTS caller={caller} callee={callee}"
+        for (caller, callee, tap_audio) in pending_tts {
+            println!(
+                "[VOICE-DEBUG] dispatching opening audio caller={caller} callee={callee} tap_audio={tap_audio}"
             );
             let worker_backend = Arc::clone(&backend);
             let call_config = config.clone();
             thread::spawn(move || {
-                match Backend::generate_call_audio(call_config, caller, callee) {
+                match Backend::generate_call_audio(call_config, caller, callee, tap_audio) {
                     Ok(samples) => {
                         if let Ok(mut state) = worker_backend.lock() {
                             state.install_generated_audio(caller, callee, samples);
