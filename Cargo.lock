@@ -206,8 +206,9 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 name = "exchange-backend"
 version = "0.1.0"
 dependencies = [
+ "cpal",
  "exchange-protocol",
- "exchange-voice-daemon",
+ "libc",
  "serde",
  "serde_cbor",
  "serde_json",
@@ -246,17 +247,6 @@ name = "exchange-test-frontend"
 version = "0.1.0"
 dependencies = [
  "exchange-protocol",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "exchange-voice-daemon"
-version = "0.1.0"
-dependencies = [
- "cpal",
- "exchange-protocol",
- "libc",
  "serde",
  "serde_json",
 ]

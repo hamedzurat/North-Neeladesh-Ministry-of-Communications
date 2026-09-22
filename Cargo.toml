@@ -3,7 +3,6 @@ members = [
     "crates/protocol",
     "crates/backend",
     "crates/protocol-harness",
-    "crates/voice-daemon",
     "crates/debug-surface",
     "crates/test-frontend",
 ]

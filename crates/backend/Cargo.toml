@@ -6,7 +6,8 @@ license.workspace = true
 
 [dependencies]
 exchange-protocol = { path = "../protocol" }
-exchange-voice-daemon = { path = "../voice-daemon" }
+cpal.workspace = true
+libc.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
 serde.workspace = true

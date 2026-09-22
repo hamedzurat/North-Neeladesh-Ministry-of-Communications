@@ -1,7 +1,7 @@
 package frontend
 
-// The Odin cabinet owns the small edge of the voice protocol that used to
-// live in crates/voice-daemon. The backend still owns STT, dialogue, and TTS;
+// The Odin cabinet owns the small edge of the voice protocol. The backend still
+// owns STT, dialogue, and TTS;
 // this file only captures PCM, transports tagged UDP datagrams, and plays RTP.
 
 import "core:encoding/cbor"

@@ -79,7 +79,7 @@ frontend-checks:
     /bin/odin check frontend
 
 voice-checks:
-    cargo test -p exchange-voice-daemon
+    cargo test -p exchange-backend --lib voice_workers
 
 test:
     cargo test --workspace

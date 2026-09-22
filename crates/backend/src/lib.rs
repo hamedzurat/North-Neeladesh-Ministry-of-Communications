@@ -21,7 +21,10 @@ use exchange_protocol::{
     VoiceControl, VoiceControlMessage, VoiceStatus, VoiceStatusMessage, decode_voice_input_audio,
     decode_voice_status, encode_voice_control, encode_voice_status, read_frame, write_frame,
 };
-use exchange_voice_daemon::{
+#[allow(dead_code)]
+mod voice_workers;
+
+use voice_workers::{
     CommandSpec, CommandSpeechToText, CommandTextClassifier, ConversationTurn, DialogueGenerator,
     PersistentCommandDialogueGenerator, PersistentPocketTtsCommand, ResponseContext, SpeechToText,
     SubscriberProfile, TextClassifier, TextToSpeech, VoiceError,
