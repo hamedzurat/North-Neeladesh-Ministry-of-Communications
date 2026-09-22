@@ -66,7 +66,7 @@ def recognition_prompt() -> str:
             terms.append(value.strip())
     if not terms:
         return ""
-    return "Proper names and places: " + ", ".join(terms) + "."
+    return "Names and places that may appear: " + ", ".join(terms) + "."
 
 
 def fail(message: str) -> NoReturn:
