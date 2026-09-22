@@ -400,6 +400,9 @@ pub struct DebugResponse {
 pub struct DebugSnapshot {
     pub story_thread: String,
     pub story_beat: String,
+    pub shapla_story_beat: String,
+    pub neel_story_beat: String,
+    pub story_completed: bool,
     pub money: i32,
     pub run: DebugRunState,
     pub shift: ShiftStatus,

@@ -569,6 +569,9 @@ impl Backend {
         DebugSnapshot {
             story_thread: self.story_thread.clone(),
             story_beat: self.current_story_beat_name().into(),
+            shapla_story_beat: self.shapla_story_beat_name().into(),
+            neel_story_beat: self.neel_story_beat.name().into(),
+            story_completed: self.story_completed,
             money: self.money,
             run: DebugRunState {
                 number: self.run_generation as u32 + 1,
@@ -622,6 +625,15 @@ impl Backend {
                 stories::shapla_apartments::Beat::NeutralFollowup => "NeutralFollowup",
                 stories::shapla_apartments::Beat::BadFollowup => "BadFollowup",
             }
+        }
+    }
+
+    fn shapla_story_beat_name(&self) -> &'static str {
+        match self.story_beat {
+            stories::shapla_apartments::Beat::EmergencyCall => "EmergencyCall",
+            stories::shapla_apartments::Beat::HappyFollowup => "HappyFollowup",
+            stories::shapla_apartments::Beat::NeutralFollowup => "NeutralFollowup",
+            stories::shapla_apartments::Beat::BadFollowup => "BadFollowup",
         }
     }
 
