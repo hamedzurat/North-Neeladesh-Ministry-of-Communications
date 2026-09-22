@@ -57,7 +57,6 @@ def recognition_prompt() -> str:
     try:
         with path.open("rb") as config_file:
             config = tomllib.load(config_file)
-            subscribers = config.get("subscribers", [])
             vocabulary = config.get("voice_vocabulary", [])
     except (OSError, tomllib.TOMLDecodeError):
         return ""
@@ -65,19 +64,9 @@ def recognition_prompt() -> str:
     for value in vocabulary:
         if isinstance(value, str) and value.strip() and value not in terms:
             terms.append(value.strip())
-    for subscriber in subscribers:
-        if not isinstance(subscriber, dict):
-            continue
-        for key in ("place", "name"):
-            value = subscriber.get(key)
-            if not isinstance(value, str) or not value.strip():
-                continue
-            value = value.strip()
-            if value.upper().startswith(("LINE ", "SUBSCRIBER ")):
-                continue
-            if value.casefold() not in {term.casefold() for term in terms}:
-                terms.append(value)
-    return ", ".join(terms)
+    if not terms:
+        return ""
+    return "Proper names and places: " + ", ".join(terms) + "."
 
 
 def fail(message: str) -> NoReturn:

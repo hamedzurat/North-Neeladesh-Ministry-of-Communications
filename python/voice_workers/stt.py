@@ -20,6 +20,45 @@ SAMPLE_RATE = 16_000
 MAX_PCM_BYTES = SAMPLE_RATE * 2 * 60
 
 
+def run_whisper(binary: str, model: str, audio_path: str, prompt: str = "") -> str:
+    command = [
+        binary,
+        "--model",
+        model,
+        "--file",
+        audio_path,
+        "--language",
+        "en",
+        "--no-timestamps",
+        "--no-prints",
+    ]
+    if prompt:
+        command.extend(["--prompt", prompt])
+    command.extend(shlex.split(os.environ.get("NN_WHISPER_EXTRA_ARGS", "")))
+    result = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=worker_timeout(),
+    )
+    if result.returncode != 0:
+        fail(f"whisper.cpp exited with {result.returncode}: {result.stderr.strip()}")
+    return " ".join(
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.strip() and not line.strip().startswith(("whisper_", "main:"))
+    ).strip()
+
+
+def needs_name_pass(transcript: str) -> bool:
+    lowered = transcript.casefold()
+    return any(
+        phrase in lowered
+        for phrase in ("send help", "call ", "connect ", "send someone", "dispatch ")
+    ) and " to " in f" {lowered} "
+
+
 def main() -> int:
     pcm = sys.stdin.buffer.read(MAX_PCM_BYTES + 1)
     if not pcm or len(pcm) > MAX_PCM_BYTES or len(pcm) % 2:
@@ -41,41 +80,12 @@ def main() -> int:
             writer.writeframes(pcm)
         audio.flush()
 
-        command = [
-            binary,
-            "--model",
-            model,
-            "--file",
-            audio.name,
-            "--language",
-            "en",
-            "--no-timestamps",
-            "--no-prints",
-        ]
-        vocabulary = recognition_prompt()
-        if vocabulary:
-            command.extend(["--prompt", vocabulary])
-        command.extend(shlex.split(os.environ.get("NN_WHISPER_EXTRA_ARGS", "")))
         try:
-            result = subprocess.run(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=worker_timeout(),
-            )
+            transcript = run_whisper(binary, model, audio.name)
+            if needs_name_pass(transcript):
+                transcript = run_whisper(binary, model, audio.name, recognition_prompt())
         except (OSError, ValueError, subprocess.TimeoutExpired) as error:
             fail(f"whisper.cpp failed: {error}")
-
-    if result.returncode != 0:
-        fail(f"whisper.cpp exited with {result.returncode}: {result.stderr.strip()}")
-
-    transcript_lines = []
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if line and not line.startswith(("whisper_", "main:")):
-            transcript_lines.append(line)
-    transcript = " ".join(transcript_lines).strip()
     if not transcript:
         fail("whisper.cpp returned an empty transcript")
     sys.stdout.write(transcript)

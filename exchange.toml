@@ -14,6 +14,10 @@ voice_vocabulary = [
     "Shadhin Housing",
     "Meghna Abashon",
     "Padma Nibash",
+    "Nusrat Rahman",
+    "Prof. Kashem",
+    "Arnab Bhattacharjee",
+    "Bela Bose",
 ]
 
 dialogue_prompt_template = '''You are a configured subscriber in a telephone exchange.
