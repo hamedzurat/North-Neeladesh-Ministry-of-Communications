@@ -5,12 +5,9 @@ import rl "nn_vendor:raylib"
 main :: proc() {
 	if !probe_backend() do return
 
-	rl.SetConfigFlags({.WINDOW_HIGHDPI, .BORDERLESS_WINDOWED_MODE})
+	rl.SetConfigFlags({.WINDOW_HIGHDPI, .WINDOW_RESIZABLE})
 	rl.InitWindow(WINDOW_W, WINDOW_H, "North Neeladesh")
 	defer rl.CloseWindow()
-	monitor := rl.GetCurrentMonitor()
-	rl.SetWindowPosition(0, 0)
-	rl.SetWindowSize(rl.GetMonitorWidth(monitor), rl.GetMonitorHeight(monitor))
 
 	FONT = rl.LoadFontEx("target/Iosevka-Regular.ttf", 32, nil, 0)
 	if !rl.IsFontValid(FONT) do FONT = rl.GetFontDefault()
