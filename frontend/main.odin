@@ -35,7 +35,7 @@ main :: proc() {
 		delta := rl.GetFrameTime()
 		poll_backend(&app, rl.GetTime())
 		update_reference_controls(&app, delta)
-		voice_poll(&app)
+		voice_poll(&app, rl.GetTime())
 		voice_update_playback(&app)
 
 		rl.BeginDrawing()

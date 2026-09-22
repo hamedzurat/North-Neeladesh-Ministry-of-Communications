@@ -78,6 +78,7 @@ Voice_State :: struct {
 	session_id: u64,
 	turn_id: u64,
 	state_revision: u64,
+	last_ready_at: f64,
 	capturing: bool,
 	capture_process: os.Process,
 	capture_path: string,
@@ -87,6 +88,7 @@ Voice_State :: struct {
 	playback_queue: [dynamic]i16,
 	last_audio_sequence: u16,
 	has_audio_sequence: bool,
+	accept_audio: bool,
 	status: string,
 }
 

@@ -51,6 +51,7 @@ voice_start :: proc(app: ^Input_State) {
 	app.voice.connected = true
 	app.voice.status = "VOICE RELAY ONLINE"
 	voice_send_status(&app.voice, "ready")
+	app.voice.last_ready_at = 0
 	if rl.IsAudioDeviceReady() {
 		app.voice.playback_stream = rl.LoadAudioStream(VOICE_AUDIO_SAMPLE_RATE, 16, 1)
 		app.voice.playback_ready = rl.IsAudioStreamValid(app.voice.playback_stream)
@@ -61,8 +62,12 @@ voice_start :: proc(app: ^Input_State) {
 	}
 }
 
-voice_poll :: proc(app: ^Input_State) {
+voice_poll :: proc(app: ^Input_State, now: f64) {
 	if !app.voice.connected do return
+	if now - app.voice.last_ready_at >= 4.0 {
+		voice_send_status(&app.voice, "ready")
+		app.voice.last_ready_at = now
+	}
 	buffer: [65535]byte
 	for {
 		count, _, err := net.recv_udp(app.voice.socket, buffer[:])
@@ -84,6 +89,7 @@ voice_handle_datagram :: proc(voice: ^Voice_State, datagram: []byte) {
 		defer cbor.destroy(value)
 		if u16_value(map_get_or(value, "protocol_version")) != VOICE_PROTOCOL_VERSION do return
 		if u64_value(map_get_or(value, "session_id")) != voice.session_id do return
+		if u64_value(map_get_or(value, "turn_id")) != voice.turn_id do return
 		voice.turn_id = u64_value(map_get_or(value, "turn_id"))
 		voice.state_revision = u64_value(map_get_or(value, "state_revision"))
 		control := string_value(map_get_or(value, "control"))
@@ -160,6 +166,7 @@ voice_start_capture :: proc(voice: ^Voice_State) {
 	voice.capture_process = process
 	voice.capturing = true
 	voice.playback_finishing = false
+	voice.accept_audio = false
 	resize(&voice.playback_queue, 0)
 	voice_send_status(voice, "listening")
 }
@@ -179,9 +186,15 @@ voice_release_capture :: proc(voice: ^Voice_State) {
 		if size_err == nil {
 			byte_count := min(i64(VOICE_MAX_CAPTURE_SAMPLES * 2), max(i64(0), size))
 			bytes := make([]byte, int(byte_count))
-			read_count, _ := os.read(file, bytes)
-			voice_send_input_audio(voice, bytes[:read_count])
+			read_count, read_err := os.read(file, bytes)
+			if read_err == nil {
+				voice_send_input_audio(voice, bytes[:read_count])
+			} else {
+				voice_send_status_error(voice, "failed", "capture_read_failed", "unable to read the microphone capture")
+			}
 			delete(bytes)
+		} else {
+			voice_send_status_error(voice, "failed", "capture_read_failed", "unable to inspect the microphone capture")
 		}
 	} else {
 		voice_send_status_error(voice, "failed", "capture_read_failed", "unable to read the microphone capture")
@@ -242,6 +255,7 @@ voice_send_input_chunk :: proc(voice: ^Voice_State, bytes: []byte, chunk_index: 
 }
 
 voice_handle_rtp :: proc(voice: ^Voice_State, packet: []byte) {
+	if voice.playback_finishing do return
 	if len(packet) < 12 || packet[0] >> 6 != 2 || packet[1] & 0x7f != VOICE_AUDIO_PAYLOAD_TYPE do return
 	csrc_count := int(packet[0] & 0x0f)
 	header_length := 12 + csrc_count * 4
@@ -253,11 +267,19 @@ voice_handle_rtp :: proc(voice: ^Voice_State, packet: []byte) {
 	if len(packet) < header_length do return
 	payload := packet[header_length:]
 	if packet[0] & 0x20 != 0 {
+		if len(payload) == 0 do return
 		padding := int(payload[len(payload) - 1])
 		if padding == 0 || padding > len(payload) do return
 		payload = payload[:len(payload) - padding]
 	}
 	if len(payload) % 2 != 0 do return
+	ssrc := u32(packet[8]) << 24 | u32(packet[9]) << 16 | u32(packet[10]) << 8 | u32(packet[11])
+	if ssrc != u32(voice.session_id) do return
+	marker := packet[1] & 0x80 != 0
+	if !voice.accept_audio && !marker do return
+	if marker {
+		voice.accept_audio = true
+	}
 	sequence := u16(packet[2]) << 8 | u16(packet[3])
 	if voice.has_audio_sequence && sequence != voice.last_audio_sequence + 1 {
 		// UDP loss is audible but does not invalidate the rest of the turn.
@@ -267,6 +289,10 @@ voice_handle_rtp :: proc(voice: ^Voice_State, packet: []byte) {
 	for index in 0 ..< len(payload) / 2 {
 		sample := i16(u16(payload[index * 2]) << 8 | u16(payload[index * 2 + 1]))
 		append(&voice.playback_queue, sample)
+	}
+	if len(voice.playback_queue) > VOICE_AUDIO_SAMPLE_RATE * 30 {
+		resize(&voice.playback_queue, 0)
+		voice.accept_audio = false
 	}
 }
 
@@ -293,6 +319,7 @@ voice_update_playback :: proc(app: ^Input_State) {
 voice_finish_playback :: proc(voice: ^Voice_State) {
 	voice.playback_finishing = true
 	voice.has_audio_sequence = false
+	voice.accept_audio = false
 }
 
 voice_close :: proc(voice: ^Voice_State) {
@@ -308,6 +335,7 @@ voice_close :: proc(voice: ^Voice_State) {
 		voice.playback_ready = false
 	}
 	voice.playback_finishing = false
+	voice.accept_audio = false
 	delete(voice.playback_queue)
 	if voice.connected {
 		net.close(voice.socket)
