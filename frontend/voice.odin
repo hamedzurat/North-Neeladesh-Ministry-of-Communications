@@ -100,10 +100,11 @@ voice_handle_datagram :: proc(voice: ^Voice_State, datagram: []byte) {
 		defer cbor.destroy(value)
 		if u16_value(map_get_or(value, "protocol_version")) != VOICE_PROTOCOL_VERSION do return
 		if u64_value(map_get_or(value, "session_id")) != voice.session_id do return
-		if u64_value(map_get_or(value, "turn_id")) != voice.turn_id do return
-		voice.turn_id = u64_value(map_get_or(value, "turn_id"))
+		incoming_turn_id := u64_value(map_get_or(value, "turn_id"))
 		voice.state_revision = u64_value(map_get_or(value, "state_revision"))
 		control := string_value(map_get_or(value, "control"))
+		if control != "start_ptt" && incoming_turn_id != voice.turn_id do return
+		voice.turn_id = incoming_turn_id
 		switch control {
 		case "start_ptt": voice_start_capture(voice)
 		case "release_ptt": voice_release_capture(voice)
@@ -120,6 +121,7 @@ voice_handle_datagram :: proc(voice: ^Voice_State, datagram: []byte) {
 		voice.state_revision = u64_value(map_get_or(value, "state_revision"))
 		status := string_value(map_get_or(value, "status"))
 		if status == "completed" || status == "failed" || status == "cancelled" {
+			fmt.println(fmt.tprintf("[VOICE-DEBUG] RTP complete packets=%d samples=%d status=%s", voice.rtp_packets_received, voice.rtp_samples_received, status))
 			voice_finish_playback(voice)
 		}
 		return
@@ -284,6 +286,8 @@ voice_handle_rtp :: proc(voice: ^Voice_State, packet: []byte) {
 	if !voice.accept_audio && !marker do return
 	if marker {
 		voice.accept_audio = true
+		voice.rtp_packets_received = 0
+		voice.rtp_samples_received = 0
 		fmt.println(fmt.tprintf("[VOICE-DEBUG] RTP start sequence=%d", sequence))
 	}
 	if voice.has_audio_sequence && sequence != voice.last_audio_sequence + 1 {
@@ -295,6 +299,8 @@ voice_handle_rtp :: proc(voice: ^Voice_State, packet: []byte) {
 		sample := i16(u16(payload[index * 2]) << 8 | u16(payload[index * 2 + 1]))
 		append(&voice.playback_queue, sample)
 	}
+	voice.rtp_packets_received += 1
+	voice.rtp_samples_received += u64(len(payload) / 2)
 	if len(voice.playback_queue) > VOICE_AUDIO_SAMPLE_RATE * 30 {
 		resize(&voice.playback_queue, 0)
 		voice.accept_audio = false

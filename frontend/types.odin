@@ -87,6 +87,8 @@ Voice_State :: struct {
 	last_audio_sequence: u16,
 	has_audio_sequence: bool,
 	accept_audio: bool,
+	rtp_packets_received: u32,
+	rtp_samples_received: u64,
 	status: string,
 }
 
