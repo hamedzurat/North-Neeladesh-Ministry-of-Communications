@@ -1331,6 +1331,17 @@ impl Backend {
         call.phase = CallPhase::Connected;
         call.connected_at = Some(Instant::now());
         call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
+        if self.neel_story_active()
+            && caller == stories::neel_university::NEEL_LINE
+            && callee == stories::neel_university::SHADHIN_LINE
+            && self.neel_story_beat == stories::neel_university::Beat::ProfessorRouting
+        {
+            println!(
+                "[TRANSITION] Neel beat {:?} -> ArnabDirectory after connection {} -> {}",
+                self.neel_story_beat, caller, callee
+            );
+            self.neel_story_beat = stories::neel_university::Beat::ArnabDirectory;
+        }
         self.sync_call_state();
         self.audio_call = Some((caller, callee));
         let sequence = self.audio_sequence;
@@ -1525,7 +1536,9 @@ impl Backend {
                         ),
                     );
                 }
-            } else if self.neel_story_active() && call.caller == stories::neel_university::NEEL_LINE
+            } else if self.neel_story_active()
+                && call.caller == stories::neel_university::NEEL_LINE
+                && self.neel_story_beat == stories::neel_university::Beat::ProfessorRouting
             {
                 println!(
                     "[TRANSITION] Neel beat {:?} -> ArnabDirectory after call {} -> {}",
