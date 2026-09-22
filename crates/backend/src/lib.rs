@@ -2093,6 +2093,7 @@ fn directory_pages(digits: [u8; 4]) -> Vec<exchange_protocol::DirectoryPage> {
 }
 fn simple_place(line: u8) -> String {
     match line {
+        1 => "SHAPLA APARTMENTS".into(),
         2 => "NEEL UNIVERSITY".into(),
         3 => "SHADHIN HOUSING".into(),
         4 => "MEGHNA ABASHON".into(),
@@ -2102,6 +2103,11 @@ fn simple_place(line: u8) -> String {
 }
 fn directory_user(line: u8) -> (String, String, String) {
     match line {
+        1 => (
+            "Nusrat Rahman".into(),
+            "senior architect".into(),
+            "Shapla Apartments".into(),
+        ),
         2 => (
             "Prof. Kashem".into(),
             "professor".into(),
@@ -2137,6 +2143,23 @@ fn directory_line(id: u16) -> Option<u8> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod directory_tests {
+    use super::directory_pages;
+
+    #[test]
+    fn shapla_directory_uses_its_story_place() {
+        let page = &directory_pages([0, 0, 0, 1])[0];
+        assert_eq!(page.heading, "SHAPLA APARTMENTS");
+        assert!(
+            page.lines
+                .iter()
+                .any(|line| line == "DESTINATION // SHAPLA APARTMENTS")
+        );
+    }
+}
+
 fn operator_line(cords: &[CordConnection]) -> Option<u8> {
     cords.iter().find_map(|c| match (&c.first, &c.second) {
         (PortId::Subscriber(n), PortId::Operator) | (PortId::Operator, PortId::Subscriber(n)) => {
