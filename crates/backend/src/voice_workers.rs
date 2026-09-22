@@ -1386,9 +1386,15 @@ impl TextToSpeech for PersistentPocketTtsCommand {
 }
 
 fn pocket_tts_single_pass_text(text: &str) -> String {
-    text.replace(". ", ", ")
-        .replace("! ", ", ")
-        .replace("? ", ", ")
+    text.chars()
+        .map(|character| match character {
+            '.' | '!' | '?' | ',' | ';' | ':' => ' ',
+            character => character,
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 const POCKET_TTS_MAX_CHARS: usize = 96;

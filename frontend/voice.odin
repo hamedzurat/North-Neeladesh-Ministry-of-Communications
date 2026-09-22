@@ -279,12 +279,13 @@ voice_handle_rtp :: proc(voice: ^Voice_State, packet: []byte) {
 	if len(payload) % 2 != 0 do return
 	ssrc := u32(packet[8]) << 24 | u32(packet[9]) << 16 | u32(packet[10]) << 8 | u32(packet[11])
 	if ssrc != VOICE_AUDIO_SSRC do return
+	sequence := u16(packet[2]) << 8 | u16(packet[3])
 	marker := packet[1] & 0x80 != 0
 	if !voice.accept_audio && !marker do return
 	if marker {
 		voice.accept_audio = true
+		fmt.println(fmt.tprintf("[VOICE-DEBUG] RTP start sequence=%d", sequence))
 	}
-	sequence := u16(packet[2]) << 8 | u16(packet[3])
 	if voice.has_audio_sequence && sequence != voice.last_audio_sequence + 1 {
 		// UDP loss is audible but does not invalidate the rest of the turn.
 	}

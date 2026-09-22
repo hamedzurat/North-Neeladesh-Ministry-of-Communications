@@ -1282,6 +1282,11 @@ impl Backend {
         let duration = (samples.len() as u64)
             .div_ceil(u64::from(VOICE_AUDIO_SAMPLE_RATE))
             .max(1);
+        eprintln!(
+            "[VOICE-DEBUG] opening audio generated caller={caller} callee={callee} samples={} packets={}",
+            samples.len(),
+            samples.len().div_ceil(VOICE_AUDIO_PACKET_SAMPLES)
+        );
         call.audio_duration_seconds = duration;
         call.phase = CallPhase::Connected;
         call.connected_at = Some(Instant::now());
@@ -1364,8 +1369,10 @@ impl Backend {
             }
         }
         let Some(text) = Self::opening_dialogue(caller) else {
+            eprintln!("[VOICE-DEBUG] no defined opening dialogue caller={caller} callee={callee}");
             return Ok(Vec::new());
         };
+        eprintln!("[VOICE-DEBUG] synthesizing opening dialogue caller={caller} text={text:?}");
         let samples =
             with_persistent_pocket_tts(|tts| tts.synthesize(&caller_profile.voice_id, text))?;
         if samples.is_empty() {
@@ -2711,6 +2718,12 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
             })
             .unwrap_or_default();
         if let Some(address) = audio_peer {
+            if !packets.is_empty() {
+                eprintln!(
+                    "[VOICE-DEBUG] sending {} queued RTP packets to {address}",
+                    packets.len()
+                );
+            }
             for packet in packets {
                 socket.send_to(&packet, address)?;
             }
