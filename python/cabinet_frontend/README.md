@@ -24,6 +24,9 @@ is not on localhost.
 
 ## Physical hardware smoke test
 
+For the complete laptop-to-Pi Wi‑Fi deployment procedure, see
+[`../../docs/deploy-cabinet-wifi.md`](../../docs/deploy-cabinet-wifi.md).
+
 Run this directly on the Pi after setup. It does not connect to the game
 backend. It walks the sixteen WS2812 pixels, writes test values to the TM1637,
 renders a wrapped e-paper test page, scans MCP pairs, and listens for rotary

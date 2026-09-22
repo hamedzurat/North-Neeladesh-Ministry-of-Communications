@@ -193,6 +193,9 @@ input snapshots and would compete over topology and state revision.
 For a networked arcade setup, run the backend on the laptop/arcade host with a
 LAN-reachable address, then configure the Pi to use that host:
 
+See [`docs/deploy-cabinet-wifi.md`](docs/deploy-cabinet-wifi.md) for the full
+deployment and Wi‑Fi troubleshooting procedure.
+
 ```sh
 # On the laptop or arcade host. Restrict these ports with the local firewall.
 just backend-debug address=0.0.0.0:7878 voice_address=0.0.0.0:7879
