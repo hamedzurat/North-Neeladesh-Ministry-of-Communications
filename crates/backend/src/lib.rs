@@ -1255,7 +1255,10 @@ impl Backend {
         let Some(call) = self.calls.get_mut(index) else {
             return;
         };
-        if self.tts_prepared {
+        let has_opening_audio = self.story_enabled
+            && (Self::opening_dialogue(caller).is_some()
+                || story_audio_path(caller, callee).is_some());
+        if self.tts_prepared && !has_opening_audio {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
@@ -1265,6 +1268,10 @@ impl Backend {
                 2
             };
         } else {
+            eprintln!(
+                "[VOICE-DEBUG] queueing opening audio caller={caller} callee={callee} has_opening_audio={has_opening_audio} tts_prepared={}",
+                self.tts_prepared
+            );
             call.phase = CallPhase::Held;
             call.connected_at = None;
             call.audio_duration_seconds = 0;
@@ -2976,6 +2983,9 @@ pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) ->
             (response, state.take_pending_tts(), state.config.clone())
         };
         for (caller, callee) in pending_tts {
+            eprintln!(
+                "[VOICE-DEBUG] dispatching opening audio to TTS caller={caller} callee={callee}"
+            );
             let worker_backend = Arc::clone(&backend);
             let call_config = config.clone();
             thread::spawn(move || {
