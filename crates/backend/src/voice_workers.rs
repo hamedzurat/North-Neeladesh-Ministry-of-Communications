@@ -1356,8 +1356,7 @@ impl PersistentPocketTtsCommand {
 
 impl TextToSpeech for PersistentPocketTtsCommand {
     fn synthesize(&mut self, voice_id: &str, text: &str) -> Result<Vec<i16>, VoiceError> {
-        let input = pocket_tts_single_pass_text(text);
-        let output = self.inner.synthesize(voice_id, &input)?;
+        let output = self.inner.synthesize(voice_id, text)?;
         if output.is_empty() {
             return Err(VoiceError::new(
                 "tts_empty_output",
@@ -1373,8 +1372,7 @@ impl TextToSpeech for PersistentPocketTtsCommand {
         text: &str,
         emit: &mut dyn FnMut(&[i16]) -> Result<(), VoiceError>,
     ) -> Result<usize, VoiceError> {
-        let input = pocket_tts_single_pass_text(text);
-        let emitted = self.inner.synthesize_stream(voice_id, &input, emit)?;
+        let emitted = self.inner.synthesize_stream(voice_id, text, emit)?;
         if emitted == 0 {
             return Err(VoiceError::new(
                 "tts_empty_output",
@@ -1383,18 +1381,6 @@ impl TextToSpeech for PersistentPocketTtsCommand {
         }
         Ok(emitted)
     }
-}
-
-fn pocket_tts_single_pass_text(text: &str) -> String {
-    text.chars()
-        .map(|character| match character {
-            '.' | '!' | '?' | ',' | ';' | ':' => ' ',
-            character => character,
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 const POCKET_TTS_MAX_CHARS: usize = 96;

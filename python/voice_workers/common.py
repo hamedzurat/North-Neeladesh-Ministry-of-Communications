@@ -51,6 +51,25 @@ def dialogue_prompt_template() -> str:
     return DEFAULT_DIALOGUE_PROMPT
 
 
+def recognition_prompt() -> str:
+    """Return configured names and places as Whisper's initial vocabulary."""
+    path = Path(os.environ.get("NN_EXCHANGE_CONFIG", Path(__file__).resolve().parents[2] / "exchange.toml"))
+    try:
+        with path.open("rb") as config_file:
+            subscribers = tomllib.load(config_file).get("subscribers", [])
+    except (OSError, tomllib.TOMLDecodeError):
+        return ""
+    terms: list[str] = []
+    for subscriber in subscribers:
+        if not isinstance(subscriber, dict):
+            continue
+        for key in ("place", "name"):
+            value = subscriber.get(key)
+            if isinstance(value, str) and value.strip() and value not in terms:
+                terms.append(value.strip())
+    return ", ".join(terms)
+
+
 def fail(message: str) -> NoReturn:
     print(f"VOICE WORKER ERROR // {message}", file=sys.stderr, flush=True)
     raise SystemExit(1)

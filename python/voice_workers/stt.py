@@ -8,7 +8,7 @@ import sys
 import tempfile
 import wave
 
-from .common import WHISPER_BINARY, WHISPER_MODEL, fail, worker_timeout
+from .common import WHISPER_BINARY, WHISPER_MODEL, fail, recognition_prompt, worker_timeout
 
 SAMPLE_RATE = 16_000
 MAX_PCM_BYTES = SAMPLE_RATE * 2 * 60
@@ -46,6 +46,9 @@ def main() -> int:
             "--no-timestamps",
             "--no-prints",
         ]
+        vocabulary = recognition_prompt()
+        if vocabulary:
+            command.extend(["--prompt", vocabulary])
         command.extend(shlex.split(os.environ.get("NN_WHISPER_EXTRA_ARGS", "")))
         try:
             result = subprocess.run(
