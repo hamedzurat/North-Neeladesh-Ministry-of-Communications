@@ -28,7 +28,7 @@ voice_vocabulary = [
     "Bagha News",
     "Koyal Market",
     "Secret Police",
-    "Shonarpara Exchange Tower",
+    "Shonarpara Tower",
     "bKash",
 ]
 
@@ -139,7 +139,7 @@ voice_id = "pocket-line-10"
 
 [[subscribers]]
 line = 11
-place = "SHONARPARA EXCHANGE TOWER"
+place = "SHONARPARA TOWER"
 name = "Nahid"
 role = "bKash scammer"
 private_info = "Uses urgent payment-account stories to pressure strangers into revealing account details."

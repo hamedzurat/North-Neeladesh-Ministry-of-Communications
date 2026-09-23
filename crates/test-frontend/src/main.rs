@@ -1435,7 +1435,7 @@ fn run_cross_thread_nahid(
             ),
         })?;
     }
-    let report = "Nahid is running a bKash scam from Shonarpara Exchange Tower. Send police.";
+    let report = "Nahid is running a bKash scam from Shonarpara Tower. Send police.";
     let response = send_text(
         text,
         TextInputMessage {
@@ -1784,7 +1784,7 @@ fn run_nahid(
             status: "accepted",
             text: "You connect Nahid's line to the Operator before reporting him.",
         })?;
-        let report = "Nahid is running a bKash scam from Shonarpara Exchange Tower. Send police.";
+        let report = "Nahid is running a bKash scam from Shonarpara Tower. Send police.";
         let response = send_text(
             text,
             TextInputMessage {
