@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fs;
 use std::io::{self, ErrorKind};
@@ -202,7 +202,7 @@ pub struct Backend {
     story_followup_call_started: bool,
     story_completed: bool,
     story_thread: String,
-    story_conversation: Vec<ConversationTurn>,
+    story_conversations: HashMap<u8, Vec<ConversationTurn>>,
     ring_active_line: i16,
 }
 
@@ -309,7 +309,7 @@ impl Backend {
             story_followup_call_started: false,
             story_completed: false,
             story_thread: "intertwined".into(),
-            story_conversation: Vec::new(),
+            story_conversations: HashMap::new(),
             ring_active_line: -1,
         };
         backend
@@ -428,7 +428,11 @@ impl Backend {
                 String::new()
             },
             permitted_knowledge: vec![],
-            recent_conversation: self.story_conversation.clone(),
+            recent_conversation: self
+                .story_conversations
+                .get(&caller)
+                .cloned()
+                .unwrap_or_default(),
             current_input: None,
         }
     }
@@ -509,7 +513,7 @@ impl Backend {
         self.story_followup_pending = false;
         self.story_followup_call_started = false;
         self.story_completed = false;
-        self.story_conversation.clear();
+        self.story_conversations.clear();
         self.ring_active_line = -1;
         self.cancelled_voice_turn = None;
         self.voice_conversations.clear();
@@ -1094,12 +1098,13 @@ impl Backend {
         {
             return;
         }
-        self.story_conversation.push(ConversationTurn {
+        let conversation = self.story_conversations.entry(caller).or_default();
+        conversation.push(ConversationTurn {
             speaker: speaker.into(),
             text: text.into(),
         });
-        if self.story_conversation.len() > 6 {
-            self.story_conversation.remove(0);
+        if conversation.len() > 6 {
+            conversation.remove(0);
         }
     }
 
@@ -1113,7 +1118,10 @@ impl Backend {
         let index = self.calls.iter().position(|c| c.caller == line)?;
         if line == stories::shapla_apartments::CALLER_LINE && input.cord_topology.is_empty() {
             if self.story_beat == stories::shapla_apartments::Beat::EmergencyCall
-                && self.story_conversation.len() > 2
+                && self
+                    .story_conversations
+                    .get(&line)
+                    .is_some_and(|conversation| conversation.len() > 2)
             {
                 self.story_beat = stories::shapla_apartments::Beat::BadFollowup;
                 self.story_followup_pending = true;
