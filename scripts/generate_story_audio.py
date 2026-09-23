@@ -66,7 +66,7 @@ def main() -> int:
     tariq_voice, _ = profile(config, 8)
     kamal_voice, kamal_name = profile(config, 9)
     rehana_voice, _ = profile(config, 10)
-    nahid_voice, nahid_name = profile(config, 11)
+    nahid_voice, _ = profile(config, 11)
     bela_recordings = {
         "professor_arnab.wav": [
             (kashem_voice, f"{kashem_name}: I would like to speak with {arnab_name}."),
@@ -123,7 +123,7 @@ def main() -> int:
     for victim_line in (0, 1, 4, 5, 10):
         victim_voice, victim_name = profile(config, victim_line)
         recordings = [
-            (nahid_voice, f"{nahid_name}: I'm Nahid from bKash. There is an urgent problem with your account."),
+            (nahid_voice, f"I'm Nahid from bKash. There is an urgent problem with your account."),
             (victim_voice, f"{victim_name}: What kind of problem?"),
             (nahid_voice, "Nahid: Confirm the code I just sent, and I can secure your balance immediately."),
             (victim_voice, "The caller sounds suspicious, so I am not sharing any code."),

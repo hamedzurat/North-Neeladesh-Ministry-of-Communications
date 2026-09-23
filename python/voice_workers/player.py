@@ -69,6 +69,10 @@ def task_guidance(task: str) -> str:
 def validate_task_output(task: str, text: str) -> None:
     lowered_task = task.lower()
     lowered_text = text.lower()
+    if "shonarpara" in lowered_task:
+        if not all(word in lowered_text for word in ("nahid", "police", "shonarpara")):
+            fail("player output did not report Nahid and Shonarpara to Police")
+        return
     if "water" in lowered_task:
         if "water" not in lowered_text or any(
             word in lowered_text for word in ("ems", "police", "ambulance", "dispatch")

@@ -149,6 +149,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             initial_money,
         );
     }
+    if path == "cross_thread_nahid" {
+        return run_cross_thread_nahid(
+            &mut backend,
+            &mut text,
+            &mut debug,
+            &mut log,
+            &player_command,
+        );
+    }
     if path.starts_with("neel_") {
         return run_neel_story(
             &mut backend,
@@ -1330,6 +1339,130 @@ fn run_cross_thread_success(
         destination: 5,
         status: "accepted",
         text: "Story paths complete.",
+    })?;
+    Ok(())
+}
+
+fn run_cross_thread_nahid(
+    backend: &mut TcpStream,
+    text: &mut TcpStream,
+    debug: &mut TcpStream,
+    log: &mut GameLog,
+    player_command: &Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut sequence = 0;
+    let mut revision = 0;
+    let mut state = exchange(
+        backend,
+        input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+    )?;
+    revision = state.state_revision;
+    for caller in [1, 2, 6, 11] {
+        if !state
+            .output
+            .calls
+            .iter()
+            .any(|call| call.caller_line == caller)
+        {
+            return Err(format!("intertwined test did not start LINE {caller}").into());
+        }
+    }
+    let nahid = state
+        .output
+        .calls
+        .iter()
+        .find(|call| call.caller_line == 11)
+        .cloned()
+        .ok_or("intertwined test did not create Nahid's call")?;
+    state = exchange(
+        backend,
+        input(
+            &mut sequence,
+            revision,
+            vec![cord(PortId::Subscriber(11), PortId::Operator)],
+            false,
+            [0, 0, 0, 1],
+        ),
+    )?;
+    revision = state.state_revision;
+    let mut turns = Vec::new();
+    for (turn_id, task) in [
+        "ask Nahid to explain who he is and where he is calling from",
+        "ask Nahid why a bKash account needs an urgent verification code",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let utterance = player_utterance(player_command, &nahid, revision, &turns, task)?;
+        let response = send_text(
+            text,
+            TextInputMessage {
+                protocol_version: TEXT_PROTOCOL_VERSION,
+                session_id: 1,
+                turn_id: turn_id as u64 + 1,
+                state_revision: revision,
+                held_controls: HeldControls::default(),
+                text: utterance.clone(),
+            },
+        )?;
+        let answer = response.response_text.clone().unwrap_or_default();
+        turns.push(Turn {
+            speaker: "player".into(),
+            text: utterance.clone(),
+        });
+        turns.push(Turn {
+            speaker: "subscriber".into(),
+            text: answer.clone(),
+        });
+        log.row(CsvRow {
+            event: "text_turn",
+            sequence,
+            revision,
+            caller: 11,
+            destination: nahid.requested_callee_line,
+            status: "accepted",
+            text: &format!(
+                "player={utterance} | service=caller | classification=none | subscriber={answer}"
+            ),
+        })?;
+    }
+    let report = "Nahid is running a bKash scam from Shonarpara Exchange Tower. Send police.";
+    let response = send_text(
+        text,
+        TextInputMessage {
+            protocol_version: TEXT_PROTOCOL_VERSION,
+            session_id: 1,
+            turn_id: 3,
+            state_revision: revision,
+            held_controls: HeldControls {
+                police: true,
+                ..HeldControls::default()
+            },
+            text: report.into(),
+        },
+    )?;
+    if response.classification.as_deref() != Some("success") {
+        return Err(format!("intertwined Nahid report failed: {response:?}").into());
+    }
+    let snapshot = debug_snapshot(debug)?;
+    if snapshot.snapshot.nahid_story_beat != "Stopped"
+        || snapshot.snapshot.shapla_story_beat != "EmergencyCall"
+        || snapshot.snapshot.neel_story_beat != "ProfessorRouting"
+    {
+        return Err(format!(
+            "intertwined stories changed unexpectedly: {:?}",
+            snapshot.snapshot
+        )
+        .into());
+    }
+    log.row(CsvRow {
+        event: "police_report",
+        sequence,
+        revision,
+        caller: 11,
+        destination: 0,
+        status: "success",
+        text: report,
     })?;
     Ok(())
 }

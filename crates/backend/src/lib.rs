@@ -1074,6 +1074,10 @@ impl Backend {
             self.calls.remove(index);
             return None;
         }
+        if line == stories::nahid::NAHID_LINE && input.cord_topology.is_empty() {
+            self.calls.remove(index);
+            return None;
+        }
         if line == stories::fallen_mother::CALLER_LINE && input.cord_topology.is_empty() {
             if self.story_beat == stories::fallen_mother::Beat::EmergencyCall
                 && self
@@ -1462,6 +1466,9 @@ impl Backend {
             },
             finished_elapsed_seconds: self.elapsed_seconds(),
         });
+        if call.caller == stories::nahid::NAHID_LINE && !self.nahid_victims.contains(&call.callee) {
+            self.nahid_victims.push(call.callee);
+        }
         if self.audio_call == Some((call.caller, call.callee)) {
             self.audio_queue.clear();
             self.audio_call = None;
@@ -1497,7 +1504,6 @@ impl Backend {
                 && self.nahid_beat == stories::nahid::Beat::Scamming
             {
                 self.nahid_scam_count = self.nahid_scam_count.saturating_add(1);
-                self.nahid_victims.push(call.callee);
                 self.log(
                     "STORY nahid",
                     format_args!("completed scam {} of 5", self.nahid_scam_count),

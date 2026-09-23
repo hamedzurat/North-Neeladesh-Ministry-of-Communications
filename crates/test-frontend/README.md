@@ -52,6 +52,7 @@ just story-test dirty_neutral /tmp/dirty-neutral.log
 just story-test dirty_bad /tmp/dirty-bad.log
 just story-test nahid_police_success /tmp/nahid-police-success.log
 just story-test nahid_five_scams /tmp/nahid-five-scams.log
+just story-test cross_thread_nahid /tmp/cross-thread-nahid.log
 just story-test cross_thread_success /tmp/cross-thread-success.log
 just story-test-all
 ```
