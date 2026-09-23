@@ -123,7 +123,11 @@ impl Default for Backend {
 
 impl Backend {
     fn log(&self, category: &str, message: impl Display) {
-        println!("[+{:04}s] [{category}] {message}", self.elapsed_seconds());
+        println!(
+            "[run={} +{:04}s] [{category}] {message}",
+            self.run_generation as u32 + 1,
+            self.elapsed_seconds()
+        );
     }
 
     fn subscriber(&self, line: u8) -> &SubscriberConfig {
@@ -438,6 +442,7 @@ impl Backend {
         self.sync_story_lamp();
         self.state.shift.active_call_count = self.calls.len() as u8;
         self.state.game_phase = GamePhase::Shift;
+        self.log("RUN", "reset; all registered story threads initialized");
     }
 
     pub fn debug_snapshot(&self) -> DebugSnapshot {
@@ -1902,8 +1907,10 @@ pub fn serve_with_voice_debug_and_text(
                 println!("[FRONTEND] debug connected peer={peer}");
                 let connection_backend = Arc::clone(&debug_backend);
                 thread::spawn(move || {
-                    if let Err(error) = handle_debug_connection(stream, connection_backend) {
-                        eprintln!("[FRONTEND ERROR] debug connection closed: {error}");
+                    let result = handle_debug_connection(stream, connection_backend);
+                    println!("[FRONTEND] debug closed peer={peer}");
+                    if let Err(error) = result {
+                        eprintln!("[FRONTEND ERROR] debug connection failed peer={peer}: {error}");
                     }
                 });
             }
@@ -1920,8 +1927,10 @@ pub fn serve_with_voice_debug_and_text(
                 println!("[FRONTEND] text connected peer={peer}");
                 let connection_backend = Arc::clone(&text_backend);
                 thread::spawn(move || {
-                    if let Err(error) = handle_text_connection(stream, connection_backend) {
-                        eprintln!("[FRONTEND ERROR] text connection closed: {error}");
+                    let result = handle_text_connection(stream, connection_backend);
+                    println!("[FRONTEND] text closed peer={peer}");
+                    if let Err(error) = result {
+                        eprintln!("[FRONTEND ERROR] text connection failed peer={peer}: {error}");
                     }
                 });
             }
@@ -1936,8 +1945,10 @@ pub fn serve_with_voice_debug_and_text(
         println!("[FRONTEND] game connected peer={peer}");
         let connection_backend = Arc::clone(&backend);
         thread::spawn(move || {
-            if let Err(error) = handle_connection(stream, connection_backend) {
-                eprintln!("[FRONTEND ERROR] game connection closed: {error}");
+            let result = handle_connection(stream, connection_backend);
+            println!("[FRONTEND] game closed peer={peer}");
+            if let Err(error) = result {
+                eprintln!("[FRONTEND ERROR] game connection failed peer={peer}: {error}");
             }
         });
     }
@@ -2033,6 +2044,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                     if let Ok(mut state) = backend.lock() {
                         state.voice_status = Some(VoiceStatus::Transcribing);
                     }
+                    let turn_id = input.turn_id;
                     thread::spawn(move || {
                         let transcript_backend = Arc::clone(&worker_backend);
                         let result = generate_operator_response(
@@ -2052,8 +2064,9 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                     state.log(
                                         "VOICE",
                                         format_args!(
-                                            "transcript caller={} service_turn={} police={} ems={} text={:?}",
+                                            "transcript caller={} turn={} service_turn={} police={} ems={} text={:?}",
                                             caller,
+                                            turn_id,
                                             service_turn,
                                             state.voice_turn_controls.police,
                                             state.voice_turn_controls.ems,
