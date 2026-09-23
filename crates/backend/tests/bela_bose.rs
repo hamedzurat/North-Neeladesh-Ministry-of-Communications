@@ -126,7 +126,7 @@ fn professor_must_wait_for_delayed_ring_activation_before_direct_connection() {
 }
 
 #[test]
-fn reset_starts_registered_story_calls_together() {
+fn reset_starts_all_three_story_callers_together() {
     let mut backend = Backend::new_exchange();
     let reset = backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
@@ -134,6 +134,9 @@ fn reset_starts_registered_story_calls_together() {
     });
 
     assert!(reset.accepted);
+    assert_eq!(reset.snapshot.shapla_story_beat, "EmergencyCall");
+    assert_eq!(reset.snapshot.neel_story_beat, "ProfessorRouting");
+    assert_eq!(reset.snapshot.dirty_work_story_beat, "Instruction");
 
     let response = backend.apply_input_message(input(&backend, 1, vec![], [0, 0, 0, 1]));
     let callers = response
