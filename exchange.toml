@@ -8,6 +8,8 @@ call_arrival_interval_seconds = 0
 story_seed = 1
 
 # Speech-recognition vocabulary and common Whisper substitutions.
+# `private_info` on each subscriber is visible in the operator/debug display.
+# It is not automatically given to callers; story rules grant it explicitly.
 voice_vocabulary = [
     "Shapla Apartments",
     "Neel University",
@@ -42,6 +44,7 @@ line = 0
 place = "LINE 00"
 name = "SUBSCRIBER 00"
 role = "unassigned"
+private_info = "Keeps a brass compass inherited from a grandfather."
 voice_id = "pocket-line-0"
 
 [[subscribers]]
@@ -49,6 +52,7 @@ line = 1
 place = "SHAPLA APARTMENTS"
 name = "Nusrat Rahman"
 role = "senior architect"
+private_info = "Keeps a blue scarf from her first architecture job."
 voice_id = "pocket-line-1"
 
 [[subscribers]]
@@ -56,6 +60,7 @@ line = 2
 place = "NEEL UNIVERSITY"
 name = "Prof. Kashem"
 role = "professor"
+private_info = "Collects handwritten maps of old university buildings."
 voice_id = "pocket-line-2"
 
 [[subscribers]]
@@ -63,6 +68,7 @@ line = 3
 place = "SHADHIN HOUSING"
 name = "Arnab Bhattacharjee"
 role = "recently hired graduate"
+private_info = "Still carries a fountain pen given by his first supervisor."
 voice_id = "pocket-line-3"
 
 [[subscribers]]
@@ -70,6 +76,7 @@ line = 4
 place = "Meghna Abashon"
 name = "Bela Bose"
 role = "dog owner"
+private_info = "Bela Bose has a dog named Momo."
 voice_id = "pocket-line-4"
 
 [[subscribers]]
@@ -77,6 +84,7 @@ line = 5
 place = "Padma Nibash"
 name = "Bela Bose"
 role = "cat owner"
+private_info = "Bela Bose has a cat named Tuli."
 voice_id = "pocket-line-5"
 
 [[subscribers]]
@@ -84,6 +92,7 @@ line = 6
 place = "LINE 06"
 name = "SUBSCRIBER 06"
 role = "unassigned"
+private_info = "Repairs old radios on weekends."
 voice_id = "pocket-line-6"
 
 [[subscribers]]
@@ -91,6 +100,7 @@ line = 7
 place = "LINE 07"
 name = "SUBSCRIBER 07"
 role = "unassigned"
+private_info = "Always keeps a packet of cardamom tea nearby."
 voice_id = "pocket-line-7"
 
 [[subscribers]]
@@ -98,6 +108,7 @@ line = 8
 place = "LINE 08"
 name = "SUBSCRIBER 08"
 role = "unassigned"
+private_info = "Knows how to repair mechanical clocks."
 voice_id = "pocket-line-8"
 
 [[subscribers]]
@@ -105,6 +116,7 @@ line = 9
 place = "LINE 09"
 name = "SUBSCRIBER 09"
 role = "unassigned"
+private_info = "Has a collection of pressed leaves."
 voice_id = "pocket-line-9"
 
 [[subscribers]]
@@ -112,6 +124,7 @@ line = 10
 place = "LINE 10"
 name = "SUBSCRIBER 10"
 role = "unassigned"
+private_info = "Prefers handwritten letters to telephone calls."
 voice_id = "pocket-line-10"
 
 [[subscribers]]
@@ -119,4 +132,5 @@ line = 11
 place = "LINE 11"
 name = "SUBSCRIBER 11"
 role = "unassigned"
+private_info = "Makes excellent mango pickle every summer."
 voice_id = "pocket-line-11"

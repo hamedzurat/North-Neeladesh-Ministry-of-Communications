@@ -463,6 +463,7 @@ pub struct DebugSubscriberState {
     pub status: String,
     pub availability: String,
     pub pressure: u32,
+    pub private_info: String,
     pub current_goal: Option<String>,
     pub status_flags: Vec<String>,
 }

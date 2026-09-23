@@ -33,8 +33,8 @@ mod voice_workers;
 
 use voice_workers::{
     CommandSpec, CommandSpeechToText, CommandTextClassifier, ConversationTurn, DialogueGenerator,
-    PersistentCommandDialogueGenerator, PersistentPocketTtsCommand, ResponseContext, SpeechToText,
-    SubscriberProfile, TextClassifier, TextToSpeech, VoiceError,
+    KnowledgeRecord, PersistentCommandDialogueGenerator, PersistentPocketTtsCommand,
+    ResponseContext, SpeechToText, SubscriberProfile, TextClassifier, TextToSpeech, VoiceError,
 };
 mod stories;
 
@@ -288,6 +288,22 @@ impl Backend {
             && !self.state.tap_bridge_audio_active
     }
 
+    fn permitted_story_knowledge(&self, caller: u8) -> Vec<KnowledgeRecord> {
+        if self.neel_story_active()
+            && caller == stories::neel_university::SHADHIN_LINE
+            && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory
+        {
+            return vec![KnowledgeRecord {
+                fact: self
+                    .subscriber(stories::neel_university::BELA_CAT_LINE)
+                    .private_info
+                    .clone(),
+                learned_from: "Arnab's private memory".into(),
+            }];
+        }
+        Vec::new()
+    }
+
     fn voice_context(&self, caller: u8, callee: u8) -> ResponseContext {
         let caller_profile = self.subscriber(caller);
         let callee_profile = self.subscriber(callee);
@@ -333,7 +349,7 @@ impl Backend {
             } else {
                 String::new()
             },
-            permitted_knowledge: vec![],
+            permitted_knowledge: self.permitted_story_knowledge(caller),
             recent_conversation: self
                 .story_conversations
                 .get(&caller)
@@ -452,6 +468,7 @@ impl Backend {
                     status: if active { "off_hook" } else { "on_hook" }.into(),
                     availability: if active { "off_hook" } else { "on_hook" }.into(),
                     pressure: u32::from(active),
+                    private_info: subscriber.private_info.clone(),
                     current_goal: None,
                     status_flags: vec![subscriber.role.clone()],
                 }
@@ -2602,5 +2619,20 @@ fn handle_debug_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) 
             .apply_debug_command(request);
         write_frame(&mut stream, &response)
             .map_err(|e| io::Error::other(format!("debug response write failed: {e}")))?;
+    }
+}
+
+#[cfg(test)]
+mod story_knowledge_tests {
+    use super::Backend;
+
+    #[test]
+    fn private_facts_are_only_granted_to_arnab_for_the_neel_story() {
+        let mut backend = Backend::new_exchange();
+        assert!(backend.voice_context(2, 3).permitted_knowledge.is_empty());
+        backend.neel_story_beat = crate::stories::neel_university::Beat::ArnabDirectory;
+        let arnab_knowledge = backend.voice_context(3, 4).permitted_knowledge;
+        assert_eq!(arnab_knowledge.len(), 1);
+        assert!(arnab_knowledge[0].fact.contains("cat named Tuli"));
     }
 }

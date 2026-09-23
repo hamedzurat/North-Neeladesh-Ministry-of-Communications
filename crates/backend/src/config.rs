@@ -24,6 +24,7 @@ pub(crate) struct SubscriberConfig {
     pub(crate) place: String,
     pub(crate) name: String,
     pub(crate) role: String,
+    pub(crate) private_info: String,
     #[serde(default)]
     pub(crate) voice_id: String,
 }
@@ -82,6 +83,11 @@ impl GameConfig {
             assert!(
                 !subscriber.role.trim().is_empty(),
                 "exchange config {path:?}: line {} has no role",
+                subscriber.line
+            );
+            assert!(
+                !subscriber.private_info.trim().is_empty(),
+                "exchange config {path:?}: line {} has no private_info",
                 subscriber.line
             );
             assert!(
