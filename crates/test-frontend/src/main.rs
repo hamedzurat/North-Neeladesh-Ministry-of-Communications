@@ -3,6 +3,7 @@ use std::fs::OpenOptions;
 use std::io::{self, BufRead, Write};
 use std::net::TcpStream;
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use exchange_protocol::{
     CordConnection, DEBUG_PROTOCOL_VERSION, DebugCommand, DebugRequest, DebugResponse,
@@ -123,6 +124,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut backend = TcpStream::connect(&backend_address)?;
     let mut text = TcpStream::connect(&text_address)?;
     let mut debug = TcpStream::connect(&debug_address)?;
+    for stream in [&backend, &text, &debug] {
+        stream.set_read_timeout(Some(Duration::from_secs(120)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(120)))?;
+    }
     let initial_debug = debug_command(&mut debug, DebugCommand::ResetRun)?;
     if initial_debug.snapshot.shapla_story_beat != "EmergencyCall"
         || initial_debug.snapshot.neel_story_beat != "ProfessorRouting"
@@ -144,6 +149,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if path.starts_with("neel_") {
         return run_neel_story(
+            &mut backend,
+            &mut text,
+            &mut debug,
+            &mut log,
+            &player_command,
+            path.as_str(),
+            initial_money,
+        );
+    }
+    if path.starts_with("dirty_") {
+        return run_dirty_work(
             &mut backend,
             &mut text,
             &mut debug,
@@ -1304,6 +1320,256 @@ fn run_cross_thread_success(
         text: "Story paths complete.",
     })?;
     Ok(())
+}
+
+fn run_dirty_work(
+    backend: &mut TcpStream,
+    text: &mut TcpStream,
+    debug: &mut TcpStream,
+    log: &mut GameLog,
+    player_command: &Option<String>,
+    path: &str,
+    initial_money: i32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut sequence = 0;
+    let mut revision = 0;
+    let mut turns = Vec::new();
+    let mut state = exchange(
+        backend,
+        input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+    )?;
+    revision = state.state_revision;
+    let rahman = state
+        .output
+        .calls
+        .iter()
+        .find(|call| call.caller_line == 6)
+        .cloned()
+        .ok_or("Dirty Work did not create the Rahman call")?;
+    log.row(CsvRow {
+        event: "state",
+        sequence,
+        revision,
+        caller: 6,
+        destination: 0,
+        status: "accepted",
+        text: "phase=Waiting",
+    })?;
+
+    state = exchange(
+        backend,
+        input(
+            &mut sequence,
+            revision,
+            vec![cord(PortId::Subscriber(6), PortId::Operator)],
+            false,
+            [0, 0, 0, 1],
+        ),
+    )?;
+    revision = state.state_revision;
+    log.row(CsvRow {
+        event: "operator",
+        sequence,
+        revision,
+        caller: 6,
+        destination: 0,
+        status: "accepted",
+        text: "You connect Agent Rahman to the Operator.",
+    })?;
+
+    for (turn_id, task) in [
+        "answer Agent Rahman with your name",
+        "confirm your name and acknowledge the instruction",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let utterance = player_utterance(player_command, &rahman, revision, &turns, task)?;
+        let response = send_text(
+            text,
+            TextInputMessage {
+                protocol_version: TEXT_PROTOCOL_VERSION,
+                session_id: 1,
+                turn_id: turn_id as u64 + 1,
+                state_revision: revision,
+                held_controls: HeldControls::default(),
+                text: utterance.clone(),
+            },
+        )?;
+        let answer = response.response_text.clone().unwrap_or_default();
+        turns.push(Turn {
+            speaker: "player".into(),
+            text: utterance.clone(),
+        });
+        turns.push(Turn {
+            speaker: "subscriber".into(),
+            text: answer.clone(),
+        });
+        log.row(CsvRow {
+            event: "text_turn",
+            sequence,
+            revision,
+            caller: 6,
+            destination: 0,
+            status: "accepted",
+            text: &format!(
+                "player={utterance} | service=caller | classification=none | subscriber={answer}"
+            ),
+        })?;
+    }
+
+    state = exchange(
+        backend,
+        input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+    )?;
+    revision = state.state_revision;
+    log.row(CsvRow {
+        event: "disconnect",
+        sequence,
+        revision,
+        caller: 6,
+        destination: 0,
+        status: "accepted",
+        text: "You disconnect Agent Rahman after receiving the instruction.",
+    })?;
+
+    for (caller, callee, label) in [
+        (9, 7, "Dr. Kamal calls Bagha News."),
+        (8, 7, "Tariq calls Bagha News."),
+        (10, 7, "Rehana calls Bagha News."),
+    ] {
+        state = route_direct_call(backend, debug, &mut sequence, revision, caller, callee)?;
+        revision = state.state_revision;
+        log.row(CsvRow {
+            event: "route",
+            sequence,
+            revision,
+            caller,
+            destination: callee,
+            status: "accepted",
+            text: label,
+        })?;
+    }
+
+    state = exchange(
+        backend,
+        input(
+            &mut sequence,
+            revision,
+            vec![cord(PortId::Subscriber(6), PortId::Operator)],
+            false,
+            [0, 0, 0, 1],
+        ),
+    )?;
+    revision = state.state_revision;
+    let report = match path {
+        "dirty_good" => "report only routine calls and protect the source",
+        "dirty_neutral" => {
+            "report the corruption and Stall 4 at Koyal Market without naming the whistleblower"
+        }
+        "dirty_bad" => "identify Tariq and Salim and report the rotten grain operation",
+        other => return Err(format!("unknown Dirty Work path: {other}").into()),
+    };
+    let report_text = player_utterance(player_command, &rahman, revision, &turns, report)?;
+    let response = send_text(
+        text,
+        TextInputMessage {
+            protocol_version: TEXT_PROTOCOL_VERSION,
+            session_id: 1,
+            turn_id: 10,
+            state_revision: revision,
+            held_controls: HeldControls::default(),
+            text: report_text.clone(),
+        },
+    )?;
+    log.row(CsvRow {
+        event: "text_turn",
+        sequence,
+        revision,
+        caller: 6,
+        destination: 0,
+        status: "accepted",
+        text: &format!(
+            "player={report_text} | service=caller | classification={} | subscriber={}",
+            response.classification.as_deref().unwrap_or("not returned"),
+            response.response_text.clone().unwrap_or_default()
+        ),
+    })?;
+    let snapshot = debug_snapshot(debug)?;
+    log.row(CsvRow {
+        event: "outcome",
+        sequence,
+        revision,
+        caller: 6,
+        destination: 0,
+        status: "accepted",
+        text: &format!(
+            "Dirty Work beat: {}; final money ${} (started at ${}).",
+            snapshot.snapshot.dirty_work_story_beat, snapshot.snapshot.money, initial_money
+        ),
+    })?;
+    Ok(())
+}
+
+fn route_direct_call(
+    backend: &mut TcpStream,
+    debug: &mut TcpStream,
+    sequence: &mut u64,
+    revision: u64,
+    caller: u8,
+    callee: u8,
+) -> Result<StateMessage, Box<dyn std::error::Error>> {
+    let mut state = exchange(
+        backend,
+        input(
+            sequence,
+            revision,
+            vec![cord(PortId::Subscriber(caller), PortId::Operator)],
+            false,
+            [0, 0, 0, 1],
+        ),
+    )?;
+    let mut revision = state.state_revision;
+    let ringing = vec![
+        cord(PortId::Subscriber(caller), PortId::Operator),
+        cord(PortId::Subscriber(callee), PortId::RingGenerator),
+    ];
+    state = exchange(
+        backend,
+        input_with_ring(
+            sequence,
+            revision,
+            ringing.clone(),
+            false,
+            [0, 0, 0, callee],
+            callee as i16,
+        ),
+    )?;
+    revision = state.state_revision;
+    let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 3 })?;
+    state = exchange(
+        backend,
+        input_with_ring(
+            sequence,
+            revision,
+            ringing,
+            false,
+            [0, 0, 0, callee],
+            callee as i16,
+        ),
+    )?;
+    revision = state.state_revision;
+    let direct = vec![cord(PortId::Subscriber(caller), PortId::Subscriber(callee))];
+    state = exchange(
+        backend,
+        input(sequence, revision, direct.clone(), false, [0, 0, 0, callee]),
+    )?;
+    revision = state.state_revision;
+    let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 3 })?;
+    Ok(exchange(
+        backend,
+        input(sequence, revision, direct, false, [0, 0, 0, callee]),
+    )?)
 }
 
 fn run_neel_story(

@@ -22,6 +22,7 @@ def main() -> int:
                 "messages": [{"role": "user", "content": full_prompt}],
                 "think": False,
                 "stream": False,
+                "options": {"temperature": 0.0, "num_predict": 8},
             }
         ).encode()
         request = urllib.request.Request(

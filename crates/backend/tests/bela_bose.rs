@@ -144,5 +144,6 @@ fn reset_starts_registered_story_calls_together() {
         .collect::<Vec<_>>();
     assert!(callers.contains(&1), "Shapla call missing: {callers:?}");
     assert!(callers.contains(&2), "Neel call missing: {callers:?}");
-    assert_eq!(callers.len(), 2);
+    assert!(callers.contains(&6), "Dirty Work call missing: {callers:?}");
+    assert_eq!(callers.len(), 3);
 }

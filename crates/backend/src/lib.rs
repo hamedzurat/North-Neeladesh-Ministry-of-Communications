@@ -102,6 +102,7 @@ pub struct Backend {
     last_output_json: Option<String>,
     story_beat: stories::fallen_mother::Beat,
     neel_story_beat: stories::bela_bose::Beat,
+    dirty_work_beat: stories::dirty_work::Beat,
     story_controls: HeldControls,
     story_enabled: bool,
     story_started_elapsed_seconds: u64,
@@ -151,6 +152,17 @@ impl Backend {
             && matches!(
                 caller,
                 stories::bela_bose::NEEL_LINE | stories::bela_bose::SHADHIN_LINE
+            )
+    }
+
+    fn is_dirty_work_caller(&self, caller: u8) -> bool {
+        self.story_enabled
+            && matches!(
+                caller,
+                stories::dirty_work::RAHMAN_LINE
+                    | stories::dirty_work::KAMAL_LINE
+                    | stories::dirty_work::TARIQ_LINE
+                    | stories::dirty_work::REHANA_LINE
             )
     }
 
@@ -213,6 +225,7 @@ impl Backend {
             last_output_json: None,
             story_beat: stories::fallen_mother::Beat::EmergencyCall,
             neel_story_beat: stories::bela_bose::Beat::ProfessorRouting,
+            dirty_work_beat: stories::dirty_work::Beat::Instruction,
             story_controls: HeldControls::default(),
             story_enabled: true,
             story_started_elapsed_seconds: 0,
@@ -344,6 +357,13 @@ impl Backend {
                     },
                     self.subscriber(caller).place,
                 )
+            } else if self.is_dirty_work_caller(caller) {
+                format!(
+                    "{}\nCaller place: {}\nRequested destination: {}",
+                    self.dirty_work_beat.dialogue_prompt(),
+                    caller_profile.place,
+                    callee_profile.place
+                )
             } else if self.shapla_story_active() && caller == stories::fallen_mother::CALLER_LINE {
                 format!(
                     "{}\nStory place: {}\nOpening dialogue: {}",
@@ -415,6 +435,7 @@ impl Backend {
         self.voice_speaker_active = false;
         self.story_beat = stories::fallen_mother::Beat::EmergencyCall;
         self.neel_story_beat = stories::bela_bose::Beat::ProfessorRouting;
+        self.dirty_work_beat = stories::dirty_work::Beat::Instruction;
         self.story_controls = HeldControls::default();
         self.story_started_elapsed_seconds = self.elapsed_seconds() as u64;
         self.voice_turn_controls = HeldControls::default();
@@ -483,6 +504,7 @@ impl Backend {
         DebugSnapshot {
             shapla_story_beat: self.shapla_story_beat_name().into(),
             neel_story_beat: self.neel_story_beat.name().into(),
+            dirty_work_story_beat: self.dirty_work_beat.name().into(),
             story_completed: self.story_completed,
             money: self.money,
             run: DebugRunState {
@@ -829,6 +851,9 @@ impl Backend {
         if self.shapla_story_active() {
             self.state.line_lamps[stories::fallen_mother::CALLER_LINE as usize] = true;
         }
+        if self.story_enabled {
+            self.state.line_lamps[stories::dirty_work::RAHMAN_LINE as usize] = true;
+        }
     }
 
     fn update_ring_activation(&mut self, input: &InputState) {
@@ -972,6 +997,10 @@ impl Backend {
                 stories::fallen_mother::CALLER_LINE
                     | stories::bela_bose::NEEL_LINE
                     | stories::bela_bose::SHADHIN_LINE
+                    | stories::dirty_work::RAHMAN_LINE
+                    | stories::dirty_work::KAMAL_LINE
+                    | stories::dirty_work::TARIQ_LINE
+                    | stories::dirty_work::REHANA_LINE
             )
         {
             return;
@@ -994,6 +1023,19 @@ impl Backend {
     ) -> Option<(&'static str, &'static str)> {
         let line = focused?;
         let index = self.calls.iter().position(|c| c.caller == line)?;
+        if line == stories::dirty_work::RAHMAN_LINE && input.cord_topology.is_empty() {
+            if let Some(next) =
+                stories::dirty_work::next_beat_after_operator_call(self.dirty_work_beat, line)
+            {
+                self.log(
+                    "STORY dirty_work",
+                    format_args!("beat {:?} -> {:?}", self.dirty_work_beat, next),
+                );
+                self.dirty_work_beat = next;
+            }
+            self.calls.remove(index);
+            return None;
+        }
         if line == stories::fallen_mother::CALLER_LINE && input.cord_topology.is_empty() {
             if self.story_beat == stories::fallen_mother::Beat::EmergencyCall
                 && self
@@ -1455,6 +1497,20 @@ impl Backend {
                     stories::bela_bose::Beat::ProfessorRouting => {}
                 }
             }
+            if let Some(next) = stories::dirty_work::next_beat_after_connection(
+                self.dirty_work_beat,
+                call.caller,
+                call.callee,
+            ) {
+                self.log(
+                    "STORY dirty_work",
+                    format_args!(
+                        "beat {:?} -> {:?} after call {} -> {}",
+                        self.dirty_work_beat, next, call.caller, call.callee
+                    ),
+                );
+                self.dirty_work_beat = next;
+            }
         }
         self.state.shift.completed_routings = self.completed;
     }
@@ -1602,7 +1658,7 @@ impl Backend {
     fn refill_calls(&mut self, _count: usize) {
         self.ensure_story_call();
         let target_count = if self.story_enabled {
-            2.min(self.call_target)
+            3.min(self.call_target)
         } else {
             _count.min(self.call_target)
         };
@@ -1703,6 +1759,27 @@ impl Backend {
                 audio_duration_seconds: 0,
             });
         }
+        if !self.dirty_work_beat.is_terminal()
+            && !self
+                .calls
+                .iter()
+                .any(|call| self.is_dirty_work_caller(call.caller))
+        {
+            self.calls.push(ActiveCall {
+                caller: self.dirty_work_beat.caller(),
+                callee: self.dirty_work_beat.requested_callee(),
+                phase: CallPhase::Waiting,
+                deadline: now + self.dirty_work_beat.patience_seconds(),
+                started_elapsed_seconds: now,
+                connected_at: None,
+                connected_elapsed_seconds: None,
+                ring_started_at: None,
+                ring_ready_at: None,
+                ring_activated: false,
+                disconnected_at: None,
+                audio_duration_seconds: 0,
+            });
+        }
     }
 
     fn story_caller_for_neel(&self) -> u8 {
@@ -1719,24 +1796,32 @@ impl Backend {
             let callee = ((self.rng >> 3) % u64::from(self.line_limit)) as u8;
             if caller != callee
                 && (!self.story_enabled
-                    || (caller != self.story_caller()
-                        && callee != self.story_caller()
-                        && !(self.neel_story_active()
-                            && [
-                                stories::bela_bose::NEEL_LINE,
-                                stories::bela_bose::SHADHIN_LINE,
-                                stories::bela_bose::BELA_DOG_LINE,
-                                stories::bela_bose::BELA_CAT_LINE,
-                            ]
-                            .contains(&caller))
-                        && !(self.neel_story_active()
-                            && [
-                                stories::bela_bose::NEEL_LINE,
-                                stories::bela_bose::SHADHIN_LINE,
-                                stories::bela_bose::BELA_DOG_LINE,
-                                stories::bela_bose::BELA_CAT_LINE,
-                            ]
-                            .contains(&callee))))
+                    || (![
+                        self.story_caller(),
+                        stories::bela_bose::NEEL_LINE,
+                        stories::bela_bose::SHADHIN_LINE,
+                        stories::bela_bose::BELA_DOG_LINE,
+                        stories::bela_bose::BELA_CAT_LINE,
+                        stories::dirty_work::RAHMAN_LINE,
+                        stories::dirty_work::FARHANA_LINE,
+                        stories::dirty_work::TARIQ_LINE,
+                        stories::dirty_work::KAMAL_LINE,
+                        stories::dirty_work::REHANA_LINE,
+                    ]
+                    .contains(&caller)
+                        && ![
+                            self.story_caller(),
+                            stories::bela_bose::NEEL_LINE,
+                            stories::bela_bose::SHADHIN_LINE,
+                            stories::bela_bose::BELA_DOG_LINE,
+                            stories::bela_bose::BELA_CAT_LINE,
+                            stories::dirty_work::RAHMAN_LINE,
+                            stories::dirty_work::FARHANA_LINE,
+                            stories::dirty_work::TARIQ_LINE,
+                            stories::dirty_work::KAMAL_LINE,
+                            stories::dirty_work::REHANA_LINE,
+                        ]
+                        .contains(&callee)))
                 && self.calls.iter().all(|c| {
                     c.caller != caller
                         && c.callee != caller
@@ -2414,6 +2499,18 @@ fn classify_story(
     Ok(stories::fallen_mother::Classification::parse(&word))
 }
 
+fn classify_dirty_work(transcript: &str) -> Result<stories::dirty_work::Outcome, VoiceError> {
+    let command = env::var("NN_STORY_CLASSIFIER_COMMAND").map_err(|_| {
+        VoiceError::new(
+            "story_classifier_not_configured",
+            "NN_STORY_CLASSIFIER_COMMAND is not configured",
+        )
+    })?;
+    let mut classifier = CommandTextClassifier::new(CommandSpec::from_words(&command)?);
+    let word = classifier.classify(stories::dirty_work::OUTCOME_CLASSIFIER_PROMPT, transcript)?;
+    Ok(stories::dirty_work::Outcome::parse(&word))
+}
+
 fn text_error(request: &TextInputMessage, code: &str, message: &str) -> TextResponseMessage {
     TextResponseMessage {
         protocol_version: TEXT_PROTOCOL_VERSION,
@@ -2482,6 +2579,7 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
         };
 
         let mut classification_word = None;
+        let service_turn = request.held_controls.police || request.held_controls.ems;
         if error.is_none()
             && let Ok(mut state) = backend.lock()
         {
@@ -2490,7 +2588,29 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
             // controls captured at PTT start so story classification follows
             // the same authoritative path as the voice worker.
             state.voice_turn_controls = request.held_controls.clone();
-            if state.voice_subscriber_line == Some(stories::fallen_mother::CALLER_LINE) {
+            if state.voice_subscriber_line == Some(stories::dirty_work::RAHMAN_LINE)
+                && state.dirty_work_beat == stories::dirty_work::Beat::Interrogation
+                && !service_turn
+            {
+                match classify_dirty_work(&request.text) {
+                    Ok(outcome) => {
+                        classification_word = Some(outcome.as_str().to_string());
+                        let next = outcome.beat();
+                        state.log(
+                            "STORY dirty_work",
+                            format_args!(
+                                "outcome={:?} beat {:?} -> {:?}",
+                                outcome, state.dirty_work_beat, next
+                            ),
+                        );
+                        state.dirty_work_beat = next;
+                    }
+                    Err(error) => append_printer(
+                        &mut state.state,
+                        &format!("STORY CLASSIFIER ERROR // {}", error.message),
+                    ),
+                }
+            } else if state.voice_subscriber_line == Some(stories::fallen_mother::CALLER_LINE) {
                 let service = if request.held_controls.police {
                     exchange_protocol::ServiceKind::Police
                 } else {
@@ -2508,7 +2628,6 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
                 }
             }
         }
-        let service_turn = request.held_controls.police || request.held_controls.ems;
         let response = if let Some((code, message)) = error {
             text_error(&request, code, message)
         } else {

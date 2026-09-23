@@ -20,6 +20,14 @@ voice_vocabulary = [
     "Prof. Kashem",
     "Arnab Bhattacharjee",
     "Bela Bose",
+    "Agent Rahman",
+    "Farhana",
+    "Tariq",
+    "Dr. Kamal",
+    "Rehana",
+    "Bagha News",
+    "Koyal Market",
+    "Secret Police",
 ]
 
 dialogue_prompt_template = '''You are a configured subscriber in a telephone exchange.
@@ -89,42 +97,42 @@ voice_id = "pocket-line-5"
 
 [[subscribers]]
 line = 6
-place = "LINE 06"
-name = "SUBSCRIBER 06"
-role = "unassigned"
-private_info = "Repairs old radios on weekends."
+place = "SECRET POLICE DIRECTORATE"
+name = "Agent Rahman"
+role = "secret police agent"
+private_info = "Keeps a private list of operators who have served on night shifts."
 voice_id = "pocket-line-6"
 
 [[subscribers]]
 line = 7
-place = "LINE 07"
-name = "SUBSCRIBER 07"
-role = "unassigned"
-private_info = "Always keeps a packet of cardamom tea nearby."
+place = "BAGHA NEWS DESK"
+name = "Farhana"
+role = "newspaper editor"
+private_info = "Keeps an annotated notebook of sources beside the newsroom telephone."
 voice_id = "pocket-line-7"
 
 [[subscribers]]
 line = 8
-place = "LINE 08"
-name = "SUBSCRIBER 08"
-role = "unassigned"
-private_info = "Knows how to repair mechanical clocks."
+place = "KOYAL MARKET DEPOT"
+name = "Tariq"
+role = "warehouse worker"
+private_info = "Has signed delivery slips hidden with his work papers."
 voice_id = "pocket-line-8"
 
 [[subscribers]]
 line = 9
-place = "LINE 09"
-name = "SUBSCRIBER 09"
-role = "unassigned"
-private_info = "Has a collection of pressed leaves."
+place = "NEEL UNIVERSITY"
+name = "Dr. Kamal"
+role = "retired professor"
+private_info = "Writes short condolence notices for former colleagues."
 voice_id = "pocket-line-9"
 
 [[subscribers]]
 line = 10
-place = "LINE 10"
-name = "SUBSCRIBER 10"
-role = "unassigned"
-private_info = "Prefers handwritten letters to telephone calls."
+place = "SHAPLA APARTMENTS"
+name = "Rehana"
+role = "newspaper subscriber"
+private_info = "Usually reads the gardening insert before the main newspaper."
 voice_id = "pocket-line-10"
 
 [[subscribers]]

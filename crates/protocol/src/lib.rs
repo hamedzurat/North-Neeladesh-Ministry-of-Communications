@@ -397,6 +397,7 @@ pub struct DebugResponse {
 pub struct DebugSnapshot {
     pub shapla_story_beat: String,
     pub neel_story_beat: String,
+    pub dirty_work_story_beat: String,
     pub story_completed: bool,
     pub money: i32,
     pub run: DebugRunState,

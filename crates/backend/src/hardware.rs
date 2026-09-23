@@ -120,6 +120,11 @@ pub(crate) fn simple_place(line: u8) -> String {
         3 => "SHADHIN HOUSING".into(),
         4 => "MEGHNA ABASHON".into(),
         5 => "PADMA NIBASH".into(),
+        6 => stories::dirty_work::SECRET_POLICE.into(),
+        7 => stories::dirty_work::BAGHA_NEWS.into(),
+        8 => stories::dirty_work::KOYAL_MARKET.into(),
+        9 => stories::dirty_work::NEEL_UNIVERSITY.into(),
+        10 => stories::dirty_work::SHAPLA_APARTMENTS.into(),
         _ => format!("LINE {line:02}"),
     }
 }
@@ -150,6 +155,31 @@ pub(crate) fn directory_user(line: u8) -> (String, String, String) {
             stories::bela_bose::BELA_NAME.into(),
             "cat owner".into(),
             "Padma Nibash".into(),
+        ),
+        6 => (
+            "Agent Rahman".into(),
+            "secret police agent".into(),
+            stories::dirty_work::SECRET_POLICE.into(),
+        ),
+        7 => (
+            "Farhana".into(),
+            "newspaper editor".into(),
+            stories::dirty_work::BAGHA_NEWS.into(),
+        ),
+        8 => (
+            "Tariq".into(),
+            "warehouse worker".into(),
+            stories::dirty_work::KOYAL_MARKET.into(),
+        ),
+        9 => (
+            "Dr. Kamal".into(),
+            "retired professor".into(),
+            stories::dirty_work::NEEL_UNIVERSITY.into(),
+        ),
+        10 => (
+            "Rehana".into(),
+            "newspaper subscriber".into(),
+            stories::dirty_work::SHAPLA_APARTMENTS.into(),
         ),
         _ => (
             format!("SUBSCRIBER {line:02}"),

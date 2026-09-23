@@ -5,4 +5,5 @@
 //! this module so adding a story does not duplicate the physical game rules.
 
 pub mod bela_bose;
+pub mod dirty_work;
 pub mod fallen_mother;
