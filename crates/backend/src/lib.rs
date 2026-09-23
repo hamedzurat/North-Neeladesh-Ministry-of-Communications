@@ -1,6 +1,12 @@
+//! Telephone-exchange backend.
+//!
+//! The backend keeps the public protocol-facing `Backend` interface here. The
+//! supporting implementations are deliberately split by responsibility:
+//! configuration (`config`), call state (`calls`), physical exchange rules
+//! (`hardware`), story definitions (`stories`), and voice workers.
+
 use std::collections::{HashMap, VecDeque};
 use std::env;
-use std::fs;
 use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::process::Command;
@@ -8,20 +14,20 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
-
 use exchange_protocol::{
-    BackendDiagnostic, CallPhase, CallStatus, ClockState, CordConnection, DEBUG_PROTOCOL_VERSION,
-    DebugActiveCall, DebugCallRecord, DebugCommand, DebugCounters, DebugFrontendState,
-    DebugRequest, DebugResponse, DebugRunState, DebugSnapshot, DebugSubscriberState,
-    DebugVoiceConversation, FrameError, GamePhase, HeldControls, InputMessage, InputState,
-    OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, RtpL16Packet, ShiftPhase,
-    ShiftStatus, StateMessage, StateOutput, TEXT_PROTOCOL_VERSION, TapBridgeMonitoring,
-    TextInputMessage, TextResponseMessage, TextStatus, TuningState, VOICE_AUDIO_PACKET_SAMPLES,
-    VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl, VoiceControlMessage,
-    VoiceStatus, VoiceStatusMessage, decode_voice_input_audio, decode_voice_status,
-    encode_voice_control, encode_voice_status, read_frame, write_frame,
+    BackendDiagnostic, CallPhase, CallStatus, DEBUG_PROTOCOL_VERSION, DebugActiveCall,
+    DebugCallRecord, DebugCommand, DebugCounters, DebugFrontendState, DebugRequest, DebugResponse,
+    DebugRunState, DebugSnapshot, DebugSubscriberState, DebugVoiceConversation, FrameError,
+    GamePhase, HeldControls, InputMessage, InputState, PROTOCOL_VERSION, PortId, ProtocolError,
+    RtpL16Packet, ShiftPhase, StateMessage, StateOutput, TEXT_PROTOCOL_VERSION, TextInputMessage,
+    TextResponseMessage, TextStatus, VOICE_AUDIO_PACKET_SAMPLES, VOICE_AUDIO_SAMPLE_RATE,
+    VOICE_PROTOCOL_VERSION, VoiceControl, VoiceControlMessage, VoiceStatus, VoiceStatusMessage,
+    decode_voice_input_audio, decode_voice_status, encode_voice_control, encode_voice_status,
+    read_frame, write_frame,
 };
+mod calls;
+mod config;
+mod hardware;
 #[allow(dead_code)]
 mod voice_workers;
 
@@ -32,112 +38,14 @@ use voice_workers::{
 };
 mod stories;
 
-const LINES: u8 = 12;
+use calls::ActiveCall;
+use config::{GameConfig, LINES, SubscriberConfig};
+use hardware::*;
 const MAX_AUDIO_PACKETS: usize = 4096;
 static DIALOGUE_WORKER: OnceLock<Mutex<Option<PersistentCommandDialogueGenerator>>> =
     OnceLock::new();
 static POCKET_TTS_WORKER: OnceLock<Mutex<Option<PersistentPocketTtsCommand>>> = OnceLock::new();
 static TEXT_TURN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-#[derive(Debug, Clone, Deserialize)]
-struct GameConfig {
-    #[serde(default = "default_subscribers")]
-    subscribers: Vec<SubscriberConfig>,
-    active_calls: usize,
-    patience_min_seconds: u64,
-    patience_max_seconds: u64,
-    ring_grace_seconds: u64,
-    shift_duration_seconds: u64,
-    call_arrival_interval_seconds: u64,
-    #[serde(default = "default_story_seed")]
-    story_seed: u64,
-}
-
-fn default_story_seed() -> u64 {
-    1
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct SubscriberConfig {
-    line: u8,
-    place: String,
-    name: String,
-    role: String,
-    #[serde(default)]
-    voice_id: String,
-}
-
-fn default_subscribers() -> Vec<SubscriberConfig> {
-    (0..LINES)
-        .map(|line| SubscriberConfig {
-            line,
-            place: format!("LINE {line:02}"),
-            name: format!("SUBSCRIBER {line:02}"),
-            role: "unassigned".into(),
-            voice_id: format!("pocket-line-{line}"),
-        })
-        .collect()
-}
-
-impl Default for GameConfig {
-    fn default() -> Self {
-        Self {
-            subscribers: default_subscribers(),
-            active_calls: 3,
-            patience_min_seconds: 32,
-            patience_max_seconds: 64,
-            ring_grace_seconds: 16,
-            shift_duration_seconds: 90,
-            call_arrival_interval_seconds: 0,
-            story_seed: default_story_seed(),
-        }
-    }
-}
-
-impl GameConfig {
-    fn load() -> Self {
-        let path = env::var("NN_EXCHANGE_CONFIG").unwrap_or_else(|_| "exchange.toml".into());
-        let Ok(contents) = fs::read_to_string(path) else {
-            return Self::default();
-        };
-        let mut config: Self = toml::from_str(&contents).unwrap_or_else(|error| {
-            eprintln!("exchange config ignored: {error}");
-            Self::default()
-        });
-        let fallback_names = [
-            "Ayesha Rahman",
-            "Mithun Das",
-            "Farzana Akter",
-            "Rafiq Hasan",
-        ];
-        for subscriber in &mut config.subscribers {
-            if subscriber.name.trim().is_empty() || subscriber.name.starts_with("SUBSCRIBER ") {
-                subscriber.name =
-                    fallback_names[usize::from(subscriber.line) % fallback_names.len()].into();
-            }
-            if subscriber.role.trim().is_empty() || subscriber.role == "unassigned" {
-                subscriber.role = "senior emergency physician".into();
-            }
-        }
-        config
-    }
-}
-
-#[derive(Debug, Clone)]
-struct ActiveCall {
-    caller: u8,
-    callee: u8,
-    phase: CallPhase,
-    deadline: u64,
-    started_elapsed_seconds: u64,
-    connected_at: Option<Instant>,
-    connected_elapsed_seconds: Option<u64>,
-    ring_started_at: Option<u64>,
-    ring_ready_at: Option<u64>,
-    ring_activated: bool,
-    disconnected_at: Option<u64>,
-    audio_duration_seconds: u64,
-}
 
 pub struct Backend {
     config: GameConfig,
@@ -1251,13 +1159,14 @@ impl Backend {
             return;
         };
         let neel_story = self.neel_story_active();
-        let neel_audio = neel_story && story_audio_path(caller, callee).is_some();
+        let neel_audio =
+            neel_story && stories::neel_university::audio_path(caller, callee).is_some();
         let has_opening_audio = if neel_story {
             tap_audio && neel_audio
         } else {
             self.story_enabled
                 && (Self::opening_dialogue(caller).is_some()
-                    || story_audio_path(caller, callee).is_some())
+                    || stories::neel_university::audio_path(caller, callee).is_some())
         };
         let Some(call) = self.calls.get_mut(index) else {
             return;
@@ -1270,16 +1179,18 @@ impl Backend {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
-            call.audio_duration_seconds = story_audio_duration_seconds(caller, callee).unwrap_or(1);
+            call.audio_duration_seconds =
+                stories::neel_university::audio_duration_seconds(caller, callee).unwrap_or(1);
         } else if self.tts_prepared && !has_opening_audio {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
-            call.audio_duration_seconds = if story_audio_path(caller, callee).is_some() {
-                story_audio_duration_seconds(caller, callee).unwrap_or(1)
-            } else {
-                2
-            };
+            call.audio_duration_seconds =
+                if stories::neel_university::audio_path(caller, callee).is_some() {
+                    stories::neel_university::audio_duration_seconds(caller, callee).unwrap_or(1)
+                } else {
+                    2
+                };
         } else {
             eprintln!(
                 "[VOICE-DEBUG] queueing opening audio caller={caller} callee={callee} has_opening_audio={has_opening_audio} tts_prepared={}",
@@ -1366,7 +1277,7 @@ impl Backend {
                 VoiceError::new("subscriber_not_configured", "callee is not configured")
             })?;
         if tap_audio
-            && let Some(path) = story_audio_path(caller, callee)
+            && let Some(path) = stories::neel_university::audio_path(caller, callee)
             && path.is_file()
         {
             let output = Command::new("ffmpeg")
@@ -1915,293 +1826,6 @@ impl Backend {
     }
 }
 
-fn story_audio_path(caller: u8, callee: u8) -> Option<std::path::PathBuf> {
-    let name = match (caller, callee) {
-        (stories::neel_university::NEEL_LINE, stories::neel_university::SHADHIN_LINE) => {
-            "professor_arnab.wav"
-        }
-        (stories::neel_university::SHADHIN_LINE, stories::neel_university::BELA_DOG_LINE) => {
-            "belabose_wrong.wav"
-        }
-        (stories::neel_university::SHADHIN_LINE, stories::neel_university::BELA_CAT_LINE) => {
-            "belabose_success.m4a"
-        }
-        _ => return None,
-    };
-    Some(std::path::Path::new("assets/stories/neel_university").join(name))
-}
-
-fn story_audio_duration_seconds(caller: u8, callee: u8) -> Option<u64> {
-    let path = story_audio_path(caller, callee)?;
-    if !path.is_file() {
-        return None;
-    }
-    let output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=nw=1:nk=1",
-            path.to_string_lossy().as_ref(),
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let duration = String::from_utf8(output.stdout)
-        .ok()?
-        .trim()
-        .parse::<f64>()
-        .ok()?;
-    Some(duration.ceil().max(1.0) as u64)
-}
-
-fn initial_state() -> StateOutput {
-    StateOutput {
-        line_lamps: [false; 12],
-        game_phase: GamePhase::Ready,
-        run_generation: 0,
-        clock: ClockState {
-            shift: 1,
-            elapsed_seconds: 0,
-        },
-        speaker_active: false,
-        interference_level: 0,
-        tap_bridge_audio_active: false,
-        tuning: TuningState::default(),
-        directory_pages: directory_pages([0, 0, 0, 0]),
-        printer_output: vec![PrinterEntry {
-            entry_id: 1,
-            text: "SHIFT 1 START // TELEPHONE EXCHANGE READY".into(),
-        }],
-        call: None,
-        calls: vec![],
-        service_call: None,
-        tap_bridge_monitoring: None,
-        shift: ShiftStatus {
-            number: 1,
-            phase: ShiftPhase::Ready,
-            active_call_count: 0,
-            completed_routings: 0,
-            required_service_calls: 0,
-            completed_service_calls: 0,
-            service_errors: 0,
-            service_error_counts: vec![],
-        },
-        debug: OutputDebug { messages: vec![] },
-    }
-}
-fn append_printer(state: &mut StateOutput, text: &str) {
-    let id = state.printer_output.last().map_or(1, |e| e.entry_id + 1);
-    state.printer_output.push(PrinterEntry {
-        entry_id: id,
-        text: text.into(),
-    });
-}
-fn rejected(
-    sequence: u64,
-    code: &str,
-    message: &str,
-    revision: u64,
-    output: &StateOutput,
-) -> StateMessage {
-    StateMessage {
-        protocol_version: PROTOCOL_VERSION,
-        input_sequence: sequence,
-        accepted: false,
-        error: Some(ProtocolError {
-            code: code.into(),
-            message: message.into(),
-        }),
-        state_revision: revision,
-        output: output.clone(),
-    }
-}
-fn directory_id(d: [u8; 4]) -> u16 {
-    d.into_iter().fold(0, |n, x| n * 10 + u16::from(x))
-}
-fn directory_pages(digits: [u8; 4]) -> Vec<exchange_protocol::DirectoryPage> {
-    let id = directory_id(digits);
-    if let Some(line) = directory_line(id) {
-        let (name, role, note) = directory_user(line);
-        vec![exchange_protocol::DirectoryPage {
-            page_number: 1,
-            heading: simple_place(line),
-            lines: vec![
-                format!("SUBSCRIBER ID {id:04}"),
-                format!("SUBSCRIBER // {name}"),
-                format!("ROLE // {role}"),
-                format!("NOTE // {note}"),
-                format!("DESTINATION // {}", simple_place(line)),
-            ],
-        }]
-    } else {
-        vec![exchange_protocol::DirectoryPage {
-            page_number: 1,
-            heading: "NO RECORD".into(),
-            lines: vec![
-                format!("SUBSCRIBER ID {id:04}"),
-                "SELECT A LINE FROM 0000 THROUGH 0011".into(),
-            ],
-        }]
-    }
-}
-fn simple_place(line: u8) -> String {
-    match line {
-        1 => "SHAPLA APARTMENTS".into(),
-        2 => "NEEL UNIVERSITY".into(),
-        3 => "SHADHIN HOUSING".into(),
-        4 => "MEGHNA ABASHON".into(),
-        5 => "PADMA NIBASH".into(),
-        _ => format!("LINE {line:02}"),
-    }
-}
-fn directory_user(line: u8) -> (String, String, String) {
-    match line {
-        1 => (
-            "Nusrat Rahman".into(),
-            "senior architect".into(),
-            "Shapla Apartments".into(),
-        ),
-        2 => (
-            "Prof. Kashem".into(),
-            "professor".into(),
-            "Neel University".into(),
-        ),
-        3 => (
-            "Arnab Bhattacharjee".into(),
-            "recently hired graduate".into(),
-            "Shadhin Housing".into(),
-        ),
-        4 => (
-            "Bela Bose".into(),
-            "dog owner".into(),
-            "Meghna Abashon".into(),
-        ),
-        5 => (
-            "Bela Bose".into(),
-            "cat owner".into(),
-            "Padma Nibash".into(),
-        ),
-        _ => (
-            format!("SUBSCRIBER {line:02}"),
-            "unassigned".into(),
-            "No story profile assigned".into(),
-        ),
-    }
-}
-fn directory_line(id: u16) -> Option<u8> {
-    match id {
-        1031 => Some(stories::neel_university::BELA_DOG_LINE),
-        1032 => Some(stories::neel_university::BELA_CAT_LINE),
-        0..=11 => Some(id as u8),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-mod directory_tests {
-    use super::directory_pages;
-
-    #[test]
-    fn shapla_directory_uses_its_story_place() {
-        let page = &directory_pages([0, 0, 0, 1])[0];
-        assert_eq!(page.heading, "SHAPLA APARTMENTS");
-        assert!(
-            page.lines
-                .iter()
-                .any(|line| line == "DESTINATION // SHAPLA APARTMENTS")
-        );
-    }
-}
-
-fn operator_line(cords: &[CordConnection]) -> Option<u8> {
-    cords.iter().find_map(|c| match (&c.first, &c.second) {
-        (PortId::Subscriber(n), PortId::Operator) | (PortId::Operator, PortId::Subscriber(n)) => {
-            Some(*n)
-        }
-        _ => None,
-    })
-}
-fn has_cord(input: &InputState, a: PortId, b: PortId) -> bool {
-    input
-        .cord_topology
-        .iter()
-        .any(|c| (c.first == a && c.second == b) || (c.first == b && c.second == a))
-}
-fn valid_ringing_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
-    has_cord(input, PortId::Subscriber(caller), PortId::Operator)
-        && physical_ring_line(input) == i16::from(callee)
-        && input.ring_line == i16::from(callee)
-}
-fn valid_direct_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
-    direct(&input.cord_topology, caller, callee)
-        && input.cord_topology.iter().all(|cord| {
-            let touches_endpoint = |port: &PortId| {
-                matches!(port, PortId::Subscriber(line) if *line == caller || *line == callee)
-            };
-            if !touches_endpoint(&cord.first) && !touches_endpoint(&cord.second) {
-                return true;
-            }
-            (cord.first == PortId::Subscriber(caller)
-                && cord.second == PortId::Subscriber(callee))
-                || (cord.first == PortId::Subscriber(callee)
-                    && cord.second == PortId::Subscriber(caller))
-                || (cord.first == PortId::Subscriber(caller) && cord.second == PortId::Tap(1))
-                || (cord.first == PortId::Tap(1) && cord.second == PortId::Subscriber(caller))
-                || (cord.first == PortId::Subscriber(caller) && cord.second == PortId::Tap(2))
-                || (cord.first == PortId::Tap(2) && cord.second == PortId::Subscriber(caller))
-                || (cord.first == PortId::Subscriber(callee) && cord.second == PortId::Tap(1))
-                || (cord.first == PortId::Tap(1) && cord.second == PortId::Subscriber(callee))
-                || (cord.first == PortId::Subscriber(callee) && cord.second == PortId::Tap(2))
-                || (cord.first == PortId::Tap(2) && cord.second == PortId::Subscriber(callee))
-        })
-}
-fn direct(cords: &[CordConnection], caller: u8, callee: u8) -> bool {
-    has_cord(
-        &InputState {
-            cord_topology: cords.to_vec(),
-            held_controls: HeldControls::default(),
-            directory_digits: [0; 4],
-            ring_line: -1,
-            tuning: TuningState::default(),
-            debug: Default::default(),
-        },
-        PortId::Subscriber(caller),
-        PortId::Subscriber(callee),
-    )
-}
-fn has_direct_circuit_for_caller(input: &InputState, caller: u8) -> bool {
-    input
-        .cord_topology
-        .iter()
-        .any(|cord| match (&cord.first, &cord.second) {
-            (PortId::Subscriber(first), PortId::Subscriber(_)) if *first == caller => true,
-            (PortId::Subscriber(_), PortId::Subscriber(second)) if *second == caller => true,
-            _ => false,
-        })
-}
-fn exact_cords(input: &[CordConnection], expected: &[(PortId, PortId)]) -> bool {
-    input.len() == expected.len()
-        && expected.iter().all(|(first, second)| {
-            input.iter().any(|cord| {
-                (&cord.first == first && &cord.second == second)
-                    || (&cord.first == second && &cord.second == first)
-            })
-        })
-}
-fn has_wrong_direct_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
-    input.cord_topology.iter().any(|cord| {
-        let (PortId::Subscriber(first), PortId::Subscriber(second)) = (&cord.first, &cord.second)
-        else {
-            return false;
-        };
-        (*first == caller && *second != callee) || (*second == caller && *first != callee)
-    })
-}
 fn with_persistent_pocket_tts<T>(
     operation: impl FnOnce(&mut PersistentPocketTtsCommand) -> Result<T, VoiceError>,
 ) -> Result<T, VoiceError> {
@@ -2252,86 +1876,6 @@ fn with_persistent_dialogue<T>(
     }
     result
 }
-fn lamps(calls: &[ActiveCall], ring_line: i16) -> [bool; 12] {
-    let mut result = [false; 12];
-    if (0..12).contains(&ring_line) {
-        result[ring_line as usize] = true;
-    }
-    for c in calls {
-        if !matches!(
-            c.phase,
-            CallPhase::Missed | CallPhase::Failed | CallPhase::Completed
-        ) {
-            result[c.caller as usize] = true;
-            if matches!(c.phase, CallPhase::Held | CallPhase::Connected)
-                || (c.phase == CallPhase::Ringing && c.ring_activated)
-            {
-                result[c.callee as usize] = true;
-            }
-        }
-    }
-    result
-}
-fn effective_ring_line(input: &InputState) -> i16 {
-    let physical_line = physical_ring_line(input);
-    (input.ring_line == physical_line)
-        .then_some(physical_line)
-        .unwrap_or(-1)
-}
-fn physical_ring_line(input: &InputState) -> i16 {
-    input
-        .cord_topology
-        .iter()
-        .find_map(|cord| match (&cord.first, &cord.second) {
-            (PortId::RingGenerator, PortId::Subscriber(line))
-            | (PortId::Subscriber(line), PortId::RingGenerator) => Some(i16::from(*line)),
-            _ => None,
-        })
-        .unwrap_or(-1)
-}
-fn tap_monitor(input: &InputState, state: &StateOutput) -> Option<TapBridgeMonitoring> {
-    if !input.held_controls.tap {
-        return None;
-    }
-    state.calls.iter().find_map(|call| {
-        if call.phase != CallPhase::Connected {
-            return None;
-        }
-        let caller_tap_port =
-            if has_cord(input, PortId::Subscriber(call.caller_line), PortId::Tap(1)) {
-                1
-            } else {
-                2
-            };
-        valid_tap_circuit(input, call.caller_line, call.requested_callee_line).then_some(
-            TapBridgeMonitoring {
-                caller_line: call.caller_line,
-                callee_line: call.requested_callee_line,
-                caller_tap_port,
-                callee_tap_port: if caller_tap_port == 1 { 2 } else { 1 },
-            },
-        )
-    })
-}
-fn valid_connected_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
-    valid_direct_circuit(input, caller, callee) || valid_tap_circuit(input, caller, callee)
-}
-fn valid_tap_circuit(input: &InputState, caller: u8, callee: u8) -> bool {
-    exact_cords(
-        &input.cord_topology,
-        &[
-            (PortId::Subscriber(caller), PortId::Tap(1)),
-            (PortId::Subscriber(callee), PortId::Tap(2)),
-        ],
-    ) || exact_cords(
-        &input.cord_topology,
-        &[
-            (PortId::Subscriber(caller), PortId::Tap(2)),
-            (PortId::Subscriber(callee), PortId::Tap(1)),
-        ],
-    )
-}
-
 pub fn serve_with_voice_and_debug_engine(
     listener: TcpListener,
     voice_socket: Option<UdpSocket>,

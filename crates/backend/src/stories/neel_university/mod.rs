@@ -10,6 +10,44 @@ pub const COMPLETED_DIALOGUE_PROMPT: &str =
 pub const BAD_ENDING_DIALOGUE_PROMPT: &str =
     "The story has ended unsuccessfully; do not generate another story reply.";
 
+pub fn audio_path(caller: u8, callee: u8) -> Option<PathBuf> {
+    let name = match (caller, callee) {
+        (NEEL_LINE, SHADHIN_LINE) => "professor_arnab.wav",
+        (SHADHIN_LINE, BELA_DOG_LINE) => "belabose_wrong.wav",
+        (SHADHIN_LINE, BELA_CAT_LINE) => "belabose_success.m4a",
+        _ => return None,
+    };
+    Some(Path::new("assets/stories/neel_university").join(name))
+}
+
+pub fn audio_duration_seconds(caller: u8, callee: u8) -> Option<u64> {
+    let path = audio_path(caller, callee)?;
+    if !path.is_file() {
+        return None;
+    }
+    let output = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            path.to_string_lossy().as_ref(),
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let duration = String::from_utf8(output.stdout)
+        .ok()?
+        .trim()
+        .parse::<f64>()
+        .ok()?;
+    Some(duration.ceil().max(1.0) as u64)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Beat {
     ProfessorRouting,
@@ -44,3 +82,5 @@ impl Beat {
         }
     }
 }
+use std::path::{Path, PathBuf};
+use std::process::Command;
