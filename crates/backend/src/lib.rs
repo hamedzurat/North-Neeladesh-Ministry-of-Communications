@@ -1157,12 +1157,19 @@ impl Backend {
         let ring_requested = requested_ring_line == i16::from(call.callee);
         let ring = active_ring_line == i16::from(call.callee);
         let direct_route = direct(&input.cord_topology, call.caller, call.callee);
+        let tap_route =
+            input.held_controls.tap && valid_tap_circuit(input, call.caller, call.callee);
         match call.phase {
+            CallPhase::Waiting if tap_route && selected == u16::from(call.callee) => {
+                connect = true;
+            }
             CallPhase::Waiting if operator => {
                 call.phase = CallPhase::OperatorSession;
             }
             CallPhase::OperatorSession | CallPhase::AwaitingRouting => {
-                if (direct_route
+                if tap_route && selected == u16::from(call.callee) {
+                    connect = true;
+                } else if (direct_route
                     && (neel_arnab_destination || selected == u16::from(call.callee))
                     && call.phase == CallPhase::AwaitingRouting)
                     && requires_ring

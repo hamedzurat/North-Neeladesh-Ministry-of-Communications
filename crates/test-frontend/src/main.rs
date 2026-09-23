@@ -1532,6 +1532,20 @@ fn run_neel_story(
     if !state.accepted {
         return Err(format!("Neel University direct route rejected: {:?}", state.error).into());
     }
+    let direct_snapshot = debug_snapshot(debug)?;
+    let direct_call = direct_snapshot
+        .snapshot
+        .active_calls
+        .iter()
+        .find(|call| call.caller_line == 2)
+        .ok_or("direct Neel call disappeared")?;
+    if direct_call.phase != exchange_protocol::CallPhase::Connected {
+        return Err(format!(
+            "direct Neel call did not connect immediately: {:?}",
+            direct_call.phase
+        )
+        .into());
+    }
     log.row(CsvRow {
         event: "route",
         sequence,
@@ -1676,7 +1690,7 @@ fn run_neel_story(
         destination: 3,
         status: "accepted",
         text: &format!(
-            "Professor Kashem's prerecorded audio lasted {} seconds; both connected lines remained active until it ended.",
+            "The direct Professor connection played no audio; both connected lines remained active for the authored {}-second duration.",
             first_audio_duration
         ),
     })?;
@@ -1846,7 +1860,7 @@ fn run_neel_story(
         destination,
         status: "accepted",
         text: &format!(
-            "Bela Bose's prerecorded audio lasted {audio_duration} seconds; LINE 3 and LINE {destination} remained active until it ended."
+            "The direct Bela connection played no audio; LINE 3 and LINE {destination} remained active for the authored {audio_duration}-second duration."
         ),
     })?;
     let _ = debug_command(
