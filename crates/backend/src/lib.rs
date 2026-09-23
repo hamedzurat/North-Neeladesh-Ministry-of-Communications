@@ -407,22 +407,13 @@ impl Backend {
             call_premise: String::new(),
             call_guidance: if self.is_neel_caller(caller) {
                 format!(
-                    "{}\nStory place: {}\nOpening dialogue: {}",
+                    "{}\nStory place: {}",
                     if caller == stories::neel_university::NEEL_LINE {
                         stories::neel_university::Beat::ProfessorRouting.dialogue_prompt()
                     } else {
                         stories::neel_university::Beat::ArnabDirectory.dialogue_prompt()
                     },
                     self.subscriber(caller).place,
-                    if caller == stories::neel_university::NEEL_LINE {
-                        stories::neel_university::Beat::ProfessorRouting
-                            .opening_dialogue()
-                            .unwrap_or("")
-                    } else {
-                        stories::neel_university::Beat::ArnabDirectory
-                            .opening_dialogue()
-                            .unwrap_or("")
-                    },
                 )
             } else if self.shapla_story_active()
                 && caller == stories::shapla_apartments::CALLER_LINE
@@ -1281,17 +1272,28 @@ impl Backend {
         else {
             return;
         };
+        let neel_story = self.neel_story_active();
+        let neel_audio = neel_story && story_audio_path(caller, callee).is_some();
+        let has_opening_audio = if neel_story {
+            tap_audio && neel_audio
+        } else {
+            self.story_enabled
+                && (Self::opening_dialogue(caller).is_some()
+                    || story_audio_path(caller, callee).is_some())
+        };
         let Some(call) = self.calls.get_mut(index) else {
             return;
         };
-        let has_opening_audio = self.story_enabled
-            && (Self::opening_dialogue(caller).is_some()
-                || story_audio_path(caller, callee).is_some());
         println!(
             "[TRANSITION] call {} -> {} phase={:?} connect_requested has_opening_audio={} story_thread={}",
             caller, callee, call.phase, has_opening_audio, self.story_thread
         );
-        if self.tts_prepared && !has_opening_audio {
+        if neel_story && !has_opening_audio {
+            call.phase = CallPhase::Connected;
+            call.connected_at = Some(Instant::now());
+            call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
+            call.audio_duration_seconds = story_audio_duration_seconds(caller, callee).unwrap_or(1);
+        } else if self.tts_prepared && !has_opening_audio {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
@@ -1331,17 +1333,6 @@ impl Backend {
         call.phase = CallPhase::Connected;
         call.connected_at = Some(Instant::now());
         call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
-        if self.neel_story_active()
-            && caller == stories::neel_university::NEEL_LINE
-            && callee == stories::neel_university::SHADHIN_LINE
-            && self.neel_story_beat == stories::neel_university::Beat::ProfessorRouting
-        {
-            println!(
-                "[TRANSITION] Neel beat {:?} -> ArnabDirectory after connection {} -> {}",
-                self.neel_story_beat, caller, callee
-            );
-            self.neel_story_beat = stories::neel_university::Beat::ArnabDirectory;
-        }
         self.sync_call_state();
         self.audio_call = Some((caller, callee));
         let sequence = self.audio_sequence;
@@ -1447,12 +1438,6 @@ impl Backend {
         match caller {
             stories::shapla_apartments::CALLER_LINE => {
                 Some(stories::shapla_apartments::OPENING_DIALOGUE)
-            }
-            stories::neel_university::NEEL_LINE => {
-                stories::neel_university::Beat::ProfessorRouting.opening_dialogue()
-            }
-            stories::neel_university::SHADHIN_LINE => {
-                stories::neel_university::Beat::ArnabDirectory.opening_dialogue()
             }
             _ => None,
         }

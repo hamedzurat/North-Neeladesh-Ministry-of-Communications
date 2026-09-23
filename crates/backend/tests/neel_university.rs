@@ -120,7 +120,7 @@ fn professor_must_wait_for_delayed_ring_activation_before_direct_connection() {
     assert!(response.accepted);
     assert_eq!(
         response.output.calls[0].phase,
-        exchange_protocol::CallPhase::Held
+        exchange_protocol::CallPhase::Connected
     );
 }
 

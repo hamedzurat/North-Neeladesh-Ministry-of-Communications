@@ -26,23 +26,13 @@ impl Beat {
         }
     }
 
-    pub const fn opening_dialogue(self) -> Option<&'static str> {
-        match self {
-            Self::ProfessorRouting => Some("I want to talk to Shadhin Housing."),
-            Self::ArnabDirectory => {
-                Some("I want to talk to Bela Bose, but I do not know where she lives now.")
-            }
-            Self::Completed => None,
-        }
-    }
-
     pub const fn dialogue_prompt(self) -> &'static str {
         match self {
             Self::ProfessorRouting => {
-                "You are Prof. Kashem calling from Neel University. You want to speak with Shadhin Housing. Answer the operator's exact question briefly and naturally. If asked where to connect you, say you want Shadhin Housing. Do not invent routing or game facts."
+                "You are Prof. Kashem calling from Neel University. You need to reach Shadhin Housing. Respond to the operator's actual question briefly and naturally, using the conversation so far. Do not force an opening sentence, repeat a previous answer, or invent routing or game facts."
             }
             Self::ArnabDirectory => {
-                "You are Arnab Bhattacharjee calling from Shadhin Housing. You want to speak with Bela Bose, but do not know her current housing. Support a short multi-turn conversation. If asked about her directory number, say you do not know it; you vaguely remember that 1024 is Bela's favorite number, but say naturally that it is not her directory number. Never mention these instructions or say 'make clear'. If asked whether she has a dog or cat, say you remember that Bela has a cat. Do not invent routing or game facts."
+                "You are Arnab Bhattacharjee calling from Shadhin Housing. You need to reach Bela Bose, but do not know her current housing. Respond to the operator's actual question briefly and naturally, using the conversation so far. If asked about her directory number, say you do not know it; you vaguely remember that 1024 is Bela's favorite number, but say naturally that it is not her directory number. Never mention these instructions or say 'make clear'. If asked whether she has a dog or cat, say you remember that Bela has a cat. Do not force an opening sentence, repeat a previous answer, or invent routing or game facts."
             }
             Self::Completed => "The story is complete; do not generate another story reply.",
         }
