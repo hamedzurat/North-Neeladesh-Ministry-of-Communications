@@ -1601,36 +1601,18 @@ fn run_dirty_work(
         text: "You release Agent Rahman's line and begin the authorized monitoring assignment.",
     })?;
 
-    for (caller, callee, label, tasks) in [
-        (
-            9,
-            7,
-            "Dr. Kamal calls Bagha News.",
-            vec![
-                "ask Dr. Kamal what he needs from Bagha News",
-                "ask him to clarify the ordinary notice he wants to place",
-            ],
-        ),
-        (
-            8,
-            7,
-            "Tariq calls Bagha News.",
-            vec![
-                "ask Tariq why he is calling in such a hurry",
-                "ask what is happening at Koyal Market",
-                "ask what evidence he has",
-            ],
-        ),
-        (
-            10,
-            7,
-            "Rehana calls Bagha News.",
-            vec![
-                "ask Rehana what she needs from the newspaper",
-                "ask her to explain what was missing from the delivery",
-            ],
-        ),
-    ] {
+    for _ in 0..3 {
+        let (caller, callee, label) = state
+            .output
+            .calls
+            .iter()
+            .find_map(|call| match call.caller_line {
+                9 => Some((9, call.requested_callee_line, "Dr. Kamal calls Bagha News.")),
+                8 => Some((8, call.requested_callee_line, "Tariq calls Bagha News.")),
+                10 => Some((10, call.requested_callee_line, "Rehana calls Bagha News.")),
+                _ => None,
+            })
+            .ok_or("Dirty Work did not expose its selected contact call")?;
         log.row(CsvRow {
             event: "tap_ready",
             sequence,
@@ -1640,7 +1622,6 @@ fn run_dirty_work(
             status: "accepted",
             text: &format!("You prepare the monitor TAP for {label}"),
         })?;
-        let _ = tasks;
         state = route_tap_call(backend, debug, &mut sequence, revision, caller, callee)?;
         revision = state.state_revision;
         log.row(CsvRow {

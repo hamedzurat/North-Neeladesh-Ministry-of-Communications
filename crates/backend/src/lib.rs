@@ -119,6 +119,7 @@ pub struct Backend {
     story_beat: stories::fallen_mother::Beat,
     neel_story_beat: stories::bela_bose::Beat,
     dirty_work_beat: stories::dirty_work::Beat,
+    dirty_work_completed_contacts: Vec<u8>,
     nahid_beat: stories::nahid::Beat,
     nahid_scam_count: u8,
     nahid_victims: Vec<u8>,
@@ -251,6 +252,7 @@ impl Backend {
             story_beat: stories::fallen_mother::Beat::EmergencyCall,
             neel_story_beat: stories::bela_bose::Beat::ProfessorRouting,
             dirty_work_beat: stories::dirty_work::Beat::Instruction,
+            dirty_work_completed_contacts: Vec::new(),
             nahid_beat: stories::nahid::Beat::Scamming,
             nahid_scam_count: 0,
             nahid_victims: Vec::new(),
@@ -474,6 +476,7 @@ impl Backend {
         self.story_beat = stories::fallen_mother::Beat::EmergencyCall;
         self.neel_story_beat = stories::bela_bose::Beat::ProfessorRouting;
         self.dirty_work_beat = stories::dirty_work::Beat::Instruction;
+        self.dirty_work_completed_contacts.clear();
         self.nahid_beat = stories::nahid::Beat::Scamming;
         self.nahid_scam_count = 0;
         self.nahid_victims.clear();
@@ -546,6 +549,11 @@ impl Backend {
             shapla_story_beat: self.shapla_story_beat_name().into(),
             neel_story_beat: self.neel_story_beat.name().into(),
             dirty_work_story_beat: self.dirty_work_beat.name().into(),
+            dirty_work_completed_contacts: self
+                .dirty_work_completed_contacts
+                .iter()
+                .map(|caller| self.subscriber(*caller).name.clone())
+                .collect(),
             nahid_story_beat: self.nahid_beat.name().into(),
             nahid_scam_count: self.nahid_scam_count,
             story_completed: self.story_completed,
@@ -1070,9 +1078,8 @@ impl Backend {
         let line = focused?;
         let index = self.calls.iter().position(|c| c.caller == line)?;
         if line == stories::dirty_work::RAHMAN_LINE && input.cord_topology.is_empty() {
-            if let Some(next) =
-                stories::dirty_work::next_beat_after_operator_call(self.dirty_work_beat, line)
-            {
+            if self.dirty_work_beat == stories::dirty_work::Beat::Instruction {
+                let next = self.next_dirty_work_contact();
                 self.log(
                     "STORY dirty_work",
                     format_args!("beat {:?} -> {:?}", self.dirty_work_beat, next),
@@ -1568,11 +1575,17 @@ impl Backend {
                     stories::bela_bose::Beat::ProfessorRouting => {}
                 }
             }
-            if let Some(next) = stories::dirty_work::next_beat_after_connection(
-                self.dirty_work_beat,
-                call.caller,
-                call.callee,
-            ) {
+            if let Some(contact) = stories::dirty_work::contact_beat(call.caller)
+                && contact == self.dirty_work_beat
+            {
+                self.dirty_work_completed_contacts.push(call.caller);
+                let next = if self.dirty_work_completed_contacts.len()
+                    == stories::dirty_work::CONTACT_BEATS.len()
+                {
+                    stories::dirty_work::Beat::Interrogation
+                } else {
+                    self.next_dirty_work_contact()
+                };
                 self.log(
                     "STORY dirty_work",
                     format_args!(
@@ -1899,6 +1912,21 @@ impl Backend {
             .copied()
             .find(|victim| !self.nahid_victims.contains(victim))
             .unwrap_or(stories::nahid::VICTIM_LINES[0])
+    }
+
+    fn next_dirty_work_contact(&mut self) -> stories::dirty_work::Beat {
+        let remaining: Vec<_> = stories::dirty_work::CONTACT_BEATS
+            .into_iter()
+            .filter(|beat| {
+                let caller = beat.caller();
+                !self.dirty_work_completed_contacts.contains(&caller)
+            })
+            .collect();
+        self.rng = self
+            .rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        remaining[(self.rng as usize) % remaining.len()]
     }
 
     fn story_caller_for_neel(&self) -> u8 {

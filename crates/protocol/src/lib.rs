@@ -398,6 +398,7 @@ pub struct DebugSnapshot {
     pub shapla_story_beat: String,
     pub neel_story_beat: String,
     pub dirty_work_story_beat: String,
+    pub dirty_work_completed_contacts: Vec<String>,
     pub nahid_story_beat: String,
     pub nahid_scam_count: u8,
     pub story_completed: bool,

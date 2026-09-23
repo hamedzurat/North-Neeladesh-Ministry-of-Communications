@@ -6,6 +6,11 @@ pub const FARHANA_LINE: u8 = 7;
 pub const TARIQ_LINE: u8 = 8;
 pub const KAMAL_LINE: u8 = 9;
 pub const REHANA_LINE: u8 = 10;
+pub const CONTACT_BEATS: [Beat; 3] = [
+    Beat::MundaneCall,
+    Beat::WhistleblowerLeak,
+    Beat::SubscriberCall,
+];
 
 pub const SECRET_POLICE: &str = "SECRET POLICE DIRECTORATE";
 pub const BAGHA_NEWS: &str = "BAGHA NEWS DESK";
@@ -172,18 +177,11 @@ impl Beat {
     }
 }
 
-pub const fn next_beat_after_connection(beat: Beat, caller: u8, callee: u8) -> Option<Beat> {
-    match (beat, caller, callee) {
-        (Beat::MundaneCall, KAMAL_LINE, FARHANA_LINE) => Some(Beat::WhistleblowerLeak),
-        (Beat::WhistleblowerLeak, TARIQ_LINE, FARHANA_LINE) => Some(Beat::SubscriberCall),
-        (Beat::SubscriberCall, REHANA_LINE, FARHANA_LINE) => Some(Beat::Interrogation),
-        _ => None,
-    }
-}
-
-pub const fn next_beat_after_operator_call(beat: Beat, caller: u8) -> Option<Beat> {
-    match (beat, caller) {
-        (Beat::Instruction, RAHMAN_LINE) => Some(Beat::MundaneCall),
+pub const fn contact_beat(caller: u8) -> Option<Beat> {
+    match caller {
+        KAMAL_LINE => Some(Beat::MundaneCall),
+        TARIQ_LINE => Some(Beat::WhistleblowerLeak),
+        REHANA_LINE => Some(Beat::SubscriberCall),
         _ => None,
     }
 }
@@ -261,22 +259,16 @@ impl Outcome {
 
 #[cfg(test)]
 mod tests {
-    use super::{Beat, FARHANA_LINE, KAMAL_LINE, Outcome, REHANA_LINE, TARIQ_LINE};
+    use super::{Beat, KAMAL_LINE, Outcome, REHANA_LINE, TARIQ_LINE};
 
     #[test]
-    fn calls_progress_through_the_three_bagha_news_contacts() {
+    fn contact_callers_map_to_their_beats() {
+        assert_eq!(super::contact_beat(KAMAL_LINE), Some(Beat::MundaneCall));
         assert_eq!(
-            super::next_beat_after_connection(Beat::MundaneCall, KAMAL_LINE, FARHANA_LINE),
+            super::contact_beat(TARIQ_LINE),
             Some(Beat::WhistleblowerLeak)
         );
-        assert_eq!(
-            super::next_beat_after_connection(Beat::WhistleblowerLeak, TARIQ_LINE, FARHANA_LINE),
-            Some(Beat::SubscriberCall)
-        );
-        assert_eq!(
-            super::next_beat_after_connection(Beat::SubscriberCall, REHANA_LINE, FARHANA_LINE),
-            Some(Beat::Interrogation)
-        );
+        assert_eq!(super::contact_beat(REHANA_LINE), Some(Beat::SubscriberCall));
     }
 
     #[test]
