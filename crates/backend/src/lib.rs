@@ -1504,9 +1504,11 @@ impl Backend {
                 && call.caller == stories::neel_university::SHADHIN_LINE
             {
                 println!(
-                    "[TRANSITION] Neel beat {:?} remains ArnabDirectory after wrong call {} -> {}",
+                    "[TRANSITION] Neel beat {:?} -> BadEnding after wrong call {} -> {}",
                     self.neel_story_beat, call.caller, call.callee
                 );
+                self.neel_story_beat = stories::neel_university::Beat::BadEnding;
+                self.story_completed = false;
             } else if self.neel_story_active()
                 && call.caller == stories::neel_university::NEEL_LINE
                 && self.neel_story_beat == stories::neel_university::Beat::ProfessorRouting
@@ -1744,18 +1746,20 @@ impl Backend {
                 audio_duration_seconds: 0,
             });
         }
-        if self.neel_story_beat != stories::neel_university::Beat::Completed
-            && !self
-                .calls
-                .iter()
-                .any(|call| self.is_neel_caller(call.caller))
+        if !matches!(
+            self.neel_story_beat,
+            stories::neel_university::Beat::Completed | stories::neel_university::Beat::BadEnding
+        ) && !self
+            .calls
+            .iter()
+            .any(|call| self.is_neel_caller(call.caller))
         {
             let caller = self.story_caller_for_neel();
             self.calls.push(ActiveCall {
                 caller,
                 callee: self.story_requested_callee(),
                 phase: CallPhase::Waiting,
-                deadline: now + u64::MAX / 2,
+                deadline: now + self.neel_story_beat.patience_seconds(),
                 started_elapsed_seconds: now,
                 connected_at: None,
                 connected_elapsed_seconds: None,
@@ -1772,7 +1776,8 @@ impl Backend {
         match self.neel_story_beat {
             stories::neel_university::Beat::ProfessorRouting => stories::neel_university::NEEL_LINE,
             stories::neel_university::Beat::ArnabDirectory
-            | stories::neel_university::Beat::Completed => stories::neel_university::SHADHIN_LINE,
+            | stories::neel_university::Beat::Completed
+            | stories::neel_university::Beat::BadEnding => stories::neel_university::SHADHIN_LINE,
         }
     }
 

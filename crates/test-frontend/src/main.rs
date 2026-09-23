@@ -1361,7 +1361,7 @@ fn run_neel_story(
         text: "Neel University calls; Professor Routing is active.",
     })?;
 
-    if path.contains("patience") {
+    if path == "neel_patience" {
         let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 33 })?;
         state = exchange(
             backend,
@@ -1759,7 +1759,7 @@ fn run_neel_story(
         )?;
         revision = state.state_revision;
         let snapshot = debug_snapshot(debug)?;
-        if snapshot.snapshot.neel_story_beat != "Completed"
+        if snapshot.snapshot.neel_story_beat != "ArnabDirectory"
             || !state
                 .output
                 .printer_output
@@ -1767,7 +1767,7 @@ fn run_neel_story(
                 .any(|entry| entry.text.contains("-$4 missed call line 3"))
         {
             return Err(format!(
-                "Arnab patience expiry was not recorded correctly: beat={}, printer={:?}",
+                "Arnab patience retry was not recorded correctly: beat={}, printer={:?}",
                 snapshot.snapshot.neel_story_beat, state.output.printer_output
             )
             .into());
@@ -1779,7 +1779,7 @@ fn run_neel_story(
             caller: 3,
             destination: arnab.requested_callee_line,
             status: "accepted",
-            text: "Arnab call expired and the story ended with a -$4 printer entry.",
+            text: "Arnab call expired and ArnabDirectory was retried with a -$4 printer entry.",
         })?;
         return Ok(());
     }
@@ -1906,7 +1906,7 @@ fn run_neel_story(
     }
     let snapshot = debug_snapshot(debug)?;
     if destination == 4 {
-        if snapshot.snapshot.neel_story_beat != "ArnabDirectory" {
+        if snapshot.snapshot.neel_story_beat != "BadEnding" {
             return Err(format!(
                 "wrong Bela route changed Neel beat unexpectedly: {}",
                 snapshot.snapshot.neel_story_beat
@@ -1920,7 +1920,7 @@ fn run_neel_story(
             caller: 3,
             destination,
             status: "accepted",
-            text: "Wrong Bela route preserved ArnabDirectory for retry.",
+            text: "Wrong Bela route reached terminal BadEnding; no further Neel call is created.",
         })?;
         return Ok(());
     }
