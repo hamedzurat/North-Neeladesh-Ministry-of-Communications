@@ -28,6 +28,8 @@ voice_vocabulary = [
     "Bagha News",
     "Koyal Market",
     "Secret Police",
+    "Shonarpara Exchange Tower",
+    "bKash",
 ]
 
 dialogue_prompt_template = '''You are a configured subscriber in a telephone exchange.
@@ -137,8 +139,8 @@ voice_id = "pocket-line-10"
 
 [[subscribers]]
 line = 11
-place = "LINE 11"
-name = "SUBSCRIBER 11"
-role = "unassigned"
-private_info = "Makes excellent mango pickle every summer."
+place = "SHONARPARA EXCHANGE TOWER"
+name = "Nahid"
+role = "bKash scammer"
+private_info = "Uses urgent payment-account stories to pressure strangers into revealing account details."
 voice_id = "pocket-line-11"

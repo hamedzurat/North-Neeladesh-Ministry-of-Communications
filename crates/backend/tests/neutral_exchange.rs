@@ -32,13 +32,13 @@ fn production_exchange_starts_registered_story_callers() {
     let response = backend.apply_input_message(first_input(&backend));
 
     assert!(response.accepted);
-    assert_eq!(response.output.calls.len(), 3);
+    assert_eq!(response.output.calls.len(), 4);
 
     let response = backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
         command: DebugCommand::AdvanceTime { seconds: 8 },
     });
-    assert_eq!(response.snapshot.active_calls.len(), 3);
+    assert_eq!(response.snapshot.active_calls.len(), 4);
 }
 
 #[test]
@@ -53,7 +53,7 @@ fn reset_preserves_demo_call_capacity() {
 fn registered_story_callers_retry_after_patience_expiry() {
     let mut backend = Backend::new_exchange();
     let first = backend.apply_input_message(first_input(&backend));
-    assert_eq!(first.output.calls.len(), 3);
+    assert_eq!(first.output.calls.len(), 4);
 
     backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
@@ -63,5 +63,5 @@ fn registered_story_callers_retry_after_patience_expiry() {
 
     assert!(response.accepted);
     assert_eq!(backend.money(), -4);
-    assert_eq!(response.output.calls.len(), 3);
+    assert_eq!(response.output.calls.len(), 4);
 }

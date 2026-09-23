@@ -125,6 +125,7 @@ pub(crate) fn simple_place(line: u8) -> String {
         8 => stories::dirty_work::KOYAL_MARKET.into(),
         9 => stories::dirty_work::NEEL_UNIVERSITY.into(),
         10 => stories::dirty_work::SHAPLA_APARTMENTS.into(),
+        11 => stories::nahid::LOCATION.into(),
         _ => format!("LINE {line:02}"),
     }
 }
@@ -180,6 +181,11 @@ pub(crate) fn directory_user(line: u8) -> (String, String, String) {
             "Rehana".into(),
             "newspaper subscriber".into(),
             stories::dirty_work::SHAPLA_APARTMENTS.into(),
+        ),
+        11 => (
+            "Nahid".into(),
+            "bKash scammer".into(),
+            stories::nahid::LOCATION.into(),
         ),
         _ => (
             format!("SUBSCRIBER {line:02}"),

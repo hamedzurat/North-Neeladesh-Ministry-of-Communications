@@ -126,7 +126,7 @@ fn professor_must_wait_for_delayed_ring_activation_before_direct_connection() {
 }
 
 #[test]
-fn reset_starts_all_three_story_callers_together() {
+fn reset_starts_all_four_story_callers_together() {
     let mut backend = Backend::new_exchange();
     let reset = backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
@@ -137,6 +137,7 @@ fn reset_starts_all_three_story_callers_together() {
     assert_eq!(reset.snapshot.shapla_story_beat, "EmergencyCall");
     assert_eq!(reset.snapshot.neel_story_beat, "ProfessorRouting");
     assert_eq!(reset.snapshot.dirty_work_story_beat, "Instruction");
+    assert_eq!(reset.snapshot.nahid_story_beat, "Scamming");
 
     let response = backend.apply_input_message(input(&backend, 1, vec![], [0, 0, 0, 1]));
     let callers = response
@@ -148,5 +149,6 @@ fn reset_starts_all_three_story_callers_together() {
     assert!(callers.contains(&1), "Shapla call missing: {callers:?}");
     assert!(callers.contains(&2), "Neel call missing: {callers:?}");
     assert!(callers.contains(&6), "Dirty Work call missing: {callers:?}");
-    assert_eq!(callers.len(), 3);
+    assert!(callers.contains(&11), "Nahid call missing: {callers:?}");
+    assert_eq!(callers.len(), 4);
 }

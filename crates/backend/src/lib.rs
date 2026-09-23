@@ -31,11 +31,13 @@ use exchange_protocol::{
 fn authored_audio_path(caller: u8, callee: u8) -> Option<PathBuf> {
     stories::bela_bose::audio_path(caller, callee)
         .or_else(|| stories::dirty_work::audio_path(caller, callee))
+        .or_else(|| stories::nahid::audio_path(caller, callee))
 }
 
 fn authored_audio_duration_seconds(caller: u8, callee: u8) -> Option<u64> {
     stories::bela_bose::audio_duration_seconds(caller, callee)
         .or_else(|| stories::dirty_work::audio_duration_seconds(caller, callee))
+        .or_else(|| stories::nahid::audio_duration_seconds(caller, callee))
 }
 
 mod calls;
@@ -115,6 +117,9 @@ pub struct Backend {
     story_beat: stories::fallen_mother::Beat,
     neel_story_beat: stories::bela_bose::Beat,
     dirty_work_beat: stories::dirty_work::Beat,
+    nahid_beat: stories::nahid::Beat,
+    nahid_scam_count: u8,
+    nahid_victims: Vec<u8>,
     story_controls: HeldControls,
     story_enabled: bool,
     story_started_elapsed_seconds: u64,
@@ -178,6 +183,10 @@ impl Backend {
             )
     }
 
+    fn is_nahid_caller(&self, caller: u8) -> bool {
+        self.story_enabled && caller == stories::nahid::NAHID_LINE
+    }
+
     pub fn new() -> Self {
         Self::new_exchange()
     }
@@ -238,6 +247,9 @@ impl Backend {
             story_beat: stories::fallen_mother::Beat::EmergencyCall,
             neel_story_beat: stories::bela_bose::Beat::ProfessorRouting,
             dirty_work_beat: stories::dirty_work::Beat::Instruction,
+            nahid_beat: stories::nahid::Beat::Scamming,
+            nahid_scam_count: 0,
+            nahid_victims: Vec::new(),
             story_controls: HeldControls::default(),
             story_enabled: true,
             story_started_elapsed_seconds: 0,
@@ -376,6 +388,14 @@ impl Backend {
                     caller_profile.place,
                     callee_profile.place
                 )
+            } else if self.is_nahid_caller(caller) {
+                format!(
+                    "{}\nCaller location: {}\nTarget location: {}\nScams completed: {}",
+                    stories::nahid::DIALOGUE_PROMPT,
+                    caller_profile.place,
+                    callee_profile.place,
+                    self.nahid_scam_count
+                )
             } else if self.shapla_story_active() && caller == stories::fallen_mother::CALLER_LINE {
                 format!(
                     "{}\nStory place: {}\nOpening dialogue: {}",
@@ -448,6 +468,9 @@ impl Backend {
         self.story_beat = stories::fallen_mother::Beat::EmergencyCall;
         self.neel_story_beat = stories::bela_bose::Beat::ProfessorRouting;
         self.dirty_work_beat = stories::dirty_work::Beat::Instruction;
+        self.nahid_beat = stories::nahid::Beat::Scamming;
+        self.nahid_scam_count = 0;
+        self.nahid_victims.clear();
         self.story_controls = HeldControls::default();
         self.story_started_elapsed_seconds = self.elapsed_seconds() as u64;
         self.voice_turn_controls = HeldControls::default();
@@ -517,6 +540,8 @@ impl Backend {
             shapla_story_beat: self.shapla_story_beat_name().into(),
             neel_story_beat: self.neel_story_beat.name().into(),
             dirty_work_story_beat: self.dirty_work_beat.name().into(),
+            nahid_story_beat: self.nahid_beat.name().into(),
+            nahid_scam_count: self.nahid_scam_count,
             story_completed: self.story_completed,
             money: self.money,
             run: DebugRunState {
@@ -1013,6 +1038,7 @@ impl Backend {
                     | stories::dirty_work::KAMAL_LINE
                     | stories::dirty_work::TARIQ_LINE
                     | stories::dirty_work::REHANA_LINE
+                    | stories::nahid::NAHID_LINE
             )
         {
             return;
@@ -1467,6 +1493,28 @@ impl Backend {
                     call.caller, call.callee, self.money
                 ),
             );
+            if call.caller == stories::nahid::NAHID_LINE
+                && self.nahid_beat == stories::nahid::Beat::Scamming
+            {
+                self.nahid_scam_count = self.nahid_scam_count.saturating_add(1);
+                self.nahid_victims.push(call.callee);
+                self.log(
+                    "STORY nahid",
+                    format_args!("completed scam {} of 5", self.nahid_scam_count),
+                );
+                if self.nahid_scam_count >= 5 {
+                    self.nahid_beat = stories::nahid::Beat::Penalized;
+                    self.deductions += 100;
+                    self.money -= 100;
+                    append_printer(
+                        &mut self.state,
+                        &format!(
+                            "MONEY // -$100 Nahid scammed five people // balance ${}",
+                            self.money
+                        ),
+                    );
+                }
+            }
             if self.neel_story_active()
                 && let Some(next) = stories::bela_bose::next_beat_after_connection(
                     self.neel_story_beat,
@@ -1789,6 +1837,54 @@ impl Backend {
                 audio_duration_seconds: 0,
             });
         }
+        if !self.nahid_beat.is_terminal()
+            && !self
+                .calls
+                .iter()
+                .any(|call| self.is_nahid_caller(call.caller))
+        {
+            let now = self.elapsed_seconds() as u64;
+            let victim = self.next_nahid_victim();
+            self.calls.push(ActiveCall {
+                caller: stories::nahid::NAHID_LINE,
+                callee: victim,
+                phase: CallPhase::Waiting,
+                deadline: now + stories::nahid::PATIENCE_SECONDS,
+                started_elapsed_seconds: now,
+                connected_at: None,
+                connected_elapsed_seconds: None,
+                ring_started_at: None,
+                ring_ready_at: None,
+                ring_activated: false,
+                disconnected_at: None,
+                audio_duration_seconds: 0,
+            });
+        }
+    }
+
+    fn next_nahid_victim(&mut self) -> u8 {
+        self.rng = self
+            .rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let start = (self.rng as usize) % stories::nahid::VICTIM_LINES.len();
+        for offset in 0..stories::nahid::VICTIM_LINES.len() {
+            let victim =
+                stories::nahid::VICTIM_LINES[(start + offset) % stories::nahid::VICTIM_LINES.len()];
+            if !self
+                .calls
+                .iter()
+                .any(|call| call.caller == victim || call.callee == victim)
+                && !self.nahid_victims.contains(&victim)
+            {
+                return victim;
+            }
+        }
+        stories::nahid::VICTIM_LINES
+            .iter()
+            .copied()
+            .find(|victim| !self.nahid_victims.contains(victim))
+            .unwrap_or(stories::nahid::VICTIM_LINES[0])
     }
 
     fn story_caller_for_neel(&self) -> u8 {
@@ -1816,6 +1912,7 @@ impl Backend {
                         stories::dirty_work::TARIQ_LINE,
                         stories::dirty_work::KAMAL_LINE,
                         stories::dirty_work::REHANA_LINE,
+                        stories::nahid::NAHID_LINE,
                     ]
                     .contains(&caller)
                         && ![
@@ -1829,6 +1926,7 @@ impl Backend {
                             stories::dirty_work::TARIQ_LINE,
                             stories::dirty_work::KAMAL_LINE,
                             stories::dirty_work::REHANA_LINE,
+                            stories::nahid::NAHID_LINE,
                         ]
                         .contains(&callee)))
                 && self.calls.iter().all(|c| {
@@ -2161,7 +2259,34 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                             transcript
                                         ),
                                     );
-                                    if service_turn && caller == stories::fallen_mother::CALLER_LINE
+                                    if service_turn && caller == stories::nahid::NAHID_LINE {
+                                        if state.voice_turn_controls.police {
+                                            match classify_nahid_report(transcript) {
+                                                Ok(success) => {
+                                                    state.voice_response_text = Some(
+                                                        if success { "success" } else { "failure" }
+                                                            .into(),
+                                                    );
+                                                    if success {
+                                                        state.nahid_beat =
+                                                            stories::nahid::Beat::Stopped;
+                                                        append_printer(
+                                                            &mut state.state,
+                                                            "STORY nahid // police report accepted; scammer stopped",
+                                                        );
+                                                    }
+                                                }
+                                                Err(error) => append_printer(
+                                                    &mut state.state,
+                                                    &format!(
+                                                        "STORY CLASSIFIER ERROR // {}",
+                                                        error.message
+                                                    ),
+                                                ),
+                                            }
+                                        }
+                                    } else if service_turn
+                                        && caller == stories::fallen_mother::CALLER_LINE
                                     {
                                         let service = if state.voice_turn_controls.police {
                                             exchange_protocol::ServiceKind::Police
@@ -2521,6 +2646,19 @@ fn classify_dirty_work(transcript: &str) -> Result<stories::dirty_work::Outcome,
     Ok(stories::dirty_work::Outcome::parse(&word))
 }
 
+fn classify_nahid_report(transcript: &str) -> Result<bool, VoiceError> {
+    let command = env::var("NN_STORY_CLASSIFIER_COMMAND").map_err(|_| {
+        VoiceError::new(
+            "story_classifier_not_configured",
+            "NN_STORY_CLASSIFIER_COMMAND is not configured",
+        )
+    })?;
+    let mut classifier = CommandTextClassifier::new(CommandSpec::from_words(&command)?);
+    let report = format!("REPORT START\n{transcript}\nREPORT END");
+    let word = classifier.classify(stories::nahid::POLICE_CLASSIFIER_PROMPT, &report)?;
+    Ok(stories::nahid::report_succeeded(&word))
+}
+
 fn text_error(request: &TextInputMessage, code: &str, message: &str) -> TextResponseMessage {
     TextResponseMessage {
         protocol_version: TEXT_PROTOCOL_VERSION,
@@ -2598,7 +2736,36 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
             // controls captured at PTT start so story classification follows
             // the same authoritative path as the voice worker.
             state.voice_turn_controls = request.held_controls.clone();
-            if state.voice_subscriber_line == Some(stories::dirty_work::RAHMAN_LINE)
+            if state.voice_subscriber_line == Some(stories::nahid::NAHID_LINE)
+                && request.held_controls.police
+            {
+                match classify_nahid_report(&request.text) {
+                    Ok(success) => {
+                        classification_word =
+                            Some(if success { "success" } else { "failure" }.into());
+                        if success {
+                            state.nahid_beat = stories::nahid::Beat::Stopped;
+                            state.log(
+                                "STORY nahid",
+                                format_args!(
+                                    "police report succeeded; Nahid stopped at {}",
+                                    stories::nahid::LOCATION
+                                ),
+                            );
+                            append_printer(
+                                &mut state.state,
+                                "STORY nahid // police report accepted; scammer stopped",
+                            );
+                        } else {
+                            state.log("STORY nahid", "police report incomplete; Nahid continues");
+                        }
+                    }
+                    Err(error) => append_printer(
+                        &mut state.state,
+                        &format!("STORY CLASSIFIER ERROR // {}", error.message),
+                    ),
+                }
+            } else if state.voice_subscriber_line == Some(stories::dirty_work::RAHMAN_LINE)
                 && state.dirty_work_beat == stories::dirty_work::Beat::Interrogation
                 && !service_turn
             {

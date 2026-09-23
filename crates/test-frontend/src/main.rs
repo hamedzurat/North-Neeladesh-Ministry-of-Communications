@@ -131,6 +131,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let initial_debug = debug_command(&mut debug, DebugCommand::ResetRun)?;
     if initial_debug.snapshot.shapla_story_beat != "EmergencyCall"
         || initial_debug.snapshot.neel_story_beat != "ProfessorRouting"
+        || initial_debug.snapshot.dirty_work_story_beat != "Instruction"
+        || initial_debug.snapshot.nahid_story_beat != "Scamming"
     {
         return Err("story reset did not initialize registered story threads".into());
     }
@@ -165,6 +167,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &mut debug,
             &mut log,
             &player_command,
+            path.as_str(),
+            initial_money,
+        );
+    }
+    if path.starts_with("nahid_") {
+        return run_nahid(
+            &mut backend,
+            &mut text,
+            &mut debug,
+            &mut log,
             path.as_str(),
             initial_money,
         );
@@ -1543,6 +1555,137 @@ fn run_dirty_work(
             snapshot.snapshot.dirty_work_story_beat, snapshot.snapshot.money, initial_money
         ),
     })?;
+    Ok(())
+}
+
+fn run_nahid(
+    backend: &mut TcpStream,
+    text: &mut TcpStream,
+    debug: &mut TcpStream,
+    log: &mut GameLog,
+    path: &str,
+    initial_money: i32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut sequence = 0;
+    let mut revision = 0;
+    let mut state = exchange(
+        backend,
+        input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+    )?;
+    revision = state.state_revision;
+    let mut victims = Vec::new();
+
+    let scam_count = if path == "nahid_police_success" { 1 } else { 5 };
+    for attempt in 0..scam_count {
+        let call = state
+            .output
+            .calls
+            .iter()
+            .find(|call| call.caller_line == 11)
+            .cloned()
+            .ok_or_else(|| format!("Nahid call {} did not arrive", attempt + 1))?;
+        if victims.contains(&call.requested_callee_line) {
+            return Err(
+                format!("Nahid selected victim {} twice", call.requested_callee_line).into(),
+            );
+        }
+        victims.push(call.requested_callee_line);
+        log.row(CsvRow {
+            event: "scam_call",
+            sequence,
+            revision,
+            caller: 11,
+            destination: call.requested_callee_line,
+            status: "accepted",
+            text: &format!("Nahid calls victim {}", call.requested_callee_line),
+        })?;
+        state = route_tap_call(
+            backend,
+            debug,
+            &mut sequence,
+            revision,
+            11,
+            call.requested_callee_line,
+        )?;
+        revision = state.state_revision;
+    }
+
+    if path == "nahid_police_success" {
+        let call = state
+            .output
+            .calls
+            .iter()
+            .find(|call| call.caller_line == 11)
+            .cloned()
+            .ok_or("Nahid did not continue after the first scam")?;
+        state = exchange(
+            backend,
+            input(
+                &mut sequence,
+                revision,
+                vec![cord(PortId::Subscriber(call.caller_line), PortId::Operator)],
+                false,
+                [0, 0, 0, 1],
+            ),
+        )?;
+        revision = state.state_revision;
+        let report = "Nahid is running a bKash scam from Shonarpara Exchange Tower. Send police.";
+        let response = send_text(
+            text,
+            TextInputMessage {
+                protocol_version: TEXT_PROTOCOL_VERSION,
+                session_id: 1,
+                turn_id: 1,
+                state_revision: revision,
+                held_controls: HeldControls {
+                    police: true,
+                    ..HeldControls::default()
+                },
+                text: report.into(),
+            },
+        )?;
+        if response.classification.as_deref() != Some("success") {
+            return Err(format!("Nahid police report was not successful: {response:?}").into());
+        }
+        let snapshot = debug_snapshot(debug)?;
+        if snapshot.snapshot.nahid_story_beat != "Stopped" {
+            return Err("Nahid did not stop after the successful police report".into());
+        }
+        log.row(CsvRow {
+            event: "police_report",
+            sequence,
+            revision,
+            caller: 11,
+            destination: 0,
+            status: "success",
+            text: report,
+        })?;
+    } else {
+        let snapshot = debug_snapshot(debug)?;
+        if snapshot.snapshot.nahid_story_beat != "Penalized"
+            || snapshot.snapshot.nahid_scam_count != 5
+            || !snapshot
+                .snapshot
+                .call_history
+                .iter()
+                .any(|call| call.reason.contains("direct circuit completed"))
+        {
+            return Err(format!(
+                "Nahid five-scam path did not penalize correctly: {:?}",
+                snapshot.snapshot
+            )
+            .into());
+        }
+        log.row(CsvRow {
+            event: "penalty",
+            sequence,
+            revision,
+            caller: 11,
+            destination: 0,
+            status: "accepted",
+            text: &format!("five scams completed; balance started at ${initial_money}"),
+        })?;
+    }
     Ok(())
 }
 
