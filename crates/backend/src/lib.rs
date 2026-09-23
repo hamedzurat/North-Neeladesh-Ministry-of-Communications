@@ -609,6 +609,19 @@ impl Backend {
         }
     }
 
+    fn sync_story_output(&mut self) {
+        self.state.shapla_story_beat = self.shapla_story_beat_name().into();
+        self.state.neel_story_beat = self.neel_story_beat.name().into();
+        self.state.dirty_work_story_beat = self.dirty_work_beat.name().into();
+        self.state.dirty_work_completed_contacts = self
+            .dirty_work_completed_contacts
+            .iter()
+            .map(|caller| self.subscriber(*caller).name.clone())
+            .collect();
+        self.state.nahid_story_beat = self.nahid_beat.name().into();
+        self.state.nahid_scam_count = self.nahid_scam_count;
+    }
+
     fn destination_is_allowed(&self, call: &ActiveCall, selected: u16) -> bool {
         if self.neel_story_active()
             && self.neel_story_beat == stories::bela_bose::Beat::ArnabDirectory
@@ -793,6 +806,7 @@ impl Backend {
         self.state.shift.active_call_count = self.calls.len() as u8;
         self.state.tap_bridge_monitoring = tap_monitor(input, &self.state);
         self.state.tap_bridge_audio_active = self.state.tap_bridge_monitoring.is_some();
+        self.sync_story_output();
         self.update_voice_control(input, self.revision);
         self.cancel_voice_if_operator_disconnected(input);
         self.state.speaker_active = (input.held_controls.ptt

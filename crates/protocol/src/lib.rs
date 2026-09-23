@@ -325,6 +325,12 @@ pub struct StateOutput {
     pub tap_bridge_monitoring: Option<TapBridgeMonitoring>,
     pub shift: ShiftStatus,
     pub debug: OutputDebug,
+    pub shapla_story_beat: String,
+    pub neel_story_beat: String,
+    pub dirty_work_story_beat: String,
+    pub dirty_work_completed_contacts: Vec<String>,
+    pub nahid_story_beat: String,
+    pub nahid_scam_count: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -46,6 +46,12 @@ pub(crate) fn initial_state() -> StateOutput {
             service_error_counts: vec![],
         },
         debug: OutputDebug { messages: vec![] },
+        shapla_story_beat: "EmergencyCall".into(),
+        neel_story_beat: "ProfessorRouting".into(),
+        dirty_work_story_beat: "Instruction".into(),
+        dirty_work_completed_contacts: vec![],
+        nahid_story_beat: "Scamming".into(),
+        nahid_scam_count: 0,
     }
 }
 

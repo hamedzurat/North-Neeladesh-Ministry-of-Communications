@@ -232,6 +232,12 @@ apply_state_message :: proc(app: ^Input_State, value: cbor.Value) -> bool {
 	if is_nil(tap_monitoring) { state.tap_bridge_monitoring = -1 } else { state.tap_bridge_monitoring = int(u8_value(tap_monitoring)) }
 	state.shift = decode_shift(map_get_or(output_value, "shift"))
 	state.backend_messages = decode_backend_messages(map_get_or(map_get_or(output_value, "debug"), "messages"))
+	state.shapla_story_beat = owned_string(map_get_or(output_value, "shapla_story_beat"))
+	state.neel_story_beat = owned_string(map_get_or(output_value, "neel_story_beat"))
+	state.dirty_work_story_beat = owned_string(map_get_or(output_value, "dirty_work_story_beat"))
+	state.dirty_work_completed_contacts = decode_strings(map_get_or(output_value, "dirty_work_completed_contacts"))
+	state.nahid_story_beat = owned_string(map_get_or(output_value, "nahid_story_beat"))
+	state.nahid_scam_count = u8_value(map_get_or(output_value, "nahid_scam_count"))
 	app.backend_output_ready = true
 	accepted := bool_value(map_get_or(value, "accepted"))
 	if response_sequence == app.input_sequence {
@@ -275,6 +281,12 @@ destroy_snapshot_storage :: proc(snapshot: ^State_Output) {
 	snapshot.service_call = nil
 	for message in snapshot.backend_messages { delete(message) }
 	delete(snapshot.backend_messages)
+	delete(snapshot.shapla_story_beat)
+	delete(snapshot.neel_story_beat)
+	delete(snapshot.dirty_work_story_beat)
+	for contact in snapshot.dirty_work_completed_contacts { delete(contact) }
+	delete(snapshot.dirty_work_completed_contacts)
+	delete(snapshot.nahid_story_beat)
 	delete(snapshot.game_phase)
 	delete(snapshot.shift.phase)
 	for &error in snapshot.shift.service_error_counts { delete(error.kind) }

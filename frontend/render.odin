@@ -240,6 +240,17 @@ ref_draw_directory :: proc(app: ^Input_State) {
 	}
 }
 
+ref_draw_story_status :: proc(app: ^Input_State) {
+	area := ref_rect(940, 450, 480, 115)
+	ref_panel(area)
+	ref_text_c("STORY THREADS // AUTHORITATIVE", area.x + 14, area.y + 12, 11, MUTED)
+	ref_text(fmt.tprintf("FALLEN MOTHER  // %s", app.backend_output.shapla_story_beat), area.x + 14, area.y + 38, 11, AMBER)
+	ref_text(fmt.tprintf("BELA BOSE       // %s", app.backend_output.neel_story_beat), area.x + 14, area.y + 60, 11, BLUE)
+	ref_text(fmt.tprintf("DIRTY WORK      // %s", app.backend_output.dirty_work_story_beat), area.x + 14, area.y + 82, 11, GREEN)
+	ref_text(fmt.tprintf("CONTACTS DONE   // %d/3", len(app.backend_output.dirty_work_completed_contacts)), area.x + 14, area.y + 101, 10, MUTED)
+	ref_text(fmt.tprintf("NAHID // %s // SCAMS %d/5", app.backend_output.nahid_story_beat, app.backend_output.nahid_scam_count), area.x + 250, area.y + 38, 10, AMBER)
+}
+
 ref_directory_digit_buttons :: proc(index: int) -> (rl.Rectangle, rl.Rectangle) {
 	left := ref_rect(940 + 14, 180 + 18, 218, 219)
 	x := left.x + 12 + f32(index) * 51
@@ -247,7 +258,7 @@ ref_directory_digit_buttons :: proc(index: int) -> (rl.Rectangle, rl.Rectangle) 
 }
 
 ref_draw_speaker :: proc(app: ^Input_State, delta: f32) {
-	area := ref_rect(940, 450, 480, 70)
+	area := ref_rect(940, 575, 480, 70)
 	ref_panel(area)
 	active := app.backend_output.speaker_active
 	if active do app.speaker_phase += delta * 7
@@ -266,12 +277,12 @@ ref_draw_speaker :: proc(app: ^Input_State, delta: f32) {
 }
 
 ref_draw_printer :: proc(app: ^Input_State) {
-	area := ref_rect(940, 535, 480, 345)
+	area := ref_rect(940, 660, 480, 220)
 	ref_panel(area)
 	paper := ref_rect(area.x + 24, area.y + 18, area.width - 48, area.height - 36)
 	rl.DrawRectangleRec(paper, PAPER)
 	count := len(app.backend_output.printer_output)
-	visible_lines := 13
+	visible_lines := 8
 	max_scroll := max(0, count - visible_lines)
 	if ref_contains(paper, ref_mouse()) {
 		app.receipt_scroll = clamp(app.receipt_scroll - rl.GetMouseWheelMove() * 2, 0, f32(max_scroll))
@@ -360,6 +371,7 @@ draw_reference_switchboard :: proc(app: ^Input_State, delta: f32) {
 	ref_draw_manual_controls(app)
 	ref_draw_clock(app)
 	ref_draw_directory(app)
+	ref_draw_story_status(app)
 	ref_draw_speaker(app, delta)
 	ref_draw_printer(app)
 	ref_draw_cords(app, &jacks)

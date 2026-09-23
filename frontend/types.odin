@@ -68,6 +68,12 @@ State_Output :: struct {
 	shift: Shift,
 	speaker_active: bool,
 	backend_messages: [dynamic]string,
+	shapla_story_beat: string,
+	neel_story_beat: string,
+	dirty_work_story_beat: string,
+	dirty_work_completed_contacts: [dynamic]string,
+	nahid_story_beat: string,
+	nahid_scam_count: u8,
 }
 
 Voice_State :: struct {

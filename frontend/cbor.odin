@@ -101,7 +101,7 @@ state_message_is_complete :: proc(value: cbor.Value) -> bool {
 	if !map_has_keys(value, {"protocol_version", "input_sequence", "accepted", "error", "state_revision", "output"}) do return false
 	if u16_value(map_get_or(value, "protocol_version")) != PROTOCOL_VERSION do return false
 	output, output_ok := map_get(value, "output")
-	if !output_ok || !map_has_keys(output, {"line_lamps", "game_phase", "clock", "speaker_active", "interference_level", "tap_bridge_audio_active", "tuning", "directory_pages", "printer_output", "call", "calls", "service_call", "tap_bridge_monitoring", "shift", "debug"}) do return false
+	if !output_ok || !map_has_keys(output, {"line_lamps", "game_phase", "clock", "speaker_active", "interference_level", "tap_bridge_audio_active", "tuning", "directory_pages", "printer_output", "call", "calls", "service_call", "tap_bridge_monitoring", "shift", "debug", "shapla_story_beat", "neel_story_beat", "dirty_work_story_beat", "dirty_work_completed_contacts", "nahid_story_beat", "nahid_scam_count"}) do return false
 	line_lamps, line_lamps_ok := map_get(output, "line_lamps")
 	if !line_lamps_ok || len(array_value(line_lamps)) != 12 do return false
 	clock, clock_ok := map_get(output, "clock")
