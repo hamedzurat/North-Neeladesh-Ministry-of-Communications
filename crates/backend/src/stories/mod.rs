@@ -4,5 +4,5 @@
 //! story-specific directory facts. Shared exchange mechanics belong outside
 //! this module so adding a story does not duplicate the physical game rules.
 
-pub mod neel_university;
-pub mod shapla_apartments;
+pub mod bela_bose;
+pub mod fallen_mother;

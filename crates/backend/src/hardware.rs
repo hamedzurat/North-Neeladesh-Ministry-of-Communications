@@ -116,7 +116,7 @@ pub(crate) fn directory_pages(digits: [u8; 4]) -> Vec<exchange_protocol::Directo
 pub(crate) fn simple_place(line: u8) -> String {
     match line {
         1 => "SHAPLA APARTMENTS".into(),
-        2 => stories::neel_university::PLACE.into(),
+        2 => stories::bela_bose::PLACE.into(),
         3 => "SHADHIN HOUSING".into(),
         4 => "MEGHNA ABASHON".into(),
         5 => "PADMA NIBASH".into(),
@@ -132,22 +132,22 @@ pub(crate) fn directory_user(line: u8) -> (String, String, String) {
             "Shapla Apartments".into(),
         ),
         2 => (
-            stories::neel_university::PROFESSOR_NAME.into(),
+            stories::bela_bose::PROFESSOR_NAME.into(),
             "professor".into(),
-            stories::neel_university::PLACE.into(),
+            stories::bela_bose::PLACE.into(),
         ),
         3 => (
-            stories::neel_university::ARNAB_NAME.into(),
+            stories::bela_bose::ARNAB_NAME.into(),
             "recently hired graduate".into(),
             "Shadhin Housing".into(),
         ),
         4 => (
-            stories::neel_university::BELA_NAME.into(),
+            stories::bela_bose::BELA_NAME.into(),
             "dog owner".into(),
             "Meghna Abashon".into(),
         ),
         5 => (
-            stories::neel_university::BELA_NAME.into(),
+            stories::bela_bose::BELA_NAME.into(),
             "cat owner".into(),
             "Padma Nibash".into(),
         ),
@@ -161,8 +161,8 @@ pub(crate) fn directory_user(line: u8) -> (String, String, String) {
 
 pub(crate) fn directory_line(id: u16) -> Option<u8> {
     match id {
-        id if stories::neel_university::directory_line(id).is_some() => {
-            stories::neel_university::directory_line(id)
+        id if stories::bela_bose::directory_line(id).is_some() => {
+            stories::bela_bose::directory_line(id)
         }
         0..=11 => Some(id as u8),
         _ => None,

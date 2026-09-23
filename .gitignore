@@ -7,5 +7,5 @@ scripts/.venv
 scripts/**/__pycache__
 scripts/*.egg-info
 python/.models/
-assets/stories/neel_university/*.wav
-assets/stories/neel_university/*.m4a
+assets/stories/*/*.wav
+assets/stories/*/*.m4a

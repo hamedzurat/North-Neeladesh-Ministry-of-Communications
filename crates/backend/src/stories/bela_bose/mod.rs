@@ -86,7 +86,7 @@ pub fn audio_path(caller: u8, callee: u8) -> Option<PathBuf> {
         (SHADHIN_LINE, BELA_CAT_LINE) => SUCCESS_BELA_AUDIO,
         _ => return None,
     };
-    Some(Path::new("assets/stories/neel_university").join(name))
+    Some(Path::new("assets/stories/bela_bose").join(name))
 }
 
 pub fn audio_duration_seconds(caller: u8, callee: u8) -> Option<u64> {

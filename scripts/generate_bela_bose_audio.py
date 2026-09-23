@@ -56,7 +56,7 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=ROOT / "assets" / "stories" / "neel_university",
+        default=ROOT / "assets" / "stories" / "bela_bose",
     )
     args = parser.parse_args()
     sys.path.insert(0, str(ROOT / "python"))

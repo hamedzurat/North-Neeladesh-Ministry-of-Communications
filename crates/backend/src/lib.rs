@@ -99,8 +99,8 @@ pub struct Backend {
     next_voice_conversation_id: u64,
     last_input_json: Option<String>,
     last_output_json: Option<String>,
-    story_beat: stories::shapla_apartments::Beat,
-    neel_story_beat: stories::neel_university::Beat,
+    story_beat: stories::fallen_mother::Beat,
+    neel_story_beat: stories::bela_bose::Beat,
     story_controls: HeldControls,
     story_enabled: bool,
     story_started_elapsed_seconds: u64,
@@ -142,7 +142,7 @@ impl Backend {
         self.neel_story_active()
             && matches!(
                 caller,
-                stories::neel_university::NEEL_LINE | stories::neel_university::SHADHIN_LINE
+                stories::bela_bose::NEEL_LINE | stories::bela_bose::SHADHIN_LINE
             )
     }
 
@@ -203,8 +203,8 @@ impl Backend {
             next_voice_conversation_id: 1,
             last_input_json: None,
             last_output_json: None,
-            story_beat: stories::shapla_apartments::Beat::EmergencyCall,
-            neel_story_beat: stories::neel_university::Beat::ProfessorRouting,
+            story_beat: stories::fallen_mother::Beat::EmergencyCall,
+            neel_story_beat: stories::bela_bose::Beat::ProfessorRouting,
             story_controls: HeldControls::default(),
             story_enabled: true,
             story_started_elapsed_seconds: 0,
@@ -290,12 +290,12 @@ impl Backend {
 
     fn permitted_story_knowledge(&self, caller: u8) -> Vec<KnowledgeRecord> {
         if self.neel_story_active()
-            && caller == stories::neel_university::SHADHIN_LINE
-            && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory
+            && caller == stories::bela_bose::SHADHIN_LINE
+            && self.neel_story_beat == stories::bela_bose::Beat::ArnabDirectory
         {
             return vec![KnowledgeRecord {
                 fact: self
-                    .subscriber(stories::neel_university::BELA_CAT_LINE)
+                    .subscriber(stories::bela_bose::BELA_CAT_LINE)
                     .private_info
                     .clone(),
                 learned_from: "Arnab's private memory".into(),
@@ -330,20 +330,18 @@ impl Backend {
             call_guidance: if self.is_neel_caller(caller) {
                 format!(
                     "{}\nStory place: {}",
-                    if caller == stories::neel_university::NEEL_LINE {
-                        stories::neel_university::Beat::ProfessorRouting.dialogue_prompt()
+                    if caller == stories::bela_bose::NEEL_LINE {
+                        stories::bela_bose::Beat::ProfessorRouting.dialogue_prompt()
                     } else {
-                        stories::neel_university::Beat::ArnabDirectory.dialogue_prompt()
+                        stories::bela_bose::Beat::ArnabDirectory.dialogue_prompt()
                     },
                     self.subscriber(caller).place,
                 )
-            } else if self.shapla_story_active()
-                && caller == stories::shapla_apartments::CALLER_LINE
-            {
+            } else if self.shapla_story_active() && caller == stories::fallen_mother::CALLER_LINE {
                 format!(
                     "{}\nStory place: {}\nOpening dialogue: {}",
                     self.story_beat.dialogue_prompt(),
-                    stories::shapla_apartments::PLACE,
+                    stories::fallen_mother::PLACE,
                     self.story_beat.opening_dialogue().unwrap_or(""),
                 )
             } else {
@@ -360,12 +358,12 @@ impl Backend {
     }
 
     fn story_caller(&self) -> u8 {
-        stories::shapla_apartments::CALLER_LINE
+        stories::fallen_mother::CALLER_LINE
     }
 
     fn story_requested_callee(&self) -> u8 {
         self.neel_story_active()
-            .then(|| stories::neel_university::requested_callee_for_beat(self.neel_story_beat))
+            .then(|| stories::bela_bose::requested_callee_for_beat(self.neel_story_beat))
             .unwrap_or(0)
     }
 
@@ -408,8 +406,8 @@ impl Backend {
         self.voice_transcript = None;
         self.voice_response_text = None;
         self.voice_speaker_active = false;
-        self.story_beat = stories::shapla_apartments::Beat::EmergencyCall;
-        self.neel_story_beat = stories::neel_university::Beat::ProfessorRouting;
+        self.story_beat = stories::fallen_mother::Beat::EmergencyCall;
+        self.neel_story_beat = stories::bela_bose::Beat::ProfessorRouting;
         self.story_controls = HeldControls::default();
         self.story_started_elapsed_seconds = self.elapsed_seconds() as u64;
         self.voice_turn_controls = HeldControls::default();
@@ -527,22 +525,22 @@ impl Backend {
 
     fn shapla_story_beat_name(&self) -> &'static str {
         match self.story_beat {
-            stories::shapla_apartments::Beat::EmergencyCall => "EmergencyCall",
-            stories::shapla_apartments::Beat::HappyFollowup => "HappyFollowup",
-            stories::shapla_apartments::Beat::NeutralFollowup => "NeutralFollowup",
-            stories::shapla_apartments::Beat::BadFollowup => "BadFollowup",
+            stories::fallen_mother::Beat::EmergencyCall => "EmergencyCall",
+            stories::fallen_mother::Beat::HappyFollowup => "HappyFollowup",
+            stories::fallen_mother::Beat::NeutralFollowup => "NeutralFollowup",
+            stories::fallen_mother::Beat::BadFollowup => "BadFollowup",
         }
     }
 
     fn destination_is_allowed(&self, call: &ActiveCall, selected: u16) -> bool {
         if self.neel_story_active()
-            && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory
-            && call.caller == stories::neel_university::SHADHIN_LINE
+            && self.neel_story_beat == stories::bela_bose::Beat::ArnabDirectory
+            && call.caller == stories::bela_bose::SHADHIN_LINE
         {
-            return stories::neel_university::is_bela_destination(selected)
+            return stories::bela_bose::is_bela_destination(selected)
                 || directory_line(selected).is_some_and(|line| {
-                    line == stories::neel_university::BELA_DOG_LINE
-                        || line == stories::neel_university::BELA_CAT_LINE
+                    line == stories::bela_bose::BELA_DOG_LINE
+                        || line == stories::bela_bose::BELA_CAT_LINE
                 });
         }
         selected == u16::from(call.callee)
@@ -550,11 +548,11 @@ impl Backend {
 
     fn story_direct_destination_allowed(&self, input: &InputState, caller: u8) -> bool {
         self.neel_story_active()
-            && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory
-            && caller == stories::neel_university::SHADHIN_LINE
+            && self.neel_story_beat == stories::bela_bose::Beat::ArnabDirectory
+            && caller == stories::bela_bose::SHADHIN_LINE
             && [
-                stories::neel_university::BELA_DOG_LINE,
-                stories::neel_university::BELA_CAT_LINE,
+                stories::bela_bose::BELA_DOG_LINE,
+                stories::bela_bose::BELA_CAT_LINE,
             ]
             .iter()
             .any(|line| direct(&input.cord_topology, caller, *line))
@@ -762,8 +760,8 @@ impl Backend {
                 .find(|call| call.caller == caller)
                 .map(|call| call.callee)
                 .or_else(|| {
-                    (caller == stories::shapla_apartments::CALLER_LINE)
-                        .then_some(stories::shapla_apartments::CALLER_LINE)
+                    (caller == stories::fallen_mother::CALLER_LINE)
+                        .then_some(stories::fallen_mother::CALLER_LINE)
                 });
         }
         if talking == self.last_ptt {
@@ -821,7 +819,7 @@ impl Backend {
             return;
         }
         if self.shapla_story_active() {
-            self.state.line_lamps[stories::shapla_apartments::CALLER_LINE as usize] = true;
+            self.state.line_lamps[stories::fallen_mother::CALLER_LINE as usize] = true;
         }
     }
 
@@ -873,8 +871,8 @@ impl Backend {
             return;
         }
         self.cancelled_voice_turn = Some(self.voice_turn_id);
-        if self.story_beat == stories::shapla_apartments::Beat::EmergencyCall {
-            self.story_beat = stories::shapla_apartments::Beat::BadFollowup;
+        if self.story_beat == stories::fallen_mother::Beat::EmergencyCall {
+            self.story_beat = stories::fallen_mother::Beat::BadFollowup;
             self.money -= 100;
             self.deductions += 100;
             append_printer(
@@ -913,7 +911,7 @@ impl Backend {
 
     fn apply_story_classification(
         &mut self,
-        classification: stories::shapla_apartments::Classification,
+        classification: stories::fallen_mother::Classification,
     ) {
         let controls = self.voice_turn_controls.clone();
         let police = controls.police;
@@ -923,7 +921,7 @@ impl Backend {
             classification, police, ems, self.story_beat
         );
         if let Some(next) =
-            stories::shapla_apartments::next_beat(self.story_beat, classification, police, ems)
+            stories::fallen_mother::next_beat(self.story_beat, classification, police, ems)
         {
             println!(
                 "[TRANSITION] story beat {:?} -> {:?}",
@@ -939,13 +937,12 @@ impl Backend {
     fn complete_story_followup(&mut self) {
         if matches!(
             self.story_beat,
-            stories::shapla_apartments::Beat::HappyFollowup
-                | stories::shapla_apartments::Beat::NeutralFollowup
+            stories::fallen_mother::Beat::HappyFollowup
+                | stories::fallen_mother::Beat::NeutralFollowup
         ) {
             self.shapla_story_completed = true;
         }
-        if self.story_beat == stories::shapla_apartments::Beat::HappyFollowup
-            && !self.story_reward_paid
+        if self.story_beat == stories::fallen_mother::Beat::HappyFollowup && !self.story_reward_paid
         {
             self.money += 100;
             self.earned += 100;
@@ -961,9 +958,9 @@ impl Backend {
         if !self.story_enabled
             || !matches!(
                 caller,
-                stories::shapla_apartments::CALLER_LINE
-                    | stories::neel_university::NEEL_LINE
-                    | stories::neel_university::SHADHIN_LINE
+                stories::fallen_mother::CALLER_LINE
+                    | stories::bela_bose::NEEL_LINE
+                    | stories::bela_bose::SHADHIN_LINE
             )
         {
             return;
@@ -986,27 +983,26 @@ impl Backend {
     ) -> Option<(&'static str, &'static str)> {
         let line = focused?;
         let index = self.calls.iter().position(|c| c.caller == line)?;
-        if line == stories::shapla_apartments::CALLER_LINE && input.cord_topology.is_empty() {
-            if self.story_beat == stories::shapla_apartments::Beat::EmergencyCall
+        if line == stories::fallen_mother::CALLER_LINE && input.cord_topology.is_empty() {
+            if self.story_beat == stories::fallen_mother::Beat::EmergencyCall
                 && self
                     .story_conversations
                     .get(&line)
                     .is_some_and(|conversation| conversation.len() >= 2)
             {
-                self.story_beat = stories::shapla_apartments::Beat::BadFollowup;
+                self.story_beat = stories::fallen_mother::Beat::BadFollowup;
                 self.story_followup_pending = true;
                 self.story_started_elapsed_seconds = self.elapsed_seconds() as u64;
                 append_printer(&mut self.state, "STORY // operator abandoned the caller");
             }
-            if self.story_beat == stories::shapla_apartments::Beat::EmergencyCall {
+            if self.story_beat == stories::fallen_mother::Beat::EmergencyCall {
                 self.calls.remove(index);
                 return None;
             }
             self.calls.remove(index);
             if self.story_followup_call_started {
                 self.shapla_story_completed = true;
-                self.story_completed =
-                    self.neel_story_beat == stories::neel_university::Beat::Completed;
+                self.story_completed = self.neel_story_beat == stories::bela_bose::Beat::Completed;
             }
             return None;
         }
@@ -1018,11 +1014,11 @@ impl Backend {
         let requested_ring_line = effective_ring_line(input);
         let ring_delay = 1 + (self.rng % 3);
         let neel_arnab_beat = self.neel_story_active()
-            && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory;
+            && self.neel_story_beat == stories::bela_bose::Beat::ArnabDirectory;
         let neel_arnab_destination = neel_arnab_beat
             && [
-                stories::neel_university::BELA_DOG_LINE,
-                stories::neel_university::BELA_CAT_LINE,
+                stories::bela_bose::BELA_DOG_LINE,
+                stories::bela_bose::BELA_CAT_LINE,
             ]
             .iter()
             .any(|line| selected == u16::from(*line) || directory_line(selected) == Some(*line));
@@ -1030,10 +1026,10 @@ impl Backend {
         let call = &mut self.calls[index];
         let call_caller = call.caller;
         let call_callee = call.callee;
-        if neel_arnab_beat && call.caller == stories::neel_university::SHADHIN_LINE {
+        if neel_arnab_beat && call.caller == stories::bela_bose::SHADHIN_LINE {
             for target in [
-                stories::neel_university::BELA_DOG_LINE,
-                stories::neel_university::BELA_CAT_LINE,
+                stories::bela_bose::BELA_DOG_LINE,
+                stories::bela_bose::BELA_CAT_LINE,
             ] {
                 if (selected == u16::from(target) || directory_line(selected) == Some(target))
                     && direct(&input.cord_topology, call.caller, target)
@@ -1169,14 +1165,13 @@ impl Backend {
             return;
         };
         let neel_story = self.neel_story_active();
-        let neel_audio =
-            neel_story && stories::neel_university::audio_path(caller, callee).is_some();
+        let neel_audio = neel_story && stories::bela_bose::audio_path(caller, callee).is_some();
         let has_opening_audio = if neel_story {
             tap_audio && neel_audio
         } else {
             self.story_enabled
                 && (Self::opening_dialogue(caller).is_some()
-                    || stories::neel_university::audio_path(caller, callee).is_some())
+                    || stories::bela_bose::audio_path(caller, callee).is_some())
         };
         let Some(call) = self.calls.get_mut(index) else {
             return;
@@ -1190,14 +1185,14 @@ impl Backend {
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
             call.audio_duration_seconds =
-                stories::neel_university::audio_duration_seconds(caller, callee).unwrap_or(1);
+                stories::bela_bose::audio_duration_seconds(caller, callee).unwrap_or(1);
         } else if self.tts_prepared && !has_opening_audio {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
             call.audio_duration_seconds =
-                if stories::neel_university::audio_path(caller, callee).is_some() {
-                    stories::neel_university::audio_duration_seconds(caller, callee).unwrap_or(1)
+                if stories::bela_bose::audio_path(caller, callee).is_some() {
+                    stories::bela_bose::audio_duration_seconds(caller, callee).unwrap_or(1)
                 } else {
                     2
                 };
@@ -1287,7 +1282,7 @@ impl Backend {
                 VoiceError::new("subscriber_not_configured", "callee is not configured")
             })?;
         if tap_audio
-            && let Some(path) = stories::neel_university::audio_path(caller, callee)
+            && let Some(path) = stories::bela_bose::audio_path(caller, callee)
             && path.is_file()
         {
             let output = Command::new("ffmpeg")
@@ -1335,9 +1330,7 @@ impl Backend {
 
     fn opening_dialogue(caller: u8) -> Option<&'static str> {
         match caller {
-            stories::shapla_apartments::CALLER_LINE => {
-                Some(stories::shapla_apartments::OPENING_DIALOGUE)
-            }
+            stories::fallen_mother::CALLER_LINE => Some(stories::fallen_mother::OPENING_DIALOGUE),
             _ => None,
         }
     }
@@ -1401,7 +1394,7 @@ impl Backend {
                 ),
             );
             if self.neel_story_active()
-                && let Some(next) = stories::neel_university::next_beat_after_connection(
+                && let Some(next) = stories::bela_bose::next_beat_after_connection(
                     self.neel_story_beat,
                     call.caller,
                     call.callee,
@@ -1413,12 +1406,12 @@ impl Backend {
                 );
                 self.neel_story_beat = next;
                 match next {
-                    stories::neel_university::Beat::ArnabDirectory => {
+                    stories::bela_bose::Beat::ArnabDirectory => {
                         self.story_followup_pending = true;
                     }
-                    stories::neel_university::Beat::Completed => {
+                    stories::bela_bose::Beat::Completed => {
                         self.story_completed = self.story_beat
-                            == stories::shapla_apartments::Beat::HappyFollowup
+                            == stories::fallen_mother::Beat::HappyFollowup
                             && self.story_followup_call_started;
                         self.earned += 100;
                         self.money += 100;
@@ -1430,10 +1423,10 @@ impl Backend {
                             ),
                         );
                     }
-                    stories::neel_university::Beat::BadEnding => {
+                    stories::bela_bose::Beat::BadEnding => {
                         self.story_completed = false;
                     }
-                    stories::neel_university::Beat::ProfessorRouting => {}
+                    stories::bela_bose::Beat::ProfessorRouting => {}
                 }
             }
         }
@@ -1638,17 +1631,17 @@ impl Backend {
         }
         let now = self.elapsed_seconds() as u64;
         if !self.shapla_story_completed
-            && self.story_beat != stories::shapla_apartments::Beat::BadFollowup
+            && self.story_beat != stories::fallen_mother::Beat::BadFollowup
             && !self
                 .calls
                 .iter()
-                .any(|call| call.caller == stories::shapla_apartments::CALLER_LINE)
+                .any(|call| call.caller == stories::fallen_mother::CALLER_LINE)
         {
-            if self.story_beat == stories::shapla_apartments::Beat::HappyFollowup {
+            if self.story_beat == stories::fallen_mother::Beat::HappyFollowup {
                 self.story_followup_call_started = true;
             }
             self.calls.push(ActiveCall {
-                caller: stories::shapla_apartments::CALLER_LINE,
+                caller: stories::fallen_mother::CALLER_LINE,
                 callee: 0,
                 phase: CallPhase::Waiting,
                 deadline: now + u64::MAX / 2,
@@ -1662,7 +1655,7 @@ impl Backend {
                 audio_duration_seconds: 0,
             });
         }
-        if !stories::neel_university::is_terminal(self.neel_story_beat)
+        if !stories::bela_bose::is_terminal(self.neel_story_beat)
             && !self
                 .calls
                 .iter()
@@ -1687,7 +1680,7 @@ impl Backend {
     }
 
     fn story_caller_for_neel(&self) -> u8 {
-        stories::neel_university::caller_for_beat(self.neel_story_beat)
+        stories::bela_bose::caller_for_beat(self.neel_story_beat)
     }
 
     fn next_call(&mut self) -> (u8, u8) {
@@ -1704,18 +1697,18 @@ impl Backend {
                         && callee != self.story_caller()
                         && !(self.neel_story_active()
                             && [
-                                stories::neel_university::NEEL_LINE,
-                                stories::neel_university::SHADHIN_LINE,
-                                stories::neel_university::BELA_DOG_LINE,
-                                stories::neel_university::BELA_CAT_LINE,
+                                stories::bela_bose::NEEL_LINE,
+                                stories::bela_bose::SHADHIN_LINE,
+                                stories::bela_bose::BELA_DOG_LINE,
+                                stories::bela_bose::BELA_CAT_LINE,
                             ]
                             .contains(&caller))
                         && !(self.neel_story_active()
                             && [
-                                stories::neel_university::NEEL_LINE,
-                                stories::neel_university::SHADHIN_LINE,
-                                stories::neel_university::BELA_DOG_LINE,
-                                stories::neel_university::BELA_CAT_LINE,
+                                stories::bela_bose::NEEL_LINE,
+                                stories::bela_bose::SHADHIN_LINE,
+                                stories::bela_bose::BELA_DOG_LINE,
+                                stories::bela_bose::BELA_CAT_LINE,
                             ]
                             .contains(&callee))))
                 && self.calls.iter().all(|c| {
@@ -2050,8 +2043,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                         state.voice_turn_controls.ems,
                                         transcript
                                     );
-                                    if service_turn
-                                        && caller == stories::shapla_apartments::CALLER_LINE
+                                    if service_turn && caller == stories::fallen_mother::CALLER_LINE
                                     {
                                         let service = if state.voice_turn_controls.police {
                                             exchange_protocol::ServiceKind::Police
@@ -2370,7 +2362,7 @@ fn generate_dialogue(context: &ResponseContext, transcript: &str) -> Result<Stri
 fn classify_story(
     transcript: &str,
     service: exchange_protocol::ServiceKind,
-) -> Result<stories::shapla_apartments::Classification, VoiceError> {
+) -> Result<stories::fallen_mother::Classification, VoiceError> {
     let command = env::var("NN_STORY_CLASSIFIER_COMMAND").map_err(|_| {
         VoiceError::new(
             "story_classifier_not_configured",
@@ -2379,13 +2371,11 @@ fn classify_story(
     })?;
     let mut classifier = CommandTextClassifier::new(CommandSpec::from_words(&command)?);
     let prompt = match service {
-        exchange_protocol::ServiceKind::Ems => stories::shapla_apartments::EMS_CLASSIFIER_PROMPT,
-        exchange_protocol::ServiceKind::Police => {
-            stories::shapla_apartments::POLICE_CLASSIFIER_PROMPT
-        }
+        exchange_protocol::ServiceKind::Ems => stories::fallen_mother::EMS_CLASSIFIER_PROMPT,
+        exchange_protocol::ServiceKind::Police => stories::fallen_mother::POLICE_CLASSIFIER_PROMPT,
     };
     let word = classifier.classify(prompt, transcript)?;
-    Ok(stories::shapla_apartments::Classification::parse(&word))
+    Ok(stories::fallen_mother::Classification::parse(&word))
 }
 
 fn text_error(request: &TextInputMessage, code: &str, message: &str) -> TextResponseMessage {
@@ -2464,7 +2454,7 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
             // controls captured at PTT start so story classification follows
             // the same authoritative path as the voice worker.
             state.voice_turn_controls = request.held_controls.clone();
-            if state.voice_subscriber_line == Some(stories::shapla_apartments::CALLER_LINE) {
+            if state.voice_subscriber_line == Some(stories::fallen_mother::CALLER_LINE) {
                 let service = if request.held_controls.police {
                     exchange_protocol::ServiceKind::Police
                 } else {
@@ -2630,7 +2620,7 @@ mod story_knowledge_tests {
     fn private_facts_are_only_granted_to_arnab_for_the_neel_story() {
         let mut backend = Backend::new_exchange();
         assert!(backend.voice_context(2, 3).permitted_knowledge.is_empty());
-        backend.neel_story_beat = crate::stories::neel_university::Beat::ArnabDirectory;
+        backend.neel_story_beat = crate::stories::bela_bose::Beat::ArnabDirectory;
         let arnab_knowledge = backend.voice_context(3, 4).permitted_knowledge;
         assert_eq!(arnab_knowledge.len(), 1);
         assert!(arnab_knowledge[0].fact.contains("cat named Tuli"));
