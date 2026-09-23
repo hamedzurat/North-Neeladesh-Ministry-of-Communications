@@ -5,7 +5,7 @@ The Odin and Python Cabinet Frontends own the Cabinet-side transport and recover
 ```text
 PTT start -> frontend microphone capture -> PTT release -> PCM over UDP
            -> laptop STT -> bounded Response Context -> laptop dialogue
-             -> laptop Qwen3-TTS or PocketTTS -> RTP/L16 audio over UDP -> frontend speaker
+              -> laptop PocketTTS -> RTP/L16 audio over UDP -> frontend speaker
 ```
 
 The daemon never advances Routing state. The backend remains the sole authority. A worker failure emits `failed` status and a diagnostic; it does not create a routing decision.
@@ -33,7 +33,7 @@ The real path requires these local assets and dependencies:
 
 - a default audio input and output device exposed by the laptop audio stack;
 - the pacman-installed whisper.cpp `whisper-cli` runtime and a local Ollama service;
-- the `python/pyproject.toml` uv environment, containing `torch`, `huggingface-hub`, `qwen-tts`, and `pocket-tts`;
+- the `python/pyproject.toml` uv environment, containing `torch`, `huggingface-hub`, and `pocket-tts`;
 - the model assets downloaded by `just voice-setup` into `~/.local/share/north-neeladesh/models`.
 
 The target laptop profile is Linux with a local system audio device, roughly 16 GiB of system memory, and a GPU for Ollama. The dialogue worker keeps Ollama model `qwen3.5:4b` resident with `keep_alive: -1` and disables reasoning with `think: false`. PocketTTS remains persistent and CPU-only. The current laptop run is a local debug profile. The target Raspberry Pi deployment will run the Python audio edge: microphone capture and speaker playback stay on the Pi, while the backend on this laptop coordinates STT, Ollama dialogue, and PocketTTS over the network. `NN_WHISPER_EXTRA_ARGS` and `NN_VOICE_WORKER_TIMEOUT` allow a pinned local runtime to provide device/thread settings without changing the daemon contract.
@@ -47,17 +47,17 @@ just frontend
 ```
 
 The paths above are automatic defaults. `NN_VOICE_MODEL_ROOT`, `NN_WHISPER_MODEL`,
-`NN_QWEN3_MODEL`, and `NN_QWEN3_TTS_MODEL` remain optional overrides for a different
-installation. Each `SubscriberProfile.voice_id` is the Qwen3-TTS CustomVoice speaker
-name directly, such as `Ryan` or `Vivian`; no voice mapping environment variable is
-used. The active neutral Call selects the subscriber voice context for each request.
+`NN_QWEN3_MODEL` remains an optional override for a different dialogue-model
+installation. Each `SubscriberProfile.voice_id` selects one of the configured
+PocketTTS voice embeddings; no TTS model override is supported. The active neutral
+Call selects the subscriber voice context for each request.
 
-`python/voice_workers/` contains the real model adapters. They are launched by the laptop backend as `python -m voice_workers.<worker>` inside the uv environment. The backend includes the selected Qwen3-TTS CustomVoice `voice_id` in each PTT control message. The relay sends captured PCM to the backend and plays the backend's RTP/L16 output locally. Their required stdin/stdout contracts are:
+`python/voice_workers/` contains the real model adapters. They are launched by the laptop backend as `python -m voice_workers.<worker>` inside the uv environment. The backend includes the selected PocketTTS `voice_id` in each PTT control message. The relay sends captured PCM to the backend and plays the backend's RTP/L16 output locally. Their required stdin/stdout contracts are:
 
 - the Odin and Python capture paths record bounded signed 16-bit mono PCM at 16 kHz from the system audio input;
 - `voice_workers.stt`: writes the supplied PCM to a temporary WAV, invokes local whisper.cpp `base.en`, and writes one final UTF-8 transcript.
 - `voice_workers.dialogue`: sends each bounded Response Context and transcript to local Ollama using `qwen3.5:4b`, `think: false`, JSON format, and `keep_alive: -1`. It requests a dialogue-only JSON object and rejects malformed or overlong output. It cannot emit a Story Event, Routing, or state mutation.
-- `voice_workers.tts`: accepts only the Qwen3-TTS 1.7B request contract, uses the Subscriber profile's Qwen3-TTS CustomVoice speaker, and writes framed signed 16-bit little-endian mono PCM at 24 kHz to the persistent daemon worker. It synthesizes sentence-sized chunks and flushes each completed chunk immediately. Qwen's current API simulates incremental text input but does not expose true decoder-frame streaming.
+- `voice_workers.pocket_tts`: accepts a PocketTTS voice and text request, and writes framed signed 16-bit little-endian mono PCM at 24 kHz to the persistent daemon worker. It synthesizes sentence-sized chunks and flushes each completed chunk immediately.
 
 PocketTTS always runs on the CPU and uses twelve official precomputed English voice embeddings in `python/.models/`, one for each subscriber line. The embedding files are ignored by Git and are downloaded by `just voice-setup`.
 

@@ -127,7 +127,7 @@ impl Backend {
             .subscribers
             .iter()
             .find(|subscriber| subscriber.line == line)
-            .unwrap_or(&self.config.subscribers[0])
+            .unwrap_or_else(|| panic!("exchange config has no subscriber for line {line}"))
     }
 
     fn neel_story_active(&self) -> bool {
@@ -348,15 +348,9 @@ impl Backend {
     }
 
     fn story_requested_callee(&self) -> u8 {
-        if self.neel_story_active()
-            && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory
-        {
-            stories::neel_university::BELA_DOG_LINE
-        } else if self.neel_story_active() {
-            stories::neel_university::SHADHIN_LINE
-        } else {
-            0
-        }
+        self.neel_story_active()
+            .then(|| stories::neel_university::requested_callee_for_beat(self.neel_story_beat))
+            .unwrap_or(0)
     }
 
     pub fn reset_run(&mut self) {
@@ -528,12 +522,11 @@ impl Backend {
             && self.neel_story_beat == stories::neel_university::Beat::ArnabDirectory
             && call.caller == stories::neel_university::SHADHIN_LINE
         {
-            return [
-                stories::neel_university::BELA_DOG_LINE,
-                stories::neel_university::BELA_CAT_LINE,
-            ]
-            .iter()
-            .any(|line| selected == u16::from(*line) || directory_line(selected) == Some(*line));
+            return stories::neel_university::is_bela_destination(selected)
+                || directory_line(selected).is_some_and(|line| {
+                    line == stories::neel_university::BELA_DOG_LINE
+                        || line == stories::neel_university::BELA_CAT_LINE
+                });
         }
         selected == u16::from(call.callee)
     }
@@ -1391,45 +1384,40 @@ impl Backend {
                 ),
             );
             if self.neel_story_active()
-                && call.caller == stories::neel_university::SHADHIN_LINE
-                && call.callee == stories::neel_university::BELA_CAT_LINE
+                && let Some(next) = stories::neel_university::next_beat_after_connection(
+                    self.neel_story_beat,
+                    call.caller,
+                    call.callee,
+                )
             {
                 println!(
-                    "[TRANSITION] Neel beat {:?} -> Completed after call {} -> {}",
-                    self.neel_story_beat, call.caller, call.callee
+                    "[TRANSITION] Neel beat {:?} -> {:?} after call {} -> {}",
+                    self.neel_story_beat, next, call.caller, call.callee
                 );
-                self.neel_story_beat = stories::neel_university::Beat::Completed;
-                self.story_completed = self.story_beat
-                    == stories::shapla_apartments::Beat::HappyFollowup
-                    && self.story_followup_call_started;
-                self.earned += 100;
-                self.money += 100;
-                append_printer(
-                    &mut self.state,
-                    &format!(
-                        "MONEY // +$100 Arnab connected to Bela Bose 1032 // balance ${}",
-                        self.money
-                    ),
-                );
-            } else if self.neel_story_active()
-                && call.caller == stories::neel_university::SHADHIN_LINE
-            {
-                println!(
-                    "[TRANSITION] Neel beat {:?} -> BadEnding after wrong call {} -> {}",
-                    self.neel_story_beat, call.caller, call.callee
-                );
-                self.neel_story_beat = stories::neel_university::Beat::BadEnding;
-                self.story_completed = false;
-            } else if self.neel_story_active()
-                && call.caller == stories::neel_university::NEEL_LINE
-                && self.neel_story_beat == stories::neel_university::Beat::ProfessorRouting
-            {
-                println!(
-                    "[TRANSITION] Neel beat {:?} -> ArnabDirectory after call {} -> {}",
-                    self.neel_story_beat, call.caller, call.callee
-                );
-                self.neel_story_beat = stories::neel_university::Beat::ArnabDirectory;
-                self.story_followup_pending = true;
+                self.neel_story_beat = next;
+                match next {
+                    stories::neel_university::Beat::ArnabDirectory => {
+                        self.story_followup_pending = true;
+                    }
+                    stories::neel_university::Beat::Completed => {
+                        self.story_completed = self.story_beat
+                            == stories::shapla_apartments::Beat::HappyFollowup
+                            && self.story_followup_call_started;
+                        self.earned += 100;
+                        self.money += 100;
+                        append_printer(
+                            &mut self.state,
+                            &format!(
+                                "MONEY // +$100 Arnab connected to Bela Bose 1032 // balance ${}",
+                                self.money
+                            ),
+                        );
+                    }
+                    stories::neel_university::Beat::BadEnding => {
+                        self.story_completed = false;
+                    }
+                    stories::neel_university::Beat::ProfessorRouting => {}
+                }
             }
         }
         self.state.shift.completed_routings = self.completed;
@@ -1657,13 +1645,11 @@ impl Backend {
                 audio_duration_seconds: 0,
             });
         }
-        if !matches!(
-            self.neel_story_beat,
-            stories::neel_university::Beat::Completed | stories::neel_university::Beat::BadEnding
-        ) && !self
-            .calls
-            .iter()
-            .any(|call| self.is_neel_caller(call.caller))
+        if !stories::neel_university::is_terminal(self.neel_story_beat)
+            && !self
+                .calls
+                .iter()
+                .any(|call| self.is_neel_caller(call.caller))
         {
             let caller = self.story_caller_for_neel();
             self.calls.push(ActiveCall {
@@ -1684,12 +1670,7 @@ impl Backend {
     }
 
     fn story_caller_for_neel(&self) -> u8 {
-        match self.neel_story_beat {
-            stories::neel_university::Beat::ProfessorRouting => stories::neel_university::NEEL_LINE,
-            stories::neel_university::Beat::ArnabDirectory
-            | stories::neel_university::Beat::Completed
-            | stories::neel_university::Beat::BadEnding => stories::neel_university::SHADHIN_LINE,
-        }
+        stories::neel_university::caller_for_beat(self.neel_story_beat)
     }
 
     fn next_call(&mut self) -> (u8, u8) {
@@ -1754,7 +1735,7 @@ impl Backend {
             };
         }
         if let DebugCommand::SelectStoryThread { ref thread_id } = request.command
-            && !stories::known_thread(thread_id)
+            && thread_id != "intertwined"
         {
             return DebugResponse {
                 protocol_version: DEBUG_PROTOCOL_VERSION,

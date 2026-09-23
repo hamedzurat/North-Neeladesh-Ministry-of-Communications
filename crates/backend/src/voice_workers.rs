@@ -492,7 +492,7 @@ impl OperatorSession {
             Ok(_) => {
                 return self.fail(VoiceError::new(
                     "tts_empty_output",
-                    "Qwen3-TTS returned no audio samples",
+                    "TTS returned no audio samples",
                 ));
             }
             Err(error) => return self.fail(error),
@@ -500,7 +500,7 @@ impl OperatorSession {
         if samples != sample_offset {
             return self.fail(VoiceError::new(
                 "tts_output_mismatch",
-                "Qwen3-TTS reported a different sample count than it emitted",
+                "TTS reported a different sample count than it emitted",
             ));
         }
         if let Err(error) = self.output.finish() {
@@ -1156,11 +1156,11 @@ impl Drop for PersistentCommandDialogueGenerator {
     }
 }
 
-pub struct Qwen3TtsCommand {
+pub struct CommandTts {
     spec: CommandSpec,
 }
 
-impl Qwen3TtsCommand {
+impl CommandTts {
     pub fn new(spec: CommandSpec) -> Self {
         Self { spec }
     }
@@ -1175,11 +1175,11 @@ struct TtsRequest<'a> {
     sample_rate: u32,
 }
 
-impl TextToSpeech for Qwen3TtsCommand {
+impl TextToSpeech for CommandTts {
     fn synthesize(&mut self, voice_id: &str, text: &str) -> Result<Vec<i16>, VoiceError> {
         let input = serde_json::to_vec(&TtsRequest {
-            engine: "qwen3-tts",
-            model: "Qwen3-TTS-1.7B",
+            engine: "pocket-tts",
+            model: "PocketTTS",
             voice_id,
             text,
             sample_rate: VOICE_AUDIO_SAMPLE_RATE,
@@ -1190,7 +1190,7 @@ impl TextToSpeech for Qwen3TtsCommand {
         if samples.is_empty() {
             return Err(VoiceError::new(
                 "tts_empty_output",
-                "Qwen3-TTS returned no audio samples",
+                "TTS returned no audio samples",
             ));
         }
         Ok(samples)
@@ -1203,8 +1203,8 @@ impl TextToSpeech for Qwen3TtsCommand {
         emit: &mut dyn FnMut(&[i16]) -> Result<(), VoiceError>,
     ) -> Result<usize, VoiceError> {
         let input = serde_json::to_vec(&TtsRequest {
-            engine: "qwen3-tts",
-            model: "Qwen3-TTS-1.7B",
+            engine: "pocket-tts",
+            model: "PocketTTS",
             voice_id,
             text,
             sample_rate: VOICE_AUDIO_SAMPLE_RATE,
@@ -1226,14 +1226,14 @@ impl TextToSpeech for Qwen3TtsCommand {
         if !pending.is_empty() {
             return Err(VoiceError::new(
                 "invalid_pcm",
-                "Qwen3-TTS streamed an odd number of PCM bytes",
+                "TTS streamed an odd number of PCM bytes",
             ));
         }
         Ok(emitted)
     }
 }
 
-pub struct PersistentQwen3TtsCommand {
+pub struct PersistentCommandTts {
     child: Child,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
@@ -1241,9 +1241,9 @@ pub struct PersistentQwen3TtsCommand {
     model: &'static str,
 }
 
-impl PersistentQwen3TtsCommand {
+impl PersistentCommandTts {
     pub fn new(spec: CommandSpec) -> Result<Self, VoiceError> {
-        Self::new_with_engine(spec, "qwen3-tts", "Qwen3-TTS-1.7B")
+        Self::new_with_engine(spec, "pocket-tts", "PocketTTS")
     }
 
     fn new_with_engine(
@@ -1278,7 +1278,7 @@ impl PersistentQwen3TtsCommand {
     }
 }
 
-impl TextToSpeech for PersistentQwen3TtsCommand {
+impl TextToSpeech for PersistentCommandTts {
     fn synthesize(&mut self, voice_id: &str, text: &str) -> Result<Vec<i16>, VoiceError> {
         let mut samples = Vec::new();
         self.synthesize_stream(voice_id, text, &mut |chunk| {
@@ -1327,7 +1327,7 @@ impl TextToSpeech for PersistentQwen3TtsCommand {
             if length > MAX_WORKER_OUTPUT_BYTES || !length.is_multiple_of(2) {
                 return Err(VoiceError::new(
                     "invalid_pcm",
-                    "persistent Qwen3-TTS returned an invalid PCM frame",
+                    "persistent TTS returned an invalid PCM frame",
                 ));
             }
             let mut bytes = vec![0_u8; length];
@@ -1343,13 +1343,13 @@ impl TextToSpeech for PersistentQwen3TtsCommand {
 }
 
 pub struct PersistentPocketTtsCommand {
-    inner: PersistentQwen3TtsCommand,
+    inner: PersistentCommandTts,
 }
 
 impl PersistentPocketTtsCommand {
     pub fn new(spec: CommandSpec) -> Result<Self, VoiceError> {
         Ok(Self {
-            inner: PersistentQwen3TtsCommand::new_with_engine(spec, "pocket-tts", "PocketTTS")?,
+            inner: PersistentCommandTts::new_with_engine(spec, "pocket-tts", "PocketTTS")?,
         })
     }
 }
@@ -1408,7 +1408,7 @@ fn pocket_tts_chunks(text: &str) -> Vec<String> {
     chunks
 }
 
-impl Drop for PersistentQwen3TtsCommand {
+impl Drop for PersistentCommandTts {
     fn drop(&mut self) {
         terminate_process_group(&mut self.child);
         let _ = self.child.wait();
@@ -2546,7 +2546,7 @@ mod tests {
     #[test]
     fn tts_rejects_empty_audio_output() {
         let spec = CommandSpec::new("sh", vec!["-c".to_string(), "cat >/dev/null".to_string()]);
-        let mut tts = Qwen3TtsCommand::new(spec);
+        let mut tts = CommandTts::new(spec);
 
         let error = tts.synthesize("taren", "hello").unwrap_err();
 
@@ -2562,7 +2562,7 @@ mod tests {
                 "while IFS= read -r request; do printf '\\004\\000\\000\\000\\001\\000\\002\\000'; printf '\\004\\000\\000\\000\\003\\000\\004\\000'; printf '\\000\\000\\000\\000'; done".to_string(),
             ],
         );
-        let mut tts = PersistentQwen3TtsCommand::new(spec).unwrap();
+        let mut tts = PersistentCommandTts::new(spec).unwrap();
         let mut emitted = Vec::new();
 
         let sample_count = tts
@@ -2608,7 +2608,7 @@ mod tests {
             })
         );
 
-        let mut tts = Qwen3TtsCommand::new(CommandSpec::new(
+        let mut tts = CommandTts::new(CommandSpec::new(
             "sh",
             vec![
                 "-c".to_string(),
