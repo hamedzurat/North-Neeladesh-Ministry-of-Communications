@@ -81,46 +81,46 @@
          return `<tr><td>${esc(item.caller_line)}</td><td>${esc(item.requested_callee_line)}</td><td>${esc(item.phase)}</td><td>${patience}</td><td>${audio}</td></tr>`;
        }).join('')+'</table>';
      }
-     function renderGraph(id,nodes,active) {
-      const container=document.getElementById(id); const prefix=id.replace(/[^a-z]/gi,''); const activeIndex=nodes.indexOf(active); const names=nodes.map((node,index)=>`n${index}["${node}"]`).join('\n');
-       const links=id==='shapla-graph'?'n0 --> n1\nn0 --> n2\nn0 --> n3':id==='neel-graph'?'n0 --> n1\nn1 --> n2\nn1 --> n3':nodes.slice(1).map((_,index)=>`n${index} --> n${index+1}`).join('\n');
-       const classes=nodes.map((_,index)=>{
-         let state='idle';
-         if(id==='shapla-graph') {
-           if(activeIndex===index) state='active';
-           else if(activeIndex>0 && index===0) state='done';
-         } else if(activeIndex===2 || activeIndex===3) {
-           if(index<activeIndex) state='done';
-           else if(index===activeIndex) state='active';
-         } else if(activeIndex===index) {
-           state='active';
-         } else if(activeIndex>index) {
-           state='done';
-     }
-     function renderDirtyGraph(active,completed) {
-       const container=document.getElementById('dirty-graph'); const names=['Instruction','Contact pool\n(one unvisited contact)','Kamal / MundaneCall','Tariq / WhistleblowerLeak','Rehana / SubscriberCall','Interrogation','GoodEnding','NeutralEnding','BadEnding']; const activeName=active==='MundaneCall'?'Kamal / MundaneCall':active==='WhistleblowerLeak'?'Tariq / WhistleblowerLeak':active==='SubscriberCall'?'Rehana / SubscriberCall':active; const done=new Set(completed); const classes=names.map(name=>{ const contact=(name.startsWith('Kamal')?'Dr. Kamal':name.startsWith('Tariq')?'Tariq':name.startsWith('Rehana')?'Rehana':null); return `class d${names.indexOf(name)} ${name===activeName?'active':(contact&&done.has(contact)?'done':'idle')};`; }).join('\n'); const diagram=`flowchart LR\nd0["Instruction"] --> d1["Contact pool\\n(one unvisited contact)"]\nd1 --> d2["Kamal / MundaneCall"]\nd1 --> d3["Tariq / WhistleblowerLeak"]\nd1 --> d4["Rehana / SubscriberCall"]\nd2 --> d1\nd3 --> d1\nd4 --> d1\nd1 --> d5["Interrogation"]\nd5 --> d6["GoodEnding"]\nd5 --> d7["NeutralEnding"]\nd5 --> d8["BadEnding"]\nclassDef active fill:#ffd21f,stroke:#111,stroke-width:4px,color:#111;\nclassDef done fill:#58d68d,stroke:#111,stroke-width:2px,color:#111;\nclassDef idle fill:#ded8c7,stroke:#111,stroke-width:2px,color:#111;\n${classes}`; container.innerHTML=`<div class="mermaid" id="dirty-diagram">${diagram}</div>`; if(window.mermaid) window.mermaid.run({nodes:[document.getElementById('dirty-diagram')]}).catch(()=>renderGraphFallback(container,names,activeName,names.indexOf(activeName))); else renderGraphFallback(container,names,activeName,names.indexOf(activeName));
-     }
-         return `class n${index} ${state};`;
-       }).join('\n');
+      function renderGraph(id,nodes,active) {
+        const container=document.getElementById(id); const prefix=id.replace(/[^a-z]/gi,''); const activeIndex=nodes.indexOf(active); const names=nodes.map((node,index)=>`n${index}["${node}"]`).join('\n');
+        const links=id==='shapla-graph'?'n0 --> n1\nn0 --> n2\nn0 --> n3':id==='neel-graph'?'n0 --> n1\nn1 --> n2\nn1 --> n3':nodes.slice(1).map((_,index)=>`n${index} --> n${index+1}`).join('\n');
+        const classes=nodes.map((_,index)=>{
+          let state='idle';
+          if(id==='shapla-graph') {
+            if(activeIndex===index) state='active';
+            else if(activeIndex>0 && index===0) state='done';
+          } else if(activeIndex===2 || activeIndex===3) {
+            if(index<activeIndex) state='done';
+            else if(index===activeIndex) state='active';
+          } else if(activeIndex===index) {
+            state='active';
+          } else if(activeIndex>index) {
+            state='done';
+          }
+          return `class n${index} ${state};`;
+        }).join('\n');
         const edgeCount=id==='shapla-graph'?3:id==='neel-graph'?3:nodes.length-1;
-       const edgeStyles=Array.from({length:edgeCount},(_,index)=>{
-         let color='#9b9b9b';
-         if(id==='shapla-graph') {
-           const target=[1,2,3][index];
-           color=target===activeIndex?'#ffd21f':'#9b9b9b';
+        const edgeStyles=Array.from({length:edgeCount},(_,index)=>{
+          let color='#9b9b9b';
+          if(id==='shapla-graph') {
+            const target=[1,2,3][index];
+            color=target===activeIndex?'#ffd21f':'#9b9b9b';
           } else if(id==='neel-graph') {
-           const target=[1,2,3][index];
-           color=target===activeIndex?'#ffd21f':(activeIndex>1 && target===1?'#58d68d':'#9b9b9b');
+            const target=[1,2,3][index];
+            color=target===activeIndex?'#ffd21f':(activeIndex>1 && target===1?'#58d68d':'#9b9b9b');
           } else {
-           const target=index+1;
-           color=target===activeIndex?'#ffd21f':(target<activeIndex?'#58d68d':'#9b9b9b');
-         }
-         return `linkStyle ${index} stroke:${color},stroke-width:3px;`;
-       }).join('\n');
-       const diagram=`flowchart LR\n${names}\n${links}\nclassDef active fill:#ffd21f,stroke:#111,stroke-width:4px,color:#111;\nclassDef done fill:#58d68d,stroke:#111,stroke-width:2px,color:#111;\nclassDef idle fill:#ded8c7,stroke:#111,stroke-width:2px,color:#111;\n${classes}\n${edgeStyles}`;
-      container.innerHTML=`<div class="mermaid" id="${prefix}-diagram">${diagram}</div>`;
-      if (window.mermaid) { window.mermaid.initialize({startOnLoad:false,theme:'base',securityLevel:'strict'}); window.mermaid.run({nodes:[document.getElementById(`${prefix}-diagram`)]}).catch(()=>renderGraphFallback(container,nodes,active,activeIndex)); } else renderGraphFallback(container,nodes,active,activeIndex);
-    }
+            const target=index+1;
+            color=target===activeIndex?'#ffd21f':(target<activeIndex?'#58d68d':'#9b9b9b');
+          }
+          return `linkStyle ${index} stroke:${color},stroke-width:3px;`;
+        }).join('\n');
+        const diagram=`flowchart LR\n${names}\n${links}\nclassDef active fill:#ffd21f,stroke:#111,stroke-width:4px,color:#111;\nclassDef done fill:#58d68d,stroke:#111,stroke-width:2px,color:#111;\nclassDef idle fill:#ded8c7,stroke:#111,stroke-width:2px,color:#111;\n${classes}\n${edgeStyles}`;
+        container.innerHTML=`<div class="mermaid" id="${prefix}-diagram">${diagram}</div>`;
+        if (window.mermaid) { window.mermaid.initialize({startOnLoad:false,theme:'base',securityLevel:'strict'}); window.mermaid.run({nodes:[document.getElementById(`${prefix}-diagram`)]}).catch(()=>renderGraphFallback(container,nodes,active,activeIndex)); } else renderGraphFallback(container,nodes,active,activeIndex);
+      }
+      function renderDirtyGraph(active,completed) {
+        const container=document.getElementById('dirty-graph'); const names=['Instruction','Contact pool\n(one unvisited contact)','Kamal / MundaneCall','Tariq / WhistleblowerLeak','Rehana / SubscriberCall','Interrogation','GoodEnding','NeutralEnding','BadEnding']; const activeName=active==='MundaneCall'?'Kamal / MundaneCall':active==='WhistleblowerLeak'?'Tariq / WhistleblowerLeak':active==='SubscriberCall'?'Rehana / SubscriberCall':active; const done=new Set(completed); const classes=names.map((name,index)=>{ const contact=(name.startsWith('Kamal')?'Dr. Kamal':name.startsWith('Tariq')?'Tariq':name.startsWith('Rehana')?'Rehana':null); return `class d${index} ${name===activeName?'active':(contact&&done.has(contact)?'done':'idle')};`; }).join('\n'); const diagram=`flowchart LR\nd0["Instruction"] --> d1["Contact pool\\n(one unvisited contact)"]\nd1 --> d2["Kamal / MundaneCall"]\nd1 --> d3["Tariq / WhistleblowerLeak"]\nd1 --> d4["Rehana / SubscriberCall"]\nd2 --> d1\nd3 --> d1\nd4 --> d1\nd1 --> d5["Interrogation"]\nd5 --> d6["GoodEnding"]\nd5 --> d7["NeutralEnding"]\nd5 --> d8["BadEnding"]\nclassDef active fill:#ffd21f,stroke:#111,stroke-width:4px,color:#111;\nclassDef done fill:#58d68d,stroke:#111,stroke-width:2px,color:#111;\nclassDef idle fill:#ded8c7,stroke:#111,stroke-width:2px,color:#111;\n${classes}`; container.innerHTML=`<div class="mermaid" id="dirty-diagram">${diagram}</div>`; if(window.mermaid) window.mermaid.run({nodes:[document.getElementById('dirty-diagram')]}).catch(()=>renderGraphFallback(container,names,activeName,names.indexOf(activeName))); else renderGraphFallback(container,names,activeName,names.indexOf(activeName));
+      }
      function renderGraphFallback(container,nodes,active,activeIndex) { container.innerHTML=`<div class="graph-fallback">${nodes.map((node,index)=>`<div class="fallback-node ${node===active?'active':(activeIndex>=0&&index<activeIndex?'done':'')}">${esc(node)}${node===active?' ◀ ACTIVE':''}</div>`).join('')}</div>`; }
     function highlightJson(raw,emptyText) { if(!raw) return esc(emptyText); try { JSON.parse(raw); } catch (_) { return `<span class="json-invalid">${esc(raw)}</span>`; } return esc(raw).replace(/(&quot;.*?&quot;)(\s*:)?|\b(?:true|false)\b|\bnull\b|-?\d+(?:\.\d+)?/g,(match,string,colon)=>{ if(string) return `<span class="json-${colon?'key':'string'}">${match}</span>${colon||''}`; const type=match==='null'?'null':(match==='true'||match==='false'?'boolean':'number'); return `<span class="json-${type}">${match}</span>`; }); }
      function conversationCard(item) { const failed=item.status==='failed'||item.error; const capture=item.captured_samples?`<audio controls preload="none" src="/api/voice/${item.id}/capture.wav"></audio>`:'<span class="muted">capture unavailable</span>'; const ready=['completed','failed','cancelled'].includes(item.status); const tts=item.tts_samples&&ready?`<audio controls preload="none" src="/api/voice/${item.id}/tts.wav"></audio>`:'<span class="muted">TTS unavailable or still generating</span>'; return `<article class="card ${failed?'failed':''}"><div class="card-grid"><div><b>TURN ${esc(item.id)}</b><br><span class="label">${esc(statusText(item.status))}</span><br><span class="muted">${esc(item.caller_name||'Unknown caller')}<br>${esc(item.caller_place||'Unknown place')}<br>${esc(item.captured_samples||0)} input / ${esc(item.tts_samples||0)} TTS samples</span></div><div><div class="label">STT</div><p>${esc(item.transcript||'-')}</p><div class="label">LLM PROMPT</div><p>${esc(item.llm_prompt||'-')}</p><div class="label">LLM RESPONSE</div><p>${esc(item.llm_response||item.response_text||'-')}</p>${item.error?`<p class="bad">${esc(item.error.code)}: ${esc(item.error.message)}</p>`:''}</div><div><div class="label">RECORDED INPUT</div>${capture}<div class="label">SYNTHESIZED OUTPUT</div>${tts}</div></div></article>`; }
