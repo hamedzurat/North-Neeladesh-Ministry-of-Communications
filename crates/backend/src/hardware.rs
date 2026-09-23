@@ -154,12 +154,12 @@ pub(crate) fn directory_user(line: u8) -> (String, String, String) {
             "Shadhin Housing".into(),
         ),
         4 => (
-            stories::bela_bose::BELA_NAME.into(),
+            "Bela Bose (Meghna)".into(),
             "dog owner".into(),
             "Meghna Abashon".into(),
         ),
         5 => (
-            stories::bela_bose::BELA_NAME.into(),
+            "Bela Bose (Padma)".into(),
             "cat owner".into(),
             "Padma Nibash".into(),
         ),

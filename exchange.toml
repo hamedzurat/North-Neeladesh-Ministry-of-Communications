@@ -51,7 +51,7 @@ Example output:
 
 [[subscribers]]
 line = 0
-place = "MOTIJHEEL FLAT"
+place = "MOTIJHEEL RESIDENTIAL TOWER"
 name = "Rafiq Ahmed"
 role = "night-shift building caretaker"
 private_info = "Knows which exchange lines ring after midnight and keeps a handwritten log of overnight callers."
@@ -84,7 +84,7 @@ voice_id = "pocket-line-3"
 [[subscribers]]
 line = 4
 place = "Meghna Abashon"
-name = "Bela Bose"
+name = "Bela Bose (Meghna)"
 role = "dog owner"
 private_info = "Bela Bose has a dog named Momo."
 voice_id = "pocket-line-4"
@@ -92,7 +92,7 @@ voice_id = "pocket-line-4"
 [[subscribers]]
 line = 5
 place = "Padma Nibash"
-name = "Bela Bose"
+name = "Bela Bose (Padma)"
 role = "cat owner"
 private_info = "Bela Bose has a cat named Tuli."
 voice_id = "pocket-line-5"
