@@ -1,8 +1,8 @@
 # Text test frontend
 
 This binary drives the real backend without a microphone or speakers. It plays a
-complete story path. It supports the Shapla Apartments service story and the
-Neel University routing story. The backend performs story transitions,
+complete story path. It supports the Fallen Mother service story and the
+Bela Bose routing story. The backend performs story transitions,
 delayed ringing, directory routing, and dialogue generation; the frontend only
 supplies human actions.
 
@@ -57,7 +57,7 @@ just story-test cross_thread_success /tmp/cross-thread-success.log
 just story-test-all
 ```
 
-Generate the authored Neel University, Dirty Work, and Nahid TAP recordings after
+Generate the authored Bela Bose, Dirty Work, and Nahid TAP recordings after
 changing voice profiles in `exchange.toml` with:
 
 ```sh
