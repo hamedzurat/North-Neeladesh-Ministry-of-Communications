@@ -20,6 +20,7 @@ pub(crate) struct GameConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct SubscriberConfig {
+    pub(crate) id: u16,
     pub(crate) line: u8,
     pub(crate) place: String,
     pub(crate) name: String,
@@ -58,7 +59,13 @@ impl GameConfig {
             "exchange config {path:?}: subscribers are required"
         );
         let mut seen = [false; LINES as usize];
+        let mut seen_ids = std::collections::HashSet::new();
         for subscriber in &self.subscribers {
+            assert!(
+                seen_ids.insert(subscriber.id),
+                "exchange config {path:?}: duplicate subscriber id {}",
+                subscriber.id
+            );
             assert!(
                 usize::from(subscriber.line) < seen.len(),
                 "exchange config {path:?}: subscriber line {} is outside 0..{}",

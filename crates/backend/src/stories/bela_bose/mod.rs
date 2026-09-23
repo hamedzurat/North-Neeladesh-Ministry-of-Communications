@@ -5,10 +5,6 @@ pub const NEEL_LINE: u8 = 2;
 pub const SHADHIN_LINE: u8 = 3;
 pub const BELA_DOG_LINE: u8 = 4;
 pub const BELA_CAT_LINE: u8 = 5;
-pub const PLACE: &str = "NEEL UNIVERSITY";
-pub const PROFESSOR_NAME: &str = "Prof. Kashem";
-pub const ARNAB_NAME: &str = "Arnab Bhattacharjee";
-pub const BELA_NAME: &str = "Bela Bose";
 pub const BELA_DOG_DIRECTORY: u16 = 1031;
 pub const BELA_CAT_DIRECTORY: u16 = 1032;
 pub const PROFESSOR_AUDIO: &str = "professor_arnab.wav";
@@ -60,14 +56,6 @@ pub const fn is_bela_directory(id: u16) -> bool {
 
 pub const fn is_bela_destination(value: u16) -> bool {
     is_bela_directory(value) || matches!(value, 4 | 5)
-}
-
-pub const fn directory_line(id: u16) -> Option<u8> {
-    match id {
-        BELA_DOG_DIRECTORY => Some(BELA_DOG_LINE),
-        BELA_CAT_DIRECTORY => Some(BELA_CAT_LINE),
-        _ => None,
-    }
 }
 
 pub const fn next_beat_after_connection(beat: Beat, caller: u8, callee: u8) -> Option<Beat> {

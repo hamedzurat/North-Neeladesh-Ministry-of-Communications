@@ -72,6 +72,7 @@ fn terminate_process_group(child: &mut Child) {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SubscriberProfile {
     pub subscriber_id: u8,
+    pub directory_id: u16,
     pub name: String,
     pub voice_id: String,
     pub personality: String,
@@ -97,6 +98,7 @@ pub struct ResponseContext {
     pub profile: SubscriberProfile,
     pub caller_place: String,
     pub requested_place: String,
+    pub requested_directory_id: u16,
     pub known_places: Vec<String>,
     pub subscriber_goal: String,
     pub call_premise: String,
@@ -2315,6 +2317,7 @@ mod tests {
         ResponseContext {
             profile: SubscriberProfile {
                 subscriber_id: 0,
+                directory_id: 0,
                 name: "Taren Kesh".to_string(),
                 voice_id: "Ryan".to_string(),
                 personality: "unassigned".to_string(),
@@ -2324,6 +2327,7 @@ mod tests {
             },
             caller_place: "LINE 00".to_string(),
             requested_place: "LINE 01".to_string(),
+            requested_directory_id: 1,
             known_places: vec!["LINE 00".to_string(), "LINE 01".to_string()],
             subscriber_goal: String::new(),
             call_premise: String::new(),

@@ -11,6 +11,7 @@ story_seed = 1
 # `private_info` on each subscriber is visible in the operator/debug display.
 # It is not automatically given to callers; story rules grant it explicitly.
 voice_vocabulary = [
+    "Mohona Heights",
     "Shapla Apartments",
     "Neel University",
     "Shadhin Housing",
@@ -28,6 +29,8 @@ voice_vocabulary = [
     "Bagha News",
     "Koyal Market",
     "Secret Police",
+    "Karnafuli Colony",
+    "Teesta Bhaban",
     "Shonarpara Tower",
     "bKash",
 ]
@@ -50,97 +53,109 @@ Example output:
 '''
 
 [[subscribers]]
+id = 1021
 line = 0
-place = "MOTIJHEEL RESIDENTIAL TOWER"
+place = "Mohona Heights"
 name = "Rafiq Ahmed"
-role = "night-shift building caretaker"
-private_info = "Knows which exchange lines ring after midnight and keeps a handwritten log of overnight callers."
+role = "building caretaker"
+private_info = "has a rabbit named Chhotu"
 voice_id = "pocket-line-0"
 
 [[subscribers]]
+id = 1022
 line = 1
-place = "SHAPLA APARTMENTS"
+place = "Shapla Apartments"
 name = "Nusrat Rahman"
-role = "senior architect"
-private_info = "Keeps a blue scarf from her first architecture job."
+role = "architect"
+private_info = "has a parrot named Tiya"
 voice_id = "pocket-line-1"
 
 [[subscribers]]
+id = 1023
 line = 2
-place = "NEEL UNIVERSITY"
+place = "Neel University"
 name = "Prof. Kashem"
-role = "professor"
-private_info = "Collects handwritten maps of old university buildings."
+role = "university professor"
+private_info = "has a tortoise named Dheere"
 voice_id = "pocket-line-2"
 
 [[subscribers]]
+id = 1024
 line = 3
-place = "SHADHIN HOUSING"
+place = "Shadhin Housing"
 name = "Arnab Bhattacharjee"
-role = "recently hired graduate"
-private_info = "Still carries a fountain pen given by his first supervisor."
+role = "junior engineer"
+private_info = "has a hamster named Golu"
 voice_id = "pocket-line-3"
 
 [[subscribers]]
+id = 1031
 line = 4
 place = "Meghna Abashon"
-name = "Bela Bose (Meghna)"
-role = "dog owner"
-private_info = "Bela Bose has a dog named Momo."
+name = "Bela Bose"
+role = "librarian"
+private_info = "has a dog named Momo"
 voice_id = "pocket-line-4"
 
 [[subscribers]]
+id = 1032
 line = 5
 place = "Padma Nibash"
-name = "Bela Bose (Padma)"
-role = "cat owner"
-private_info = "Bela Bose has a cat named Tuli."
+name = "Bela Bose"
+role = "school teacher"
+private_info = "has a cat named Tuli"
 voice_id = "pocket-line-5"
 
 [[subscribers]]
+id = 1025
 line = 6
-place = "SECRET POLICE DIRECTORATE"
+place = "Secret Police"
 name = "Agent Rahman"
-role = "secret police agent"
-private_info = "Keeps a private list of operators who have served on night shifts."
+role = "intelligence officer"
+private_info = "has an aquarium with goldfish"
 voice_id = "pocket-line-6"
 
 [[subscribers]]
+id = 1026
 line = 7
-place = "BAGHA NEWS DESK"
+place = "Bagha News"
 name = "Farhana"
 role = "newspaper editor"
-private_info = "Keeps an annotated notebook of sources beside the newsroom telephone."
+private_info = "has a canary named Shonali"
 voice_id = "pocket-line-7"
 
 [[subscribers]]
+id = 1027
 line = 8
-place = "KOYAL MARKET DEPOT"
+place = "Koyal Market"
 name = "Tariq"
-role = "warehouse worker"
-private_info = "Has signed delivery slips hidden with his work papers."
+role = "warehouse clerk"
+private_info = "has a pug named Bagha"
 voice_id = "pocket-line-8"
 
 [[subscribers]]
+id = 1028
 line = 9
-place = "NEEL UNIVERSITY"
+place = "Karnafuli Colony"
 name = "Dr. Kamal"
 role = "retired professor"
-private_info = "Writes short condolence notices for former colleagues."
+private_info = "has a pigeon named Bakum"
 voice_id = "pocket-line-9"
 
 [[subscribers]]
+id = 1029
 line = 10
-place = "SHAPLA APARTMENTS"
+place = "Teesta Bhaban"
 name = "Rehana"
-role = "newspaper subscriber"
-private_info = "Usually reads the gardening insert before the main newspaper."
+role = "botanist"
+private_info = "has a white cat named Snow"
 voice_id = "pocket-line-10"
 
 [[subscribers]]
+id = 1030
 line = 11
-place = "SHONARPARA TOWER"
+place = "Shonarpara Tower"
 name = "Nahid"
-role = "bKash scammer"
-private_info = "Uses urgent payment-account stories to pressure strangers into revealing account details."
+role = "call center agent"
+private_info = "has a puppy named Sheru"
 voice_id = "pocket-line-11"

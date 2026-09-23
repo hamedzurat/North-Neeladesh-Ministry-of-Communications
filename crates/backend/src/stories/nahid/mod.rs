@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub const NAHID_LINE: u8 = 11;
-pub const LOCATION: &str = "SHONARPARA EXCHANGE TOWER";
+pub const LOCATION: &str = "SHONARPARA TOWER";
 pub const PATIENCE_SECONDS: u64 = 64;
 pub const VICTIM_LINES: [u8; 5] = [0, 1, 4, 5, 10];
 

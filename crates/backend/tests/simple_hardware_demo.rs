@@ -11,7 +11,7 @@ fn input(
     backend: &Backend,
     sequence: u64,
     cords: Vec<CordConnection>,
-    directory_line: u8,
+    directory_id: u16,
     _crank: [u64; 4],
 ) -> InputMessage {
     let ring_line = cords
@@ -31,7 +31,12 @@ fn input(
                 ptt: true,
                 ..HeldControls::default()
             },
-            directory_digits: [0, 0, 0, directory_line],
+            directory_digits: [
+                (directory_id / 1000) as u8,
+                ((directory_id / 100) % 10) as u8,
+                ((directory_id / 10) % 10) as u8,
+                (directory_id % 10) as u8,
+            ],
             ring_line: ring_line.unwrap_or(-1),
             tuning: TuningState::default(),
             debug: InputDebug::default(),
@@ -46,7 +51,7 @@ fn cord(first: PortId, second: PortId) -> CordConnection {
 #[test]
 fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
     let mut backend = Backend::new_simple_hardware_demo();
-    let waiting = backend.apply_input_message(input(&backend, 1, vec![], 1, [0; 4]));
+    let waiting = backend.apply_input_message(input(&backend, 1, vec![], 1021, [0; 4]));
     assert_eq!(waiting.output.calls.len(), 3);
     assert!(
         waiting
@@ -87,7 +92,7 @@ fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
             PortId::Subscriber(first.caller_line),
             PortId::Operator,
         )],
-        first.requested_callee_line,
+        u16::from(first.requested_callee_line),
         [0; 4],
     ));
     assert_eq!(
@@ -105,7 +110,7 @@ fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
                 PortId::RingGenerator,
             ),
         ],
-        (first.requested_callee_line + 1) % 6,
+        u16::from((first.requested_callee_line + 1) % 6),
         [0, 0, 0, 100],
     ));
     assert!(wrong_directory.accepted);
@@ -121,7 +126,7 @@ fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
             PortId::Subscriber(first.caller_line),
             PortId::Subscriber(first.requested_callee_line),
         )],
-        first.requested_callee_line,
+        u16::from(first.requested_callee_line),
         [0; 4],
     ));
     assert_eq!(connected.output.call.unwrap().phase, CallPhase::Connected);
@@ -143,7 +148,7 @@ fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
             PortId::Subscriber(first.caller_line),
             PortId::Subscriber(first.requested_callee_line),
         )],
-        first.requested_callee_line,
+        u16::from(first.requested_callee_line),
         [0; 4],
     ));
     assert_eq!(next.output.calls.len(), 3);
@@ -160,13 +165,13 @@ fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
 #[test]
 fn simple_hardware_failure_prints_a_cost() {
     let mut backend = Backend::new_simple_hardware_demo();
-    let waiting = backend.apply_input_message(input(&backend, 1, vec![], 1, [0; 4]));
+    let waiting = backend.apply_input_message(input(&backend, 1, vec![], 1021, [0; 4]));
     assert_eq!(waiting.output.calls.len(), 3);
     backend.apply_debug_command(exchange_protocol::DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
         command: DebugCommand::AdvanceTime { seconds: 65 },
     });
-    let failed = backend.apply_input_message(input(&backend, 2, vec![], 1, [0; 4]));
+    let failed = backend.apply_input_message(input(&backend, 2, vec![], 1021, [0; 4]));
 
     assert!(
         !failed

@@ -12,11 +12,6 @@ pub const CONTACT_BEATS: [Beat; 3] = [
     Beat::SubscriberCall,
 ];
 
-pub const SECRET_POLICE: &str = "SECRET POLICE DIRECTORATE";
-pub const BAGHA_NEWS: &str = "BAGHA NEWS DESK";
-pub const KOYAL_MARKET: &str = "KOYAL MARKET DEPOT";
-pub const NEEL_UNIVERSITY: &str = "NEEL UNIVERSITY";
-pub const SHAPLA_APARTMENTS: &str = "SHAPLA APARTMENTS";
 pub const KAMAL_FARHANA_AUDIO: &str = "kamal_farhana.wav";
 pub const TARIQ_FARHANA_AUDIO: &str = "tariq_farhana.wav";
 pub const REHANA_FARHANA_AUDIO: &str = "rehana_farhana.wav";
@@ -36,7 +31,7 @@ Return only the spoken reply.
 "#;
 
 pub const KAMAL_PROMPT: &str = r#"
-You are Dr. Kamal calling from Neel University. You are making an ordinary call to
+You are Dr. Kamal calling from Karnafuli Colony. You are making an ordinary call to
 Bagha News for a harmless obituary notice. Speak naturally and briefly. Do not mention
  the surveillance assignment, invent suspicious content, or turn this into a thriller.
  Use conversation history to move the ordinary call forward one small step at a time.
@@ -45,7 +40,7 @@ Bagha News for a harmless obituary notice. Speak naturally and briefly. Do not m
 "#;
 
 pub const TARIQ_PROMPT: &str = r#"
-You are Tariq, a nervous warehouse worker calling from Koyal Market Depot. You are
+You are Tariq, a nervous warehouse clerk calling from Koyal Market. You are
 trying to reach Bagha News with an urgent report about corrupt handling of rotten grain.
 Reveal your report naturally under questioning, including the responsible merchant,
  the market location, and the existence of signed delivery slips, but do not volunteer
@@ -56,7 +51,7 @@ Reveal your report naturally under questioning, including the responsible mercha
 "#;
 
 pub const REHANA_PROMPT: &str = r#"
-You are Rehana calling from Shapla Apartments about a missing newspaper insert. This
+You are Rehana, a botanist calling from Teesta Bhaban about a missing newspaper insert. This
  is an entirely ordinary subscriber-service call. Be polite, brief, and practical. Do
  not mention surveillance, corruption, or the other calls. Use conversation history to
  resolve the missing-insert question over multiple turns. If the operator asks something

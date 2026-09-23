@@ -463,6 +463,7 @@ pub struct DebugRunState {
 #[serde(deny_unknown_fields)]
 pub struct DebugSubscriberState {
     pub id: String,
+    pub directory_id: u16,
     pub name: String,
     pub line: Option<u8>,
     pub status: String,

@@ -10,10 +10,9 @@ use exchange_protocol::{
     TapBridgeMonitoring, TuningState,
 };
 
-use crate::config::LINES;
-use crate::stories;
+use crate::config::{GameConfig, LINES};
 
-pub(crate) fn initial_state() -> StateOutput {
+pub(crate) fn initial_state(config: &GameConfig) -> StateOutput {
     StateOutput {
         line_lamps: [false; 12],
         game_phase: exchange_protocol::GamePhase::Ready,
@@ -26,7 +25,7 @@ pub(crate) fn initial_state() -> StateOutput {
         interference_level: 0,
         tap_bridge_audio_active: false,
         tuning: TuningState::default(),
-        directory_pages: directory_pages([0, 0, 0, 0]),
+        directory_pages: directory_pages(config, [0, 0, 0, 0]),
         printer_output: vec![PrinterEntry {
             entry_id: 1,
             text: "SHIFT 1 START // TELEPHONE EXCHANGE READY".into(),
@@ -92,19 +91,22 @@ pub(crate) fn directory_id(digits: [u8; 4]) -> u16 {
         .fold(0, |number, digit| number * 10 + u16::from(digit))
 }
 
-pub(crate) fn directory_pages(digits: [u8; 4]) -> Vec<exchange_protocol::DirectoryPage> {
+pub(crate) fn directory_pages(
+    config: &GameConfig,
+    digits: [u8; 4],
+) -> Vec<exchange_protocol::DirectoryPage> {
     let id = directory_id(digits);
-    if let Some(line) = directory_line(id) {
-        let (name, role, note) = directory_user(line);
+    if let Some(line) = directory_line(config, id) {
+        let (name, role, note) = directory_user(config, line);
         vec![exchange_protocol::DirectoryPage {
             page_number: 1,
-            heading: simple_place(line),
+            heading: simple_place(config, line),
             lines: vec![
                 format!("SUBSCRIBER ID {id:04}"),
                 format!("SUBSCRIBER // {name}"),
                 format!("ROLE // {role}"),
                 format!("NOTE // {note}"),
-                format!("DESTINATION // {}", simple_place(line)),
+                format!("DESTINATION // {}", simple_place(config, line)),
             ],
         }]
     } else {
@@ -119,96 +121,42 @@ pub(crate) fn directory_pages(digits: [u8; 4]) -> Vec<exchange_protocol::Directo
     }
 }
 
-pub(crate) fn simple_place(line: u8) -> String {
-    match line {
-        1 => "SHAPLA APARTMENTS".into(),
-        2 => stories::bela_bose::PLACE.into(),
-        3 => "SHADHIN HOUSING".into(),
-        4 => "MEGHNA ABASHON".into(),
-        5 => "PADMA NIBASH".into(),
-        6 => stories::dirty_work::SECRET_POLICE.into(),
-        7 => stories::dirty_work::BAGHA_NEWS.into(),
-        8 => stories::dirty_work::KOYAL_MARKET.into(),
-        9 => stories::dirty_work::NEEL_UNIVERSITY.into(),
-        10 => stories::dirty_work::SHAPLA_APARTMENTS.into(),
-        11 => stories::nahid::LOCATION.into(),
-        _ => format!("LINE {line:02}"),
-    }
+pub(crate) fn simple_place(config: &GameConfig, line: u8) -> String {
+    config
+        .subscribers
+        .iter()
+        .find(|subscriber| subscriber.line == line)
+        .map(|subscriber| subscriber.place.clone())
+        .unwrap_or_else(|| format!("LINE {line:02}"))
 }
 
-pub(crate) fn directory_user(line: u8) -> (String, String, String) {
-    match line {
-        1 => (
-            "Nusrat Rahman".into(),
-            "senior architect".into(),
-            "Shapla Apartments".into(),
-        ),
-        2 => (
-            stories::bela_bose::PROFESSOR_NAME.into(),
-            "professor".into(),
-            stories::bela_bose::PLACE.into(),
-        ),
-        3 => (
-            stories::bela_bose::ARNAB_NAME.into(),
-            "recently hired graduate".into(),
-            "Shadhin Housing".into(),
-        ),
-        4 => (
-            "Bela Bose (Meghna)".into(),
-            "dog owner".into(),
-            "Meghna Abashon".into(),
-        ),
-        5 => (
-            "Bela Bose (Padma)".into(),
-            "cat owner".into(),
-            "Padma Nibash".into(),
-        ),
-        6 => (
-            "Agent Rahman".into(),
-            "secret police agent".into(),
-            stories::dirty_work::SECRET_POLICE.into(),
-        ),
-        7 => (
-            "Farhana".into(),
-            "newspaper editor".into(),
-            stories::dirty_work::BAGHA_NEWS.into(),
-        ),
-        8 => (
-            "Tariq".into(),
-            "warehouse worker".into(),
-            stories::dirty_work::KOYAL_MARKET.into(),
-        ),
-        9 => (
-            "Dr. Kamal".into(),
-            "retired professor".into(),
-            stories::dirty_work::NEEL_UNIVERSITY.into(),
-        ),
-        10 => (
-            "Rehana".into(),
-            "newspaper subscriber".into(),
-            stories::dirty_work::SHAPLA_APARTMENTS.into(),
-        ),
-        11 => (
-            "Nahid".into(),
-            "bKash scammer".into(),
-            stories::nahid::LOCATION.into(),
-        ),
-        _ => (
-            format!("SUBSCRIBER {line:02}"),
-            "unassigned".into(),
-            "No story profile assigned".into(),
-        ),
-    }
+pub(crate) fn directory_user(config: &GameConfig, line: u8) -> (String, String, String) {
+    config
+        .subscribers
+        .iter()
+        .find(|subscriber| subscriber.line == line)
+        .map(|subscriber| {
+            (
+                subscriber.name.clone(),
+                subscriber.role.clone(),
+                subscriber.private_info.clone(),
+            )
+        })
+        .unwrap_or_else(|| {
+            (
+                format!("SUBSCRIBER {line:02}"),
+                "unassigned".into(),
+                "No subscriber profile assigned".into(),
+            )
+        })
 }
 
-pub(crate) fn directory_line(id: u16) -> Option<u8> {
-    match id {
-        id if stories::bela_bose::directory_line(id).is_some() => {
-            stories::bela_bose::directory_line(id)
-        }
-        0..=11 => Some(id as u8),
-        _ => None,
-    }
+pub(crate) fn directory_line(config: &GameConfig, id: u16) -> Option<u8> {
+    config
+        .subscribers
+        .iter()
+        .find(|subscriber| subscriber.id == id)
+        .map(|subscriber| subscriber.line)
 }
 
 pub(crate) fn operator_line(cords: &[CordConnection]) -> Option<u8> {
@@ -378,15 +326,17 @@ pub(crate) fn valid_tap_circuit(input: &InputState, caller: u8, callee: u8) -> b
 #[cfg(test)]
 mod tests {
     use super::directory_pages;
+    use crate::config::GameConfig;
 
     #[test]
     fn shapla_directory_uses_its_story_place() {
-        let page = &directory_pages([0, 0, 0, 1])[0];
-        assert_eq!(page.heading, "SHAPLA APARTMENTS");
+        let config = GameConfig::load();
+        let page = &directory_pages(&config, [1, 0, 2, 2])[0];
+        assert_eq!(page.heading, "Shapla Apartments");
         assert!(
             page.lines
                 .iter()
-                .any(|line| line == "DESTINATION // SHAPLA APARTMENTS")
+                .any(|line| line == "DESTINATION // Shapla Apartments")
         );
     }
 }

@@ -197,7 +197,7 @@ impl Backend {
         let config = GameConfig::load();
         let backend = Self {
             config: config.clone(),
-            state: initial_state(),
+            state: initial_state(&config),
             revision: 0,
             sequence: None,
             clock_started: Instant::now(),
@@ -360,6 +360,7 @@ impl Backend {
         ResponseContext {
             profile: SubscriberProfile {
                 subscriber_id: caller,
+                directory_id: caller_profile.id,
                 name: caller_profile.name.clone(),
                 voice_id: caller_profile.voice_id.clone(),
                 personality: caller_profile.role.clone(),
@@ -369,6 +370,7 @@ impl Backend {
             },
             caller_place: caller_profile.place.clone(),
             requested_place: callee_profile.place.clone(),
+            requested_directory_id: callee_profile.id,
             known_places: self
                 .config
                 .subscribers
@@ -434,7 +436,7 @@ impl Backend {
 
     pub fn reset_run(&mut self) {
         self.run_generation = self.run_generation.wrapping_add(1);
-        self.state = initial_state();
+        self.state = initial_state(&self.config);
         self.revision = 0;
         self.sequence = None;
         self.clock_started = Instant::now();
@@ -534,6 +536,7 @@ impl Backend {
                 let subscriber = self.subscriber(line);
                 DebugSubscriberState {
                     id: format!("line_{line}"),
+                    directory_id: subscriber.id,
                     name: subscriber.name.clone(),
                     line: Some(line),
                     status: if active { "off_hook" } else { "on_hook" }.into(),
@@ -628,7 +631,7 @@ impl Backend {
             && call.caller == stories::bela_bose::SHADHIN_LINE
         {
             return stories::bela_bose::is_bela_destination(selected)
-                || directory_line(selected).is_some_and(|line| {
+                || directory_line(&self.config, selected).is_some_and(|line| {
                     line == stories::bela_bose::BELA_DOG_LINE
                         || line == stories::bela_bose::BELA_CAT_LINE
                 });
@@ -783,7 +786,7 @@ impl Backend {
         self.refill_calls(self.call_target);
         self.revision = self.revision.wrapping_add(1);
         self.state.clock.elapsed_seconds = self.elapsed_seconds();
-        self.state.directory_pages = directory_pages(input.directory_digits);
+        self.state.directory_pages = directory_pages(&self.config, input.directory_digits);
         self.state.calls = self
             .calls
             .iter()
@@ -1145,7 +1148,10 @@ impl Backend {
                 stories::bela_bose::BELA_CAT_LINE,
             ]
             .iter()
-            .any(|line| selected == u16::from(*line) || directory_line(selected) == Some(*line));
+            .any(|line| {
+                selected == u16::from(*line)
+                    || directory_line(&self.config, selected) == Some(*line)
+            });
         let requires_ring = !neel_arnab_beat;
         let call = &mut self.calls[index];
         let call_caller = call.caller;
@@ -1155,7 +1161,8 @@ impl Backend {
                 stories::bela_bose::BELA_DOG_LINE,
                 stories::bela_bose::BELA_CAT_LINE,
             ] {
-                if (selected == u16::from(target) || directory_line(selected) == Some(target))
+                if (selected == u16::from(target)
+                    || directory_line(&self.config, selected) == Some(target))
                     && direct(&input.cord_topology, call.caller, target)
                 {
                     call.callee = target;
@@ -2261,7 +2268,8 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         let id = state.next_voice_conversation_id;
                         state.next_voice_conversation_id =
                             state.next_voice_conversation_id.wrapping_add(1);
-                        let (caller_name, _, _) = directory_user(caller);
+                        let (caller_name, _, _) = directory_user(&state.config, caller);
+                        let caller_place = simple_place(&state.config, caller);
                         let started_elapsed_seconds = state.elapsed_seconds();
                         state.voice_conversations.push(DebugVoiceConversation {
                             id,
@@ -2269,7 +2277,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                             turn_id: input.turn_id,
                             state_revision: input.state_revision,
                             caller_name: caller_name.into(),
-                            caller_place: simple_place(caller).into(),
+                            caller_place,
                             status: Some(VoiceStatus::Transcribing),
                             started_elapsed_seconds,
                             finished_elapsed_seconds: None,
@@ -2939,6 +2947,7 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
                         state.next_voice_conversation_id =
                             state.next_voice_conversation_id.wrapping_add(1);
                         let caller = state.voice_subscriber_line.unwrap_or(0);
+                        let caller_place = simple_place(&state.config, caller);
                         let now = state.elapsed_seconds();
                         let caller_name = state.subscriber(caller).name.clone();
                         state.voice_conversations.push(DebugVoiceConversation {
@@ -2947,7 +2956,7 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
                             turn_id: request.turn_id,
                             state_revision: request.state_revision,
                             caller_name,
-                            caller_place: simple_place(caller).into(),
+                            caller_place,
                             status: Some(VoiceStatus::Completed),
                             started_elapsed_seconds: now,
                             finished_elapsed_seconds: Some(now),
@@ -3068,5 +3077,24 @@ mod story_knowledge_tests {
         let arnab_knowledge = backend.voice_context(3, 4).permitted_knowledge;
         assert_eq!(arnab_knowledge.len(), 1);
         assert!(arnab_knowledge[0].fact.contains("cat named Tuli"));
+    }
+
+    #[test]
+    fn fallen_mother_bad_followup_uses_the_bad_followup_guidance() {
+        let mut backend = Backend::new_exchange();
+        backend.story_beat = crate::stories::fallen_mother::Beat::BadFollowup;
+
+        let context = backend.voice_context(crate::stories::fallen_mother::CALLER_LINE, 0);
+
+        assert!(
+            context
+                .call_guidance
+                .contains("You failed to help, and I will pursue you for the loss.")
+        );
+        assert!(
+            !context
+                .call_guidance
+                .contains("If the operator asks for the location")
+        );
     }
 }
