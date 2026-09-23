@@ -1904,11 +1904,9 @@ pub fn serve_with_voice_debug_and_text(
                     .peer_addr()
                     .map(|address| address.to_string())
                     .unwrap_or_else(|_| "unknown".into());
-                println!("[FRONTEND] debug connected peer={peer}");
                 let connection_backend = Arc::clone(&debug_backend);
                 thread::spawn(move || {
                     let result = handle_debug_connection(stream, connection_backend);
-                    println!("[FRONTEND] debug closed peer={peer}");
                     if let Err(error) = result {
                         eprintln!("[FRONTEND ERROR] debug connection failed peer={peer}: {error}");
                     }
@@ -1924,11 +1922,9 @@ pub fn serve_with_voice_debug_and_text(
                     .peer_addr()
                     .map(|address| address.to_string())
                     .unwrap_or_else(|_| "unknown".into());
-                println!("[FRONTEND] text connected peer={peer}");
                 let connection_backend = Arc::clone(&text_backend);
                 thread::spawn(move || {
                     let result = handle_text_connection(stream, connection_backend);
-                    println!("[FRONTEND] text closed peer={peer}");
                     if let Err(error) = result {
                         eprintln!("[FRONTEND ERROR] text connection failed peer={peer}: {error}");
                     }
@@ -1942,11 +1938,9 @@ pub fn serve_with_voice_debug_and_text(
             .peer_addr()
             .map(|address| address.to_string())
             .unwrap_or_else(|_| "unknown".into());
-        println!("[FRONTEND] game connected peer={peer}");
         let connection_backend = Arc::clone(&backend);
         thread::spawn(move || {
             let result = handle_connection(stream, connection_backend);
-            println!("[FRONTEND] game closed peer={peer}");
             if let Err(error) = result {
                 eprintln!("[FRONTEND ERROR] game connection failed peer={peer}: {error}");
             }
