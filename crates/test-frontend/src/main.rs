@@ -32,6 +32,7 @@ struct GameLog {
     entry_number: u64,
 }
 
+#[allow(dead_code)]
 struct CsvRow<'a> {
     event: &'a str,
     sequence: u64,
@@ -58,23 +59,16 @@ impl GameLog {
     fn row(&mut self, row: CsvRow<'_>) -> io::Result<()> {
         let prefix = format!("[{}]", self.entry_number + 1);
         self.entry_number += 1;
-        writeln!(
-            self.file,
-            "{prefix} TRACE event={} sequence={} revision={} caller={} destination={} status={}",
-            row.event, row.sequence, row.revision, row.caller, row.destination, row.status
-        )?;
         match row.event {
             "state" => writeln!(
                 self.file,
-                "{} Story beat 1 begins: LINE {} calls.",
-                prefix, row.caller
+                "{} Incoming call: LINE {} -> LINE {} ({}).",
+                prefix,
+                row.caller,
+                row.destination,
+                row.text.trim_start_matches("phase=")
             ),
-            "operator" => writeln!(
-                self.file,
-                "{} You connect LINE {} to the Operator.",
-                prefix, row.caller
-            ),
-            "opening" => writeln!(self.file, "{} The caller says: \"{}\".", prefix, row.text),
+            "opening" => writeln!(self.file, "{} Caller: \"{}\".", prefix, row.text),
             "text_turn" => {
                 let parts: Vec<_> = row.text.split(" | ").collect();
                 let player = parts.first().unwrap_or(&"").trim_start_matches("player=");
@@ -90,40 +84,29 @@ impl GameLog {
                     .iter()
                     .find_map(|part| part.strip_prefix("subscriber="))
                     .unwrap_or("");
+                let addressee = if service == "caller" {
+                    "caller"
+                } else {
+                    service
+                };
+                let classification = (classification != "none")
+                    .then_some(format!("; classified as {classification}"))
+                    .unwrap_or_default();
+                let response = (!subscriber.is_empty())
+                    .then_some(format!("; response: \"{subscriber}\""))
+                    .unwrap_or_default();
                 writeln!(
                     self.file,
-                    "{} You say to {}: \"{}\".",
-                    prefix,
-                    if service == "caller" {
-                        "the caller"
-                    } else {
-                        service
-                    },
-                    player
-                )?;
-                if classification != "none" {
-                    writeln!(
-                        self.file,
-                        "{} The request is classified as {}.",
-                        prefix, classification
-                    )?;
-                }
-                if !subscriber.is_empty() {
-                    writeln!(self.file, "{} The caller says: \"{}\".", prefix, subscriber)?;
-                }
-                Ok(())
+                    "{} You say to {}: \"{}\"{}{}.",
+                    prefix, addressee, player, classification, response
+                )
             }
-            "disconnect" => writeln!(self.file, "{} You disconnect LINE {}.", prefix, row.caller),
-            "beat_result" => writeln!(self.file, "{} {}", prefix, row.text),
             "followup" => writeln!(
                 self.file,
-                "{} Story beat 2 begins: LINE {} calls again.",
+                "{} Incoming follow-up: LINE {} calls again.",
                 prefix, row.caller
             ),
-            "npc_response" => writeln!(self.file, "{} The caller says: \"{}\".", prefix, row.text),
-            "money" => writeln!(self.file, "{} {}", prefix, row.text),
-            "outcome" => writeln!(self.file, "{} {}", prefix, row.text),
-            "finish" => writeln!(self.file, "{} Story complete.", prefix),
+            "npc_response" => writeln!(self.file, "{} Caller: \"{}\".", prefix, row.text),
             _ => writeln!(self.file, "{} {}", prefix, row.text),
         }
     }
@@ -149,14 +132,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let initial_money = initial_debug.snapshot.money;
     let mut log = GameLog::open(&log_path)?;
     writeln!(log.file, "=== TEST PATH: {path} ===")?;
-    writeln!(
-        log.file,
-        "# Each action is followed by TRACE metadata: event, input sequence, backend revision, caller, destination, and result."
-    )?;
-    writeln!(
-        log.file,
-        "# Narration describes the simulated human action; transition/money lines describe backend decisions."
-    )?;
     if path == "cross_thread_success" {
         return run_cross_thread_success(
             &mut backend,
@@ -783,7 +758,7 @@ fn run_cross_thread_success(
         caller: 1,
         destination: 0,
         status: "accepted",
-        text: "Both story threads are active: Shapla EmergencyCall and Neel ProfessorRouting; LINE 1 and LINE 2 are waiting together.",
+        text: "Story state: Shapla EmergencyCall; Neel ProfessorRouting; LINE 1 and LINE 2 are waiting.",
     })?;
 
     state = exchange(
@@ -804,7 +779,7 @@ fn run_cross_thread_success(
         caller: 1,
         destination: 0,
         status: "accepted",
-        text: "You connect Shapla Apartments LINE 1 to the Operator while Neel LINE 2 remains waiting.",
+        text: "You connect Shapla Apartments LINE 1 to the Operator.",
     })?;
     let mut shapla_turns = Vec::new();
     let location = player_utterance(
@@ -896,7 +871,7 @@ fn run_cross_thread_success(
         caller: 1,
         destination: 0,
         status: "accepted",
-        text: "Shapla service request finished; LINE 1 disconnects while Neel LINE 2 remains waiting.",
+        text: "Shapla service request finished; LINE 1 disconnects.",
     })?;
     let shapla_followup = state
         .output
@@ -912,7 +887,7 @@ fn run_cross_thread_success(
         caller: 1,
         destination: 0,
         status: "accepted",
-        text: "Backend transition: Shapla EmergencyCall -> HappyFollowup; Neel ProfessorRouting remains active.",
+        text: "Shapla beat: EmergencyCall -> HappyFollowup.",
     })?;
     state = exchange(
         backend,
@@ -976,7 +951,7 @@ fn run_cross_thread_success(
         caller: 1,
         destination: 0,
         status: "accepted",
-        text: "Shapla follow-up completed while Neel ProfessorRouting remained in progress.",
+        text: "Shapla follow-up completed.",
     })?;
 
     state = exchange(
@@ -997,7 +972,7 @@ fn run_cross_thread_success(
         caller: 2,
         destination: 3,
         status: "accepted",
-        text: "You connect LINE 2 to the Operator while Shapla remains completed.",
+        text: "You connect LINE 2 to the Operator.",
     })?;
     let professor_text = player_utterance(
         player_command,
@@ -1052,7 +1027,7 @@ fn run_cross_thread_success(
         caller: 2,
         destination: 3,
         status: "accepted",
-        text: "You connect the Ring Generator to Shadhin Housing while the completed Shapla thread remains recorded.",
+        text: "You connect the Ring Generator to Shadhin Housing; ringing starts.",
     })?;
     let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 3 })?;
     state = exchange(
@@ -1120,9 +1095,7 @@ fn run_cross_thread_success(
         caller: 2,
         destination: 3,
         status: "accepted",
-        text: &format!(
-            "Professor Kashem's prerecorded audio lasted {professor_audio} seconds; the Neel lines remained active until it ended."
-        ),
+        text: &format!("Professor Kashem's prerecorded audio lasts {professor_audio} seconds."),
     })?;
     let arnab = state
         .output
@@ -1144,7 +1117,7 @@ fn run_cross_thread_success(
         caller: 2,
         destination: 3,
         status: "accepted",
-        text: "Backend transition: Neel ProfessorRouting -> ArnabDirectory; Shapla is complete.",
+        text: "Bela Bose beat: ProfessorRouting -> ArnabDirectory.",
     })?;
     state = exchange(
         backend,
@@ -1164,7 +1137,7 @@ fn run_cross_thread_success(
         caller: 3,
         destination: 5,
         status: "accepted",
-        text: "You connect LINE 3 to the Operator while Shapla remains completed.",
+        text: "You connect LINE 3 to the Operator.",
     })?;
     let arnab_text = player_utterance(
         player_command,
@@ -1317,7 +1290,7 @@ fn run_cross_thread_success(
         destination: 5,
         status: "accepted",
         text: &format!(
-            "Both stories completed independently on one backend; final money ${} (started at ${}).",
+            "Final money ${} (started at ${}).",
             snapshot.snapshot.money, initial_money
         ),
     })?;
@@ -1328,7 +1301,7 @@ fn run_cross_thread_success(
         caller: 3,
         destination: 5,
         status: "accepted",
-        text: "Intertwined Shapla Apartments and Neel University stories complete.",
+        text: "Story paths complete.",
     })?;
     Ok(())
 }

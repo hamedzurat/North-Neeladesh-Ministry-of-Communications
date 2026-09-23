@@ -1,8 +1,8 @@
 # Text test frontend
 
 This binary drives the real backend without a microphone or speakers. It plays a
-complete story path. It supports both the Shapla Apartments service story and
-the Neel University routing story. The backend performs story transitions,
+complete story path. It supports the Shapla Apartments service story and the
+Neel University routing story. The backend performs story transitions,
 delayed ringing, directory routing, and dialogue generation; the frontend only
 supplies human actions.
 
@@ -63,8 +63,8 @@ Generated recordings are runtime assets and are intentionally ignored by Git.
 `story-test-all` runs every path in one backend session and writes the combined
 transcript to `story-test-all.log`.
 
-The debug connection is used only to select the story thread. It never selects
-or skips a story beat. Each path reaches its second beat through normal backend
+The debug connection resets the run before each path. It does not select or
+skip a story beat. Each path reaches its later beats through normal backend
 conversation and classification.
 
 The command receives JSON on stdin:
