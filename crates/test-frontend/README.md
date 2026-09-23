@@ -54,8 +54,8 @@ just story-test cross_thread_success /tmp/cross-thread-success.log
 just story-test-all
 ```
 
-Generate the authored Neel University TAP recordings after changing voice
-profiles in `exchange.toml` with:
+Generate the authored Neel University and Dirty Work TAP recordings after
+changing voice profiles in `exchange.toml` with:
 
 ```sh
 just story-audio

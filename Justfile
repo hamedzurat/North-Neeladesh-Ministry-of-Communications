@@ -8,7 +8,7 @@ story-test path="ems_success" log="story-test.log":
     PYTHONPATH=python NN_STORY_CLASSIFIER_COMMAND="python -m voice_workers.classifier" cargo run --quiet -p exchange-test-frontend -- --path {{ path }} --debug-connect 127.0.0.1:7882 --log {{ log }} --player-command "python -m voice_workers.player"
 
 story-audio:
-    PYTHONPATH=python uv run --project python --no-sync python scripts/generate_bela_bose_audio.py
+    PYTHONPATH=python uv run --project python --no-sync python scripts/generate_story_audio.py
 
 story-test-all:
     #!/usr/bin/env bash

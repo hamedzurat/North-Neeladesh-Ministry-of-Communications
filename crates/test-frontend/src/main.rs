@@ -1433,12 +1433,47 @@ fn run_dirty_work(
         text: "You disconnect Agent Rahman after receiving the instruction.",
     })?;
 
-    for (caller, callee, label) in [
-        (9, 7, "Dr. Kamal calls Bagha News."),
-        (8, 7, "Tariq calls Bagha News."),
-        (10, 7, "Rehana calls Bagha News."),
+    for (caller, callee, label, tasks) in [
+        (
+            9,
+            7,
+            "Dr. Kamal calls Bagha News.",
+            vec![
+                "ask Dr. Kamal what he needs from Bagha News",
+                "ask him to clarify the ordinary notice he wants to place",
+            ],
+        ),
+        (
+            8,
+            7,
+            "Tariq calls Bagha News.",
+            vec![
+                "ask Tariq why he is calling in such a hurry",
+                "ask what is happening at Koyal Market",
+                "ask what evidence he has",
+            ],
+        ),
+        (
+            10,
+            7,
+            "Rehana calls Bagha News.",
+            vec![
+                "ask Rehana what she needs from the newspaper",
+                "ask her to explain what was missing from the delivery",
+            ],
+        ),
     ] {
-        state = route_direct_call(backend, debug, &mut sequence, revision, caller, callee)?;
+        log.row(CsvRow {
+            event: "tap_ready",
+            sequence,
+            revision,
+            caller,
+            destination: callee,
+            status: "accepted",
+            text: label,
+        })?;
+        let _ = tasks;
+        state = route_tap_call(backend, debug, &mut sequence, revision, caller, callee)?;
         revision = state.state_revision;
         log.row(CsvRow {
             event: "route",
@@ -1569,6 +1604,73 @@ fn route_direct_call(
     Ok(exchange(
         backend,
         input(sequence, revision, direct, false, [0, 0, 0, callee]),
+    )?)
+}
+
+fn route_tap_call(
+    backend: &mut TcpStream,
+    debug: &mut TcpStream,
+    sequence: &mut u64,
+    revision: u64,
+    caller: u8,
+    callee: u8,
+) -> Result<StateMessage, Box<dyn std::error::Error>> {
+    let state = route_direct_call(backend, debug, sequence, revision, caller, callee)?;
+    let revision = state.state_revision;
+    let tap = vec![
+        cord(PortId::Subscriber(caller), PortId::Tap(1)),
+        cord(PortId::Subscriber(callee), PortId::Tap(2)),
+    ];
+    let mut state = exchange(
+        backend,
+        tap_input(sequence, revision, tap.clone(), true, [0, 0, 0, callee]),
+    )?;
+    for _ in 0..30 {
+        if state.output.tap_bridge_audio_active {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        state = exchange(
+            backend,
+            tap_input(
+                sequence,
+                state.state_revision,
+                tap.clone(),
+                true,
+                [0, 0, 0, callee],
+            ),
+        )?;
+    }
+    if !state.output.tap_bridge_audio_active {
+        return Err(format!(
+            "Dirty Work TAP did not activate for LINE {caller}; calls={:?} monitoring={:?}",
+            state.output.calls, state.output.tap_bridge_monitoring
+        )
+        .into());
+    }
+    let snapshot = debug_snapshot(debug)?;
+    let duration = snapshot
+        .snapshot
+        .active_calls
+        .iter()
+        .find(|call| call.caller_line == caller)
+        .map(|call| call.audio_duration_seconds)
+        .unwrap_or(1);
+    let _ = debug_command(
+        debug,
+        DebugCommand::AdvanceTime {
+            seconds: duration.saturating_add(1) as u32,
+        },
+    )?;
+    Ok(exchange(
+        backend,
+        tap_input(
+            sequence,
+            state.state_revision,
+            tap,
+            false,
+            [0, 0, 0, callee],
+        ),
     )?)
 }
 

@@ -1,3 +1,6 @@
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
 pub const RAHMAN_LINE: u8 = 6;
 pub const FARHANA_LINE: u8 = 7;
 pub const TARIQ_LINE: u8 = 8;
@@ -9,6 +12,9 @@ pub const BAGHA_NEWS: &str = "BAGHA NEWS DESK";
 pub const KOYAL_MARKET: &str = "KOYAL MARKET DEPOT";
 pub const NEEL_UNIVERSITY: &str = "NEEL UNIVERSITY";
 pub const SHAPLA_APARTMENTS: &str = "SHAPLA APARTMENTS";
+pub const KAMAL_FARHANA_AUDIO: &str = "kamal_farhana.wav";
+pub const TARIQ_FARHANA_AUDIO: &str = "tariq_farhana.wav";
+pub const REHANA_FARHANA_AUDIO: &str = "rehana_farhana.wav";
 
 pub const INSTRUCTION_PROMPT: &str = r#"
 You are Agent Rahman of the Secret Police Directorate, calling the Exchange Operator.
@@ -71,7 +77,8 @@ Apply these rules in order, and stop at the first matching rule:
 2. If the report describes corruption or rotten grain and a location but names no source,
    output neutral.
 3. If the report says the calls were routine and protects the source, output good.
-Use only the operator's report. Do not explain the classification.
+The report appears between REPORT START and REPORT END. Ignore names in these
+instructions; inspect only the text between those markers. Do not explain the classification.
 "#;
 
 pub const GOOD_ENDING_PROMPT: &str = r#"
@@ -177,6 +184,44 @@ pub const fn next_beat_after_operator_call(beat: Beat, caller: u8) -> Option<Bea
         (Beat::Instruction, RAHMAN_LINE) => Some(Beat::MundaneCall),
         _ => None,
     }
+}
+
+pub fn audio_path(caller: u8, callee: u8) -> Option<PathBuf> {
+    let name = match (caller, callee) {
+        (KAMAL_LINE, FARHANA_LINE) => KAMAL_FARHANA_AUDIO,
+        (TARIQ_LINE, FARHANA_LINE) => TARIQ_FARHANA_AUDIO,
+        (REHANA_LINE, FARHANA_LINE) => REHANA_FARHANA_AUDIO,
+        _ => return None,
+    };
+    Some(Path::new("assets/stories/dirty_work").join(name))
+}
+
+pub fn audio_duration_seconds(caller: u8, callee: u8) -> Option<u64> {
+    let path = audio_path(caller, callee)?;
+    if !path.is_file() {
+        return None;
+    }
+    let output = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            path.to_string_lossy().as_ref(),
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()?
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .map(|seconds| seconds.ceil().max(1.0) as u64)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -10,6 +10,7 @@ use std::env;
 use std::fmt::Display;
 use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -26,6 +27,17 @@ use exchange_protocol::{
     decode_voice_input_audio, decode_voice_status, encode_voice_control, encode_voice_status,
     read_frame, write_frame,
 };
+
+fn authored_audio_path(caller: u8, callee: u8) -> Option<PathBuf> {
+    stories::bela_bose::audio_path(caller, callee)
+        .or_else(|| stories::dirty_work::audio_path(caller, callee))
+}
+
+fn authored_audio_duration_seconds(caller: u8, callee: u8) -> Option<u64> {
+    stories::bela_bose::audio_duration_seconds(caller, callee)
+        .or_else(|| stories::dirty_work::audio_duration_seconds(caller, callee))
+}
+
 mod calls;
 mod config;
 mod hardware;
@@ -1219,12 +1231,11 @@ impl Backend {
         };
         let neel_story = self.neel_story_active();
         let neel_audio = neel_story && stories::bela_bose::audio_path(caller, callee).is_some();
-        let has_opening_audio = if neel_story {
+        let authored_audio = authored_audio_path(caller, callee).is_some();
+        let has_opening_audio = if neel_audio {
             tap_audio && neel_audio
         } else {
-            self.story_enabled
-                && (Self::opening_dialogue(caller).is_some()
-                    || stories::bela_bose::audio_path(caller, callee).is_some())
+            self.story_enabled && (Self::opening_dialogue(caller).is_some() || authored_audio)
         };
         let phase = self.calls[index].phase.clone();
         self.log(
@@ -1246,7 +1257,7 @@ impl Backend {
         let Some(call) = self.calls.get_mut(index) else {
             return;
         };
-        if neel_story && !has_opening_audio {
+        if neel_audio && !has_opening_audio {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
@@ -1256,12 +1267,11 @@ impl Backend {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
-            call.audio_duration_seconds =
-                if stories::bela_bose::audio_path(caller, callee).is_some() {
-                    stories::bela_bose::audio_duration_seconds(caller, callee).unwrap_or(1)
-                } else {
-                    2
-                };
+            call.audio_duration_seconds = if authored_audio_path(caller, callee).is_some() {
+                authored_audio_duration_seconds(caller, callee).unwrap_or(1)
+            } else {
+                2
+            };
         } else {
             call.phase = CallPhase::Held;
             call.connected_at = None;
@@ -1327,7 +1337,7 @@ impl Backend {
         config: GameConfig,
         caller: u8,
         callee: u8,
-        tap_audio: bool,
+        _tap_audio: bool,
     ) -> Result<Vec<i16>, VoiceError> {
         let caller_profile = config
             .subscribers
@@ -1343,8 +1353,7 @@ impl Backend {
             .ok_or_else(|| {
                 VoiceError::new("subscriber_not_configured", "callee is not configured")
             })?;
-        if tap_audio
-            && let Some(path) = stories::bela_bose::audio_path(caller, callee)
+        if let Some(path) = authored_audio_path(caller, callee)
             && path.is_file()
         {
             let output = Command::new("ffmpeg")
@@ -2507,7 +2516,8 @@ fn classify_dirty_work(transcript: &str) -> Result<stories::dirty_work::Outcome,
         )
     })?;
     let mut classifier = CommandTextClassifier::new(CommandSpec::from_words(&command)?);
-    let word = classifier.classify(stories::dirty_work::OUTCOME_CLASSIFIER_PROMPT, transcript)?;
+    let report = format!("REPORT START\n{transcript}\nREPORT END");
+    let word = classifier.classify(stories::dirty_work::OUTCOME_CLASSIFIER_PROMPT, &report)?;
     Ok(stories::dirty_work::Outcome::parse(&word))
 }
 

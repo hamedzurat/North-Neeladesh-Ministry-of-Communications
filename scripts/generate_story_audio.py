@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the non-realtime Neel University story recordings.
+"""Generate the non-realtime recordings used by story wiretaps.
 
 The voice IDs are read from exchange.toml so changing a subscriber profile and
 rerunning this command regenerates the authored recordings without changing
@@ -53,11 +53,7 @@ def write_wav(path: Path, samples: list[int]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=ROOT / "exchange.toml")
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=ROOT / "assets" / "stories" / "bela_bose",
-    )
+    parser.add_argument("--output", type=Path, default=ROOT / "assets" / "stories")
     args = parser.parse_args()
     sys.path.insert(0, str(ROOT / "python"))
     with args.config.open("rb") as source:
@@ -66,7 +62,11 @@ def main() -> int:
     kashem_voice, kashem_name = profile(config, 2)
     arnab_voice, arnab_name = profile(config, 3)
     bela_voice, _ = profile(config, 4)
-    recordings = {
+    farhana_voice, _ = profile(config, 7)
+    tariq_voice, _ = profile(config, 8)
+    kamal_voice, kamal_name = profile(config, 9)
+    rehana_voice, _ = profile(config, 10)
+    bela_recordings = {
         "professor_arnab.wav": [
             (kashem_voice, f"{kashem_name}: I would like to speak with {arnab_name}."),
             (arnab_voice, "Arnab: Hello."),
@@ -80,13 +80,13 @@ def main() -> int:
             (bela_voice, "I am Bela Bose, but I do not know Arnab Bhattacharjee."),
         ],
     }
-    for filename, segments in recordings.items():
-        output = args.output / filename
+    for filename, segments in bela_recordings.items():
+        output = args.output / "bela_bose" / filename
         samples = [sample for voice_id, text in segments for sample in synthesize(voice_id, text)]
         write_wav(output, samples)
         print(f"wrote {output}")
 
-    success = args.output / "belabose_success.m4a"
+    success = args.output / "bela_bose" / "belabose_success.m4a"
     if success.exists():
         duration = subprocess.check_output(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(success)],
@@ -95,6 +95,29 @@ def main() -> int:
         print(f"using supplied {success} ({duration}s)")
     else:
         print(f"place the supplied correct recording at {success}")
+
+    dirty_recordings = {
+        "kamal_farhana.wav": [
+            (kamal_voice, f"{kamal_name}: I would like to place a short obituary notice for a former colleague."),
+            (farhana_voice, "Farhana: Of course. Please give me the name and the details you would like printed."),
+            (kamal_voice, f"{kamal_name}: Thank you. It is an ordinary notice; I appreciate your help."),
+        ],
+        "tariq_farhana.wav": [
+            (tariq_voice, "Tariq: I need to report rotten grain at Koyal Market Depot."),
+            (tariq_voice, "Tariq: The merchants are hiding what happened, and I have signed delivery slips."),
+            (tariq_voice, "Tariq: Please protect my name when you investigate the report."),
+        ],
+        "rehana_farhana.wav": [
+            (rehana_voice, "Rehana: I am calling because my newspaper insert was missing this morning."),
+            (farhana_voice, "Farhana: I am sorry about that. We will make sure the next copy includes it."),
+            (rehana_voice, "Rehana: Thank you. That is all I needed to know."),
+        ],
+    }
+    for filename, segments in dirty_recordings.items():
+        output = args.output / "dirty_work" / filename
+        samples = [sample for voice_id, text in segments for sample in synthesize(voice_id, text)]
+        write_wav(output, samples)
+        print(f"wrote {output}")
     return 0
 
 
