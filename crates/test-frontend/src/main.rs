@@ -1435,13 +1435,17 @@ fn run_neel_story(
         text: "You connect Neel University to the Operator.",
     })?;
     let mut turns = Vec::new();
-    let question = player_utterance(
-        player_command,
-        &professor,
-        revision,
-        &turns,
-        "ask Prof. Kashem where he wants to be connected",
-    )?;
+    let question = if path == "neel_professor_questions" {
+        "What subject do you teach?".to_string()
+    } else {
+        player_utterance(
+            player_command,
+            &professor,
+            revision,
+            &turns,
+            "ask Prof. Kashem where he wants to be connected",
+        )?
+    };
     let answer = send_text(
         text,
         TextInputMessage {
@@ -1815,12 +1819,18 @@ fn run_neel_story(
     for turn in 0..2 {
         let task = if turn == 0 {
             "ask Arnab who he wants to be connected to"
+        } else if path == "neel_arnab_unrelated_questions" {
+            "ask Arnab an unrelated personal question about his favorite food"
         } else if path.contains("questions") {
             "ask Arnab whether Bela Bose has a cat"
         } else {
             "ask Arnab whether he knows Bela Bose's directory ID"
         };
-        let utterance = player_utterance(player_command, &arnab, revision, &arnab_turns, task)?;
+        let utterance = if path == "neel_arnab_unrelated_questions" && turn == 1 {
+            "What is your favorite food?".to_string()
+        } else {
+            player_utterance(player_command, &arnab, revision, &arnab_turns, task)?
+        };
         let response = send_text(
             text,
             TextInputMessage {
