@@ -50,7 +50,7 @@ fn reset_preserves_demo_call_capacity() {
 }
 
 #[test]
-fn intertwined_story_calls_retry_after_patience_expiry() {
+fn both_stories_callers_retry_after_patience_expiry() {
     let mut backend = Backend::new_exchange();
     let first = backend.apply_input_message(first_input(&backend));
     assert_eq!(first.output.calls.len(), 2);

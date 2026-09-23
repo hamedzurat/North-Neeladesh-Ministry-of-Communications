@@ -40,19 +40,16 @@ fn cord(first: PortId, second: PortId) -> CordConnection {
 }
 
 #[test]
-fn neel_thread_selects_professor_routing_and_authored_directory_records() {
+fn registered_stories_start_with_professor_routing_and_authored_directory_records() {
     let mut backend = Backend::new_exchange();
-    let selected = backend.apply_debug_command(DebugRequest {
+    let reset = backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
-        command: DebugCommand::SelectStoryThread {
-            thread_id: "intertwined".into(),
-        },
+        command: DebugCommand::ResetRun,
     });
 
-    assert!(selected.accepted);
-    assert_eq!(selected.snapshot.story_thread, "intertwined");
-    assert_eq!(selected.snapshot.story_beat, "Intertwined");
-    assert_eq!(selected.snapshot.neel_story_beat, "ProfessorRouting");
+    assert!(reset.accepted);
+    assert_eq!(reset.snapshot.shapla_story_beat, "EmergencyCall");
+    assert_eq!(reset.snapshot.neel_story_beat, "ProfessorRouting");
 
     let response = backend.apply_input_message(input(&backend, 1, vec![], [1, 0, 3, 1]));
     assert!(response.accepted);
@@ -82,9 +79,7 @@ fn professor_must_wait_for_delayed_ring_activation_before_direct_connection() {
     let mut backend = Backend::new_exchange();
     backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
-        command: DebugCommand::SelectStoryThread {
-            thread_id: "intertwined".into(),
-        },
+        command: DebugCommand::ResetRun,
     });
     let response = backend.apply_input_message(input(&backend, 1, vec![], [0, 0, 0, 1]));
     assert!(
@@ -131,17 +126,14 @@ fn professor_must_wait_for_delayed_ring_activation_before_direct_connection() {
 }
 
 #[test]
-fn intertwined_thread_starts_both_story_calls_together() {
+fn reset_starts_registered_story_calls_together() {
     let mut backend = Backend::new_exchange();
-    let selected = backend.apply_debug_command(DebugRequest {
+    let reset = backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
-        command: DebugCommand::SelectStoryThread {
-            thread_id: "intertwined".into(),
-        },
+        command: DebugCommand::ResetRun,
     });
 
-    assert!(selected.accepted);
-    assert_eq!(selected.snapshot.story_thread, "intertwined");
+    assert!(reset.accepted);
 
     let response = backend.apply_input_message(input(&backend, 1, vec![], [0, 0, 0, 1]));
     let callers = response

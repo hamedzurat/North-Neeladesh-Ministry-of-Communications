@@ -349,9 +349,6 @@ pub struct StateMessage {
 pub enum DebugCommand {
     Snapshot,
     ResetRun,
-    SelectStoryThread {
-        thread_id: String,
-    },
     AdvanceTime {
         seconds: u32,
     },
@@ -398,8 +395,6 @@ pub struct DebugResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DebugSnapshot {
-    pub story_thread: String,
-    pub story_beat: String,
     pub shapla_story_beat: String,
     pub neel_story_beat: String,
     pub story_completed: bool,

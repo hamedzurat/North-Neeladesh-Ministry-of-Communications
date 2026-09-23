@@ -140,19 +140,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut backend = TcpStream::connect(&backend_address)?;
     let mut text = TcpStream::connect(&text_address)?;
     let mut debug = TcpStream::connect(&debug_address)?;
-    let story_thread = "intertwined";
-    let initial_debug = select_story_thread(&mut debug, story_thread)?;
-    if initial_debug.snapshot.story_thread != story_thread
-        || initial_debug.snapshot.story_beat != "Intertwined"
+    let initial_debug = debug_command(&mut debug, DebugCommand::ResetRun)?;
+    if initial_debug.snapshot.shapla_story_beat != "EmergencyCall"
+        || initial_debug.snapshot.neel_story_beat != "ProfessorRouting"
     {
-        return Err("intertwined story selection did not reset correctly".into());
+        return Err("story reset did not initialize registered story threads".into());
     }
     let initial_money = initial_debug.snapshot.money;
     let mut log = GameLog::open(&log_path)?;
-    writeln!(
-        log.file,
-        "=== STORY THREAD: {story_thread} / PATH: {path} ==="
-    )?;
+    writeln!(log.file, "=== TEST PATH: {path} ===")?;
     writeln!(
         log.file,
         "# Each action is followed by TRACE metadata: event, input sequence, backend revision, caller, destination, and result."
@@ -161,8 +157,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         log.file,
         "# Narration describes the simulated human action; transition/money lines describe backend decisions."
     )?;
-    if path == "intertwined_success" {
-        return run_intertwined_story(
+    if path == "cross_thread_success" {
+        return run_cross_thread_success(
             &mut backend,
             &mut text,
             &mut debug,
@@ -691,7 +687,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         final_debug.snapshot.money,
         initial_money,
         final_debug.snapshot.money - initial_money,
-        final_debug.snapshot.story_beat,
+        final_debug.snapshot.shapla_story_beat,
     );
     for entry in &state.output.printer_output {
         if entry.text.contains("MONEY //") {
@@ -751,7 +747,7 @@ fn argument(name: &str) -> Option<String> {
     None
 }
 
-fn run_intertwined_story(
+fn run_cross_thread_success(
     backend: &mut TcpStream,
     text: &mut TcpStream,
     debug: &mut TcpStream,
@@ -772,14 +768,14 @@ fn run_intertwined_story(
         .iter()
         .find(|call| call.caller_line == 1)
         .cloned()
-        .ok_or("intertwined mode did not create the Shapla call")?;
+        .ok_or("cross-thread mode did not create the Shapla call")?;
     let professor = state
         .output
         .calls
         .iter()
         .find(|call| call.caller_line == 2)
         .cloned()
-        .ok_or("intertwined mode did not create the Neel call")?;
+        .ok_or("cross-thread mode did not create the Neel call")?;
     log.row(CsvRow {
         event: "detail",
         sequence,
@@ -872,7 +868,7 @@ fn run_intertwined_story(
     )?;
     if service_response.classification.as_deref() != Some("success") {
         return Err(format!(
-            "intertwined Shapla service was not successful: {:?}",
+            "cross-thread Shapla service was not successful: {:?}",
             service_response.classification
         )
         .into());
@@ -1286,7 +1282,8 @@ fn run_intertwined_story(
         ),
     })?;
     let snapshot = debug_snapshot(debug)?;
-    if snapshot.snapshot.story_beat != "Intertwined"
+    if snapshot.snapshot.shapla_story_beat != "HappyFollowup"
+        || snapshot.snapshot.neel_story_beat != "Completed"
         || snapshot.snapshot.money <= initial_money
         || !state.output.printer_output.iter().any(|entry| {
             entry
@@ -1295,7 +1292,7 @@ fn run_intertwined_story(
         })
     {
         return Err(format!(
-            "intertwined stories did not complete successfully: snapshot={snapshot:?}"
+            "cross-thread stories did not complete successfully: snapshot={snapshot:?}"
         )
         .into());
     }
@@ -2114,29 +2111,6 @@ fn exchange(stream: &mut TcpStream, message: InputMessage) -> io::Result<StateMe
 fn send_text(stream: &mut TcpStream, message: TextInputMessage) -> io::Result<TextResponseMessage> {
     write_frame(stream, &message).map_err(frame_io)?;
     read_frame(stream).map_err(frame_io)
-}
-
-fn select_story_thread(stream: &mut TcpStream, thread_id: &str) -> io::Result<DebugResponse> {
-    write_frame(
-        stream,
-        &DebugRequest {
-            protocol_version: DEBUG_PROTOCOL_VERSION,
-            command: DebugCommand::SelectStoryThread {
-                thread_id: thread_id.into(),
-            },
-        },
-    )
-    .map_err(frame_io)?;
-    let response: DebugResponse = read_frame(stream).map_err(frame_io)?;
-    if !response.accepted {
-        return Err(io::Error::other(
-            response
-                .error
-                .map(|error| error.message)
-                .unwrap_or_else(|| "story selection rejected".into()),
-        ));
-    }
-    Ok(response)
 }
 
 fn debug_snapshot(stream: &mut TcpStream) -> io::Result<DebugResponse> {

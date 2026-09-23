@@ -110,7 +110,6 @@ pub struct Backend {
     story_followup_call_started: bool,
     shapla_story_completed: bool,
     story_completed: bool,
-    story_thread: String,
     story_conversations: HashMap<u8, Vec<ConversationTurn>>,
     ring_active_line: i16,
 }
@@ -214,7 +213,6 @@ impl Backend {
             story_followup_call_started: false,
             shapla_story_completed: false,
             story_completed: false,
-            story_thread: "intertwined".into(),
             story_conversations: HashMap::new(),
             ring_active_line: -1,
         };
@@ -473,8 +471,6 @@ impl Backend {
             })
             .collect();
         DebugSnapshot {
-            story_thread: self.story_thread.clone(),
-            story_beat: self.current_story_beat_name().into(),
             shapla_story_beat: self.shapla_story_beat_name().into(),
             neel_story_beat: self.neel_story_beat.name().into(),
             story_completed: self.story_completed,
@@ -517,10 +513,6 @@ impl Backend {
             },
             recent_errors: self.state.debug.messages.clone(),
         }
-    }
-
-    fn current_story_beat_name(&self) -> &'static str {
-        "Intertwined"
     }
 
     fn shapla_story_beat_name(&self) -> &'static str {
@@ -1177,8 +1169,8 @@ impl Backend {
             return;
         };
         println!(
-            "[TRANSITION] call {} -> {} phase={:?} connect_requested has_opening_audio={} story_thread={}",
-            caller, callee, call.phase, has_opening_audio, self.story_thread
+            "[TRANSITION] call {} -> {} phase={:?} connect_requested has_opening_audio={}",
+            caller, callee, call.phase, has_opening_audio
         );
         if neel_story && !has_opening_audio {
             call.phase = CallPhase::Connected;
@@ -1744,30 +1736,8 @@ impl Backend {
                 audio: None,
             };
         }
-        if let DebugCommand::SelectStoryThread { ref thread_id } = request.command
-            && thread_id != "intertwined"
-        {
-            return DebugResponse {
-                protocol_version: DEBUG_PROTOCOL_VERSION,
-                accepted: false,
-                error: Some(ProtocolError {
-                    code: "unknown_story_thread".into(),
-                    message: format!("unknown story thread: {thread_id}"),
-                }),
-                snapshot: self.debug_snapshot(),
-                audio: None,
-            };
-        }
         match request.command {
             DebugCommand::ResetRun => self.reset_run(),
-            DebugCommand::SelectStoryThread { thread_id } => {
-                println!(
-                    "[TRANSITION] story thread {} -> {}",
-                    self.story_thread, thread_id
-                );
-                self.story_thread = thread_id;
-                self.reset_run();
-            }
             DebugCommand::AdvanceTime { seconds } => {
                 self.debug_elapsed = self.debug_elapsed.saturating_add(u64::from(seconds));
                 self.expire_calls();

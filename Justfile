@@ -14,7 +14,7 @@ story-test-all:
     #!/usr/bin/env bash
     set -euo pipefail
     rm -f story-test-all.log
-    for path in ems_success ems_failure police_success water_no_help unrelated_questions random_conversation neel_direct neel_misdirection neel_professor_questions neel_tap neel_tap_reverse neel_tap_late neel_rewire neel_rewire_late neel_patience neel_arnab_patience neel_bela_1031 neel_bela_1032 neel_bela_1032_questions neel_arnab_unrelated_questions intertwined_success; do
+    for path in ems_success ems_failure police_success water_no_help unrelated_questions random_conversation neel_direct neel_misdirection neel_professor_questions neel_tap neel_tap_reverse neel_tap_late neel_rewire neel_rewire_late neel_patience neel_arnab_patience neel_bela_1031 neel_bela_1032 neel_bela_1032_questions neel_arnab_unrelated_questions cross_thread_success; do
         temp="/tmp/opencode/story-test-${path}.log"
         just story-test "${path}" "$temp"
         cat "$temp" >> story-test-all.log
