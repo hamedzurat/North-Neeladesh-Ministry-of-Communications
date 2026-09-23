@@ -78,7 +78,10 @@ just debug-surface
 Open <http://127.0.0.1:7881> in a browser. The dashboard is an observer and
 development-control surface, not the gameplay UI. It shows the authoritative
 Run, Shift, Calls, exact frontend wire state, Cabinet status,
-diagnostics, and retained voice evidence.
+diagnostics, story state machines, LLM prompts/responses, and retained voice evidence.
+
+For the story-test backend, use `just story-debug-surface`; it connects to the
+story backend's debug port `127.0.0.1:7882` instead of the normal backend port.
 
 Before playing:
 

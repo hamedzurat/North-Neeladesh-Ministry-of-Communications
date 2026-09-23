@@ -485,6 +485,8 @@ pub struct DebugVoiceState {
     pub turn_id: Option<u64>,
     pub transcript: Option<String>,
     pub response_text: Option<String>,
+    pub llm_prompt: Option<String>,
+    pub llm_response: Option<String>,
     pub conversations: Vec<DebugVoiceConversation>,
 }
 
@@ -504,6 +506,8 @@ pub struct DebugVoiceConversation {
     pub tts_samples: u32,
     pub transcript: Option<String>,
     pub response_text: Option<String>,
+    pub llm_prompt: Option<String>,
+    pub llm_response: Option<String>,
     pub error: Option<ProtocolError>,
 }
 

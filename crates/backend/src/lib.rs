@@ -108,6 +108,8 @@ pub struct Backend {
     voice_status: Option<VoiceStatus>,
     voice_transcript: Option<String>,
     voice_response_text: Option<String>,
+    voice_llm_prompt: Option<String>,
+    voice_llm_response: Option<String>,
     voice_speaker_active: bool,
     cancelled_voice_turn: Option<u64>,
     voice_conversations: Vec<DebugVoiceConversation>,
@@ -238,6 +240,8 @@ impl Backend {
             voice_status: None,
             voice_transcript: None,
             voice_response_text: None,
+            voice_llm_prompt: None,
+            voice_llm_response: None,
             voice_speaker_active: false,
             cancelled_voice_turn: None,
             voice_conversations: Vec::new(),
@@ -464,6 +468,8 @@ impl Backend {
         self.voice_state_revision = 0;
         self.voice_transcript = None;
         self.voice_response_text = None;
+        self.voice_llm_prompt = None;
+        self.voice_llm_response = None;
         self.voice_speaker_active = false;
         self.story_beat = stories::fallen_mother::Beat::EmergencyCall;
         self.neel_story_beat = stories::bela_bose::Beat::ProfessorRouting;
@@ -571,6 +577,8 @@ impl Backend {
                 turn_id: (self.voice_turn_id != 0).then_some(self.voice_turn_id),
                 transcript: self.voice_transcript.clone(),
                 response_text: self.voice_response_text.clone(),
+                llm_prompt: self.voice_llm_prompt.clone(),
+                llm_response: self.voice_llm_response.clone(),
                 conversations: self.voice_conversations.clone(),
             },
             frontend: DebugFrontendState {
@@ -2227,6 +2235,8 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                             tts_samples: 0,
                             transcript: None,
                             response_text: None,
+                            llm_prompt: None,
+                            llm_response: None,
                             error: None,
                         });
                         Some(id)
@@ -2337,6 +2347,34 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                             conversation.status =
                                                 Some(VoiceStatus::GeneratingResponse);
                                             conversation.transcript = Some(transcript.to_string());
+                                        }
+                                    }
+                                }
+                            },
+                            &|prompt| {
+                                if let Ok(mut state) = transcript_backend.lock() {
+                                    state.voice_llm_prompt = Some(prompt.to_string());
+                                    if let Some(id) = conversation_id {
+                                        if let Some(conversation) = state
+                                            .voice_conversations
+                                            .iter_mut()
+                                            .find(|conversation| conversation.id == id)
+                                        {
+                                            conversation.llm_prompt = Some(prompt.to_string());
+                                        }
+                                    }
+                                }
+                            },
+                            &|response| {
+                                if let Ok(mut state) = transcript_backend.lock() {
+                                    state.voice_llm_response = Some(response.to_string());
+                                    if let Some(id) = conversation_id {
+                                        if let Some(conversation) = state
+                                            .voice_conversations
+                                            .iter_mut()
+                                            .find(|conversation| conversation.id == id)
+                                        {
+                                            conversation.llm_response = Some(response.to_string());
                                         }
                                     }
                                 }
@@ -2586,6 +2624,8 @@ fn generate_operator_response(
     samples: Vec<i16>,
     service_turn: bool,
     transcript_sink: &dyn Fn(&str),
+    llm_prompt_sink: &dyn Fn(&str),
+    llm_response_sink: &dyn Fn(&str),
 ) -> Result<(String, String, Vec<i16>), VoiceError> {
     if samples.is_empty() {
         return Ok((String::new(), String::new(), Vec::new()));
@@ -2603,7 +2643,10 @@ fn generate_operator_response(
     if service_turn {
         return Ok((transcript, String::new(), Vec::new()));
     }
+    let prompt = dialogue_prompt_json(&context, &transcript)?;
+    llm_prompt_sink(&prompt);
     let response = generate_dialogue(&context, &transcript)?;
+    llm_response_sink(&response);
     let audio = with_persistent_pocket_tts(|tts| {
         tts.synthesize(&format!("pocket-line-{caller}"), &response)
     })?;
@@ -2614,6 +2657,14 @@ fn generate_operator_response(
         ));
     }
     Ok((transcript, response, audio))
+}
+
+fn dialogue_prompt_json(context: &ResponseContext, transcript: &str) -> Result<String, VoiceError> {
+    serde_json::to_string(&serde_json::json!({
+        "context": context,
+        "transcript": transcript,
+    }))
+    .map_err(|error| VoiceError::new("dialogue_request_failed", error.to_string()))
 }
 
 fn generate_dialogue(context: &ResponseContext, transcript: &str) -> Result<String, VoiceError> {
@@ -2814,6 +2865,13 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
         let response = if let Some((code, message)) = error {
             text_error(&request, code, message)
         } else {
+            let llm_prompt = if service_turn {
+                None
+            } else {
+                context
+                    .as_ref()
+                    .and_then(|context| dialogue_prompt_json(context, &request.text).ok())
+            };
             let generated = if service_turn {
                 Ok(String::new())
             } else {
@@ -2832,6 +2890,9 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
                         state.voice_status = Some(VoiceStatus::Completed);
                         state.voice_transcript = Some(request.text.clone());
                         state.voice_response_text = Some(response_text.clone());
+                        state.voice_llm_prompt = llm_prompt.clone();
+                        state.voice_llm_response =
+                            (!response_text.is_empty()).then_some(response_text.clone());
                         let conversation_id = state.next_voice_conversation_id;
                         state.next_voice_conversation_id =
                             state.next_voice_conversation_id.wrapping_add(1);
@@ -2852,6 +2913,9 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
                             tts_samples: 0,
                             transcript: Some(request.text.clone()),
                             response_text: Some(response_text.clone()),
+                            llm_prompt,
+                            llm_response: (!response_text.is_empty())
+                                .then_some(response_text.clone()),
                             error: None,
                         });
                     }

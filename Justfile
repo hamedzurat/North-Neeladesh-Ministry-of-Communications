@@ -47,6 +47,9 @@ odin: frontend
 debug-surface backend_address="127.0.0.1:7880" address="127.0.0.1:7881":
     cargo run -p exchange-debug-surface -- --backend {{ backend_address }} --bind {{ address }}
 
+story-debug-surface backend_address="127.0.0.1:7882" address="127.0.0.1:7881":
+    cargo run -p exchange-debug-surface -- --backend {{ backend_address }} --bind {{ address }}
+
 frontend-trace backend_address="127.0.0.1:7878": frontend-build
     NN_BACKEND_ADDRESS={{ backend_address }} NN_FRONTEND_TRACE=1 ./target/north-neeladesh-frontend
 
