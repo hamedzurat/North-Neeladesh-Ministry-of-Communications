@@ -24,13 +24,6 @@ impl Beat {
         }
     }
 
-    pub const fn patience_seconds(self) -> u64 {
-        match self {
-            Self::ProfessorRouting | Self::ArnabDirectory => 32,
-            Self::Completed => 0,
-        }
-    }
-
     pub const fn dialogue_prompt(self) -> &'static str {
         match self {
             Self::ProfessorRouting => PROFESSOR_DIALOGUE_PROMPT,

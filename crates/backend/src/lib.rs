@@ -221,16 +221,12 @@ impl Backend {
             .unwrap_or(&self.config.subscribers[0])
     }
 
-    fn intertwined(&self) -> bool {
-        self.story_enabled && self.story_thread == "intertwined"
-    }
-
     fn neel_story_active(&self) -> bool {
-        self.story_thread == "neel_university" || self.intertwined()
+        self.story_enabled
     }
 
     fn shapla_story_active(&self) -> bool {
-        self.story_thread == "shapla_apartments" || self.intertwined()
+        self.story_enabled
     }
 
     fn is_neel_caller(&self, caller: u8) -> bool {
@@ -438,19 +434,7 @@ impl Backend {
     }
 
     fn story_caller(&self) -> u8 {
-        if self.neel_story_active() && !self.intertwined() {
-            match self.neel_story_beat {
-                stories::neel_university::Beat::ProfessorRouting => {
-                    stories::neel_university::NEEL_LINE
-                }
-                stories::neel_university::Beat::ArnabDirectory => {
-                    stories::neel_university::SHADHIN_LINE
-                }
-                stories::neel_university::Beat::Completed => stories::neel_university::SHADHIN_LINE,
-            }
-        } else {
-            stories::shapla_apartments::CALLER_LINE
-        }
+        stories::shapla_apartments::CALLER_LINE
     }
 
     fn story_requested_callee(&self) -> u8 {
@@ -616,18 +600,7 @@ impl Backend {
     }
 
     fn current_story_beat_name(&self) -> &'static str {
-        if self.intertwined() {
-            "Intertwined"
-        } else if self.story_thread == "neel_university" {
-            self.neel_story_beat.name()
-        } else {
-            match self.story_beat {
-                stories::shapla_apartments::Beat::EmergencyCall => "EmergencyCall",
-                stories::shapla_apartments::Beat::HappyFollowup => "HappyFollowup",
-                stories::shapla_apartments::Beat::NeutralFollowup => "NeutralFollowup",
-                stories::shapla_apartments::Beat::BadFollowup => "BadFollowup",
-            }
-        }
+        "Intertwined"
     }
 
     fn shapla_story_beat_name(&self) -> &'static str {
@@ -960,39 +933,8 @@ impl Backend {
     }
 
     fn expire_story(&mut self) {
-        if !self.story_enabled {
-            return;
-        }
-        if self.intertwined() {
-            // Intertwined stories wait independently. Playing Shapla must not
-            // expire Neel into a completed state before the operator reaches it.
-            return;
-        }
-        if self.calls.iter().any(|call| {
-            call.caller == self.story_caller()
-                && !matches!(call.phase, CallPhase::Waiting | CallPhase::Missed)
-        }) {
-            return;
-        }
-        let patience = if self.story_thread == "neel_university" {
-            self.neel_story_beat.patience_seconds()
-        } else {
-            self.story_beat.patience_seconds()
-        };
-        if patience > 0
-            && self.elapsed_seconds() as u64
-                >= self.story_started_elapsed_seconds.saturating_add(patience)
-        {
-            if self.story_thread == "neel_university" {
-                println!(
-                    "[TRANSITION] Neel beat {:?} patience expired -> retry",
-                    self.neel_story_beat
-                );
-            } else {
-                self.story_beat = stories::shapla_apartments::Beat::BadFollowup;
-            }
-            self.story_started_elapsed_seconds = self.elapsed_seconds() as u64;
-        }
+        // Story callers are retained independently and do not expire while
+        // the other story is being played.
     }
 
     fn cancel_voice_if_operator_disconnected(&mut self, input: &InputState) {
@@ -1134,8 +1076,8 @@ impl Backend {
             }
             self.calls.remove(index);
             if self.story_followup_call_started {
-                self.story_completed = !self.intertwined()
-                    || self.neel_story_beat == stories::neel_university::Beat::Completed;
+                self.story_completed =
+                    self.neel_story_beat == stories::neel_university::Beat::Completed;
             }
             return None;
         }
@@ -1532,9 +1474,9 @@ impl Backend {
                     self.neel_story_beat, call.caller, call.callee
                 );
                 self.neel_story_beat = stories::neel_university::Beat::Completed;
-                self.story_completed = !self.intertwined()
-                    || (self.story_beat == stories::shapla_apartments::Beat::HappyFollowup
-                        && self.story_followup_call_started);
+                self.story_completed = self.story_beat
+                    == stories::shapla_apartments::Beat::HappyFollowup
+                    && self.story_followup_call_started;
                 if call.callee == stories::neel_university::BELA_CAT_LINE {
                     self.earned += 100;
                     self.money += 100;
@@ -1701,28 +1643,18 @@ impl Backend {
         self.state.line_lamps = [false; 12];
     }
 
-    fn refill_calls(&mut self, count: usize) {
+    fn refill_calls(&mut self, _count: usize) {
         self.ensure_story_call();
-        let story_slots = if self.story_enabled && self.intertwined() {
-            2
-        } else if self.story_enabled && self.story_thread == "neel_university" {
-            2
-        } else if self.story_enabled {
-            1
+        let target_count = if self.story_enabled {
+            2.min(self.call_target)
         } else {
-            0
-        };
-        let ordinary_count = if self.intertwined() {
-            0
-        } else {
-            count.saturating_sub(story_slots)
+            _count.min(self.call_target)
         };
         let starting_shift = self.state.shift.phase != ShiftPhase::Active;
         if self.state.shift.phase == ShiftPhase::Settled {
             self.state.shift.number = self.state.shift.number.saturating_add(1);
             self.state.clock.shift = self.state.shift.number;
             self.state.shift.phase = ShiftPhase::Ready;
-            self.state.shift.completed_routings = 0;
             self.resolved = 0;
             self.completed = 0;
             self.missed = 0;
@@ -1736,8 +1668,6 @@ impl Backend {
             self.next_call_arrival_elapsed_seconds = self.shift_started_elapsed_seconds;
         }
         let now = self.elapsed_seconds() as u64;
-        let target_count = ordinary_count.min(self.call_target)
-            + story_slots.min(if self.intertwined() { 2 } else { 1 });
         while self.calls.len() < target_count
             && self.state.shift.number <= 3
             && now >= self.next_call_arrival_elapsed_seconds
@@ -1766,101 +1696,59 @@ impl Backend {
     }
 
     fn ensure_story_call(&mut self) {
-        if !self.story_enabled || (self.story_completed && !self.intertwined()) {
-            return;
-        }
-        if self.intertwined() {
-            let now = self.elapsed_seconds() as u64;
-            let shapla_completed = self.story_beat
-                == stories::shapla_apartments::Beat::HappyFollowup
-                && self.story_followup_call_started;
-            if !shapla_completed
-                && self.story_beat != stories::shapla_apartments::Beat::BadFollowup
-                && !self.calls.iter().any(|call| call.caller == 1)
-            {
-                if self.story_beat == stories::shapla_apartments::Beat::HappyFollowup {
-                    self.story_followup_call_started = true;
-                }
-                self.calls.push(ActiveCall {
-                    caller: 1,
-                    callee: 0,
-                    phase: CallPhase::Waiting,
-                    deadline: now + u64::MAX / 2,
-                    started_elapsed_seconds: now,
-                    connected_at: None,
-                    connected_elapsed_seconds: None,
-                    ring_started_at: None,
-                    ring_ready_at: None,
-                    ring_activated: false,
-                    disconnected_at: None,
-                    audio_duration_seconds: 0,
-                });
-            }
-            if self.neel_story_beat != stories::neel_university::Beat::Completed
-                && !self
-                    .calls
-                    .iter()
-                    .any(|call| self.is_neel_caller(call.caller))
-            {
-                let caller = self.story_caller_for_neel();
-                self.calls.push(ActiveCall {
-                    caller,
-                    callee: self.story_requested_callee(),
-                    phase: CallPhase::Waiting,
-                    deadline: now
-                        + if self.intertwined() {
-                            u64::MAX / 2
-                        } else {
-                            self.neel_story_beat.patience_seconds()
-                        },
-                    started_elapsed_seconds: now,
-                    connected_at: None,
-                    connected_elapsed_seconds: None,
-                    ring_started_at: None,
-                    ring_ready_at: None,
-                    ring_activated: false,
-                    disconnected_at: None,
-                    audio_duration_seconds: 0,
-                });
-            }
-            return;
-        }
-        let caller = self.story_caller();
-        if self.calls.iter().any(|call| call.caller == caller) {
-            return;
-        }
-        if self.story_followup_pending {
-            self.story_followup_call_started = true;
-        }
-        if self.story_thread == "neel_university"
-            && self.neel_story_beat == stories::neel_university::Beat::Completed
-        {
+        if !self.story_enabled {
             return;
         }
         let now = self.elapsed_seconds() as u64;
-        self.calls.push(ActiveCall {
-            caller,
-            callee: if self.story_thread == "neel_university" {
-                self.story_requested_callee()
-            } else {
-                0
-            },
-            phase: CallPhase::Waiting,
-            deadline: now
-                + if self.story_thread == "neel_university" {
-                    self.neel_story_beat.patience_seconds()
-                } else {
-                    u64::MAX - now
-                },
-            started_elapsed_seconds: now,
-            connected_at: None,
-            connected_elapsed_seconds: None,
-            ring_started_at: None,
-            ring_ready_at: None,
-            ring_activated: false,
-            disconnected_at: None,
-            audio_duration_seconds: 0,
-        });
+        let shapla_completed = self.story_beat == stories::shapla_apartments::Beat::HappyFollowup
+            && self.story_followup_call_started;
+        if !shapla_completed
+            && self.story_beat != stories::shapla_apartments::Beat::BadFollowup
+            && !self
+                .calls
+                .iter()
+                .any(|call| call.caller == stories::shapla_apartments::CALLER_LINE)
+        {
+            if self.story_beat == stories::shapla_apartments::Beat::HappyFollowup {
+                self.story_followup_call_started = true;
+            }
+            self.calls.push(ActiveCall {
+                caller: stories::shapla_apartments::CALLER_LINE,
+                callee: 0,
+                phase: CallPhase::Waiting,
+                deadline: now + u64::MAX / 2,
+                started_elapsed_seconds: now,
+                connected_at: None,
+                connected_elapsed_seconds: None,
+                ring_started_at: None,
+                ring_ready_at: None,
+                ring_activated: false,
+                disconnected_at: None,
+                audio_duration_seconds: 0,
+            });
+        }
+        if self.neel_story_beat != stories::neel_university::Beat::Completed
+            && !self
+                .calls
+                .iter()
+                .any(|call| self.is_neel_caller(call.caller))
+        {
+            let caller = self.story_caller_for_neel();
+            self.calls.push(ActiveCall {
+                caller,
+                callee: self.story_requested_callee(),
+                phase: CallPhase::Waiting,
+                deadline: now + u64::MAX / 2,
+                started_elapsed_seconds: now,
+                connected_at: None,
+                connected_elapsed_seconds: None,
+                ring_started_at: None,
+                ring_ready_at: None,
+                ring_activated: false,
+                disconnected_at: None,
+                audio_duration_seconds: 0,
+            });
+        }
     }
 
     fn story_caller_for_neel(&self) -> u8 {

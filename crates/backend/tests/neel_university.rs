@@ -45,13 +45,14 @@ fn neel_thread_selects_professor_routing_and_authored_directory_records() {
     let selected = backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
         command: DebugCommand::SelectStoryThread {
-            thread_id: "neel_university".into(),
+            thread_id: "intertwined".into(),
         },
     });
 
     assert!(selected.accepted);
-    assert_eq!(selected.snapshot.story_thread, "neel_university");
-    assert_eq!(selected.snapshot.story_beat, "ProfessorRouting");
+    assert_eq!(selected.snapshot.story_thread, "intertwined");
+    assert_eq!(selected.snapshot.story_beat, "Intertwined");
+    assert_eq!(selected.snapshot.neel_story_beat, "ProfessorRouting");
 
     let response = backend.apply_input_message(input(&backend, 1, vec![], [1, 0, 3, 1]));
     assert!(response.accepted);
@@ -82,7 +83,7 @@ fn professor_must_wait_for_delayed_ring_activation_before_direct_connection() {
     backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
         command: DebugCommand::SelectStoryThread {
-            thread_id: "neel_university".into(),
+            thread_id: "intertwined".into(),
         },
     });
     let response = backend.apply_input_message(input(&backend, 1, vec![], [0, 0, 0, 1]));
@@ -119,8 +120,13 @@ fn professor_must_wait_for_delayed_ring_activation_before_direct_connection() {
     let response = backend.apply_input_message(input(&backend, 5, direct, [0, 0, 0, 3]));
     assert!(response.accepted);
     assert_eq!(
-        response.output.calls[0].phase,
-        exchange_protocol::CallPhase::Connected
+        response
+            .output
+            .calls
+            .iter()
+            .find(|call| call.caller_line == 2)
+            .map(|call| call.phase.clone()),
+        Some(exchange_protocol::CallPhase::Connected)
     );
 }
 

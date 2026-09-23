@@ -140,22 +140,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut backend = TcpStream::connect(&backend_address)?;
     let mut text = TcpStream::connect(&text_address)?;
     let mut debug = TcpStream::connect(&debug_address)?;
-    let story_thread = if path == "intertwined_success" {
-        "intertwined"
-    } else if path.starts_with("neel_") {
-        "neel_university"
-    } else {
-        "shapla_apartments"
-    };
+    let story_thread = "intertwined";
     let initial_debug = select_story_thread(&mut debug, story_thread)?;
     if initial_debug.snapshot.story_thread != story_thread
-        || (story_thread == "shapla_apartments"
-            && initial_debug.snapshot.story_beat != "EmergencyCall")
-        || (story_thread == "neel_university"
-            && initial_debug.snapshot.story_beat != "ProfessorRouting")
-        || (story_thread == "intertwined" && initial_debug.snapshot.story_beat != "Intertwined")
+        || initial_debug.snapshot.story_beat != "Intertwined"
     {
-        return Err("thread selection did not reset to EmergencyCall".into());
+        return Err("intertwined story selection did not reset correctly".into());
     }
     let initial_money = initial_debug.snapshot.money;
     let mut log = GameLog::open(&log_path)?;
@@ -163,7 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         log.file,
         "=== STORY THREAD: {story_thread} / PATH: {path} ==="
     )?;
-    if story_thread == "intertwined" {
+    if path == "intertwined_success" {
         return run_intertwined_story(
             &mut backend,
             &mut text,
@@ -173,7 +163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             initial_money,
         );
     }
-    if story_thread == "neel_university" {
+    if path.starts_with("neel_") {
         return run_neel_story(
             &mut backend,
             &mut text,

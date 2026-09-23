@@ -73,13 +73,6 @@ pub enum Beat {
 }
 
 impl Beat {
-    pub const fn patience_seconds(self) -> u64 {
-        match self {
-            Self::EmergencyCall => 0,
-            Self::HappyFollowup | Self::NeutralFollowup | Self::BadFollowup => 0,
-        }
-    }
-
     pub const fn opening_dialogue(self) -> Option<&'static str> {
         match self {
             Self::EmergencyCall => Some(OPENING_DIALOGUE),
