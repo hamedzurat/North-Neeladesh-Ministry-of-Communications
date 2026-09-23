@@ -37,6 +37,11 @@ def task_guidance(task: str) -> str:
             "Report the rotten grain corruption and explicitly name both Tariq and Salim. "
             "Mention that Tariq has signed delivery slips."
         )
+    if "confirm" in lowered and "identity" in lowered:
+        return (
+            "Acknowledge that Rahman is Agent Rahman of the Secret Police Directorate, then ask "
+            "what the surveillance assignment is. Do not ask for his name again."
+        )
     if "water" in lowered:
         return (
             "This is a water-only response. Mention water naturally. Do not mention "

@@ -1385,6 +1385,15 @@ fn run_cross_thread_nahid(
         ),
     )?;
     revision = state.state_revision;
+    log.row(CsvRow {
+        event: "operator",
+        sequence,
+        revision,
+        caller: 11,
+        destination: nahid.requested_callee_line,
+        status: "accepted",
+        text: "You connect Nahid's line to the Operator and question him.",
+    })?;
     let mut turns = Vec::new();
     for (turn_id, task) in [
         "ask Nahid to explain who he is and where he is calling from",
@@ -1464,6 +1473,20 @@ fn run_cross_thread_nahid(
         status: "success",
         text: report,
     })?;
+    state = exchange(
+        backend,
+        input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+    )?;
+    revision = state.state_revision;
+    log.row(CsvRow {
+        event: "disconnect",
+        sequence,
+        revision,
+        caller: 11,
+        destination: nahid.requested_callee_line,
+        status: "accepted",
+        text: "Nahid's line disconnects after the successful Police report.",
+    })?;
     Ok(())
 }
 
@@ -1524,7 +1547,7 @@ fn run_dirty_work(
 
     for (turn_id, task) in [
         "answer Agent Rahman with your name",
-        "confirm your name and acknowledge the instruction",
+        "confirm Agent Rahman's identity and acknowledge the surveillance instruction without asking him to repeat his name",
     ]
     .into_iter()
     .enumerate()
@@ -1575,7 +1598,7 @@ fn run_dirty_work(
         caller: 6,
         destination: 0,
         status: "accepted",
-        text: "You disconnect Agent Rahman after receiving the instruction.",
+        text: "You release Agent Rahman's line and begin the authorized monitoring assignment.",
     })?;
 
     for (caller, callee, label, tasks) in [
@@ -1615,7 +1638,7 @@ fn run_dirty_work(
             caller,
             destination: callee,
             status: "accepted",
-            text: label,
+            text: &format!("You prepare the monitor TAP for {label}"),
         })?;
         let _ = tasks;
         state = route_tap_call(backend, debug, &mut sequence, revision, caller, callee)?;
@@ -1627,7 +1650,7 @@ fn run_dirty_work(
             caller,
             destination: callee,
             status: "accepted",
-            text: label,
+            text: &format!("TAP monitors the prerecorded conversation: {label}"),
         })?;
     }
 
@@ -1741,6 +1764,15 @@ fn run_nahid(
             call.requested_callee_line,
         )?;
         revision = state.state_revision;
+        log.row(CsvRow {
+            event: "audio",
+            sequence,
+            revision,
+            caller: 11,
+            destination: call.requested_callee_line,
+            status: "accepted",
+            text: "Nahid's prerecorded scam conversation played over the monitor TAP.",
+        })?;
     }
 
     if path == "nahid_police_success" {
@@ -1762,6 +1794,15 @@ fn run_nahid(
             ),
         )?;
         revision = state.state_revision;
+        log.row(CsvRow {
+            event: "operator",
+            sequence,
+            revision,
+            caller: 11,
+            destination: call.requested_callee_line,
+            status: "accepted",
+            text: "You connect Nahid's line to the Operator before reporting him.",
+        })?;
         let report = "Nahid is running a bKash scam from Shonarpara Exchange Tower. Send police.";
         let response = send_text(
             text,
@@ -1792,6 +1833,20 @@ fn run_nahid(
             destination: 0,
             status: "success",
             text: report,
+        })?;
+        state = exchange(
+            backend,
+            input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+        )?;
+        revision = state.state_revision;
+        log.row(CsvRow {
+            event: "disconnect",
+            sequence,
+            revision,
+            caller: 11,
+            destination: call.requested_callee_line,
+            status: "accepted",
+            text: "Nahid's line disconnects after the successful Police report.",
         })?;
     } else {
         let snapshot = debug_snapshot(debug)?;
@@ -2242,7 +2297,13 @@ fn run_neel_story(
             )?;
             revision = state.state_revision;
             if path.contains("late") {
-                let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 6 })?;
+                // The first advance moves halfway through the recording. Move past
+                // the remaining audio plus the five-second TAP rewire window so
+                // this path is deterministic for recordings of any authored length.
+                let remaining = first_audio_duration
+                    .saturating_sub(first_audio_duration / 2)
+                    .saturating_add(6) as u32;
+                let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: remaining })?;
             }
         }
         state = exchange(
@@ -2343,7 +2404,7 @@ fn run_neel_story(
         destination: 3,
         status: "accepted",
         text: &format!(
-            "The direct Professor connection played no audio; both connected lines remained active for the authored {}-second duration.",
+            "The operator hears no direct-call mix; the authored Professor recording runs for {} seconds on the connected lines.",
             first_audio_duration
         ),
     })?;
@@ -2519,7 +2580,7 @@ fn run_neel_story(
         destination,
         status: "accepted",
         text: &format!(
-            "The direct Bela connection played no audio; LINE 3 and LINE {destination} remained active for the authored {audio_duration}-second duration."
+            "The operator hears no direct-call mix; the authored Bela recording runs for {audio_duration} seconds on LINE 3 and LINE {destination}."
         ),
     })?;
     let _ = debug_command(
