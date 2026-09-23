@@ -1084,8 +1084,13 @@ impl Backend {
         let Some(caller) = self.voice_subscriber_line else {
             return;
         };
-        if !((self.shapla_story_active() && caller == stories::shapla_apartments::CALLER_LINE)
-            || self.is_neel_caller(caller))
+        if !self.story_enabled
+            || !matches!(
+                caller,
+                stories::shapla_apartments::CALLER_LINE
+                    | stories::neel_university::NEEL_LINE
+                    | stories::neel_university::SHADHIN_LINE
+            )
         {
             return;
         }
