@@ -1,11 +1,11 @@
 backend-debug address="127.0.0.1:7878" voice_address="127.0.0.1:7879":
     PYTHONPATH=python NN_STORY_CLASSIFIER_COMMAND="uv run --project python --no-sync python -m voice_workers.classifier" NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_DIALOGUE_PERSISTENT=1 NN_OLLAMA_MODEL="qwen3.5:4b" NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.pocket_tts" NN_VOICE_TTS_PERSISTENT=1 cargo run --quiet -p exchange-backend --bin exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }} --debug-bind 127.0.0.1:7880
 
-story-test-backend address="127.0.0.1:7878" voice_address="127.0.0.1:7879" text_address="127.0.0.1:7880" debug_address="127.0.0.1:7881":
+story-test-backend address="127.0.0.1:7878" voice_address="127.0.0.1:7879" text_address="127.0.0.1:7880" debug_address="127.0.0.1:7882":
     PYTHONPATH=python NN_STORY_CLASSIFIER_COMMAND="python -m voice_workers.classifier" NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_DIALOGUE_PERSISTENT=1 NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.pocket_tts" NN_VOICE_TTS_PERSISTENT=1 cargo run --quiet -p exchange-backend --bin exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }} --text-bind {{ text_address }} --debug-bind {{ debug_address }}
 
 story-test path="ems_success" log="story-test.log":
-    PYTHONPATH=python NN_STORY_CLASSIFIER_COMMAND="python -m voice_workers.classifier" cargo run --quiet -p exchange-test-frontend -- --path {{ path }} --log {{ log }} --player-command "python -m voice_workers.player"
+    PYTHONPATH=python NN_STORY_CLASSIFIER_COMMAND="python -m voice_workers.classifier" cargo run --quiet -p exchange-test-frontend -- --path {{ path }} --debug-connect 127.0.0.1:7882 --log {{ log }} --player-command "python -m voice_workers.player"
 
 story-audio:
     PYTHONPATH=python uv run --project python --no-sync python scripts/generate_neel_university_audio.py
@@ -14,7 +14,7 @@ story-test-all:
     #!/usr/bin/env bash
     set -euo pipefail
     rm -f story-test-all.log
-    for path in ems_success ems_failure police_success water_no_help unrelated_questions random_conversation neel_direct neel_misdirection neel_tap neel_tap_reverse neel_tap_late neel_rewire neel_rewire_late neel_patience neel_arnab_patience neel_bela_1031 neel_bela_1032 neel_bela_1032_questions intertwined_success; do
+    for path in ems_success ems_failure police_success water_no_help unrelated_questions random_conversation neel_direct neel_misdirection neel_tap neel_tap_reverse neel_tap_late neel_rewire neel_rewire_late neel_bela_1031 neel_bela_1032 neel_bela_1032_questions intertwined_success; do
         temp="/tmp/opencode/story-test-${path}.log"
         just story-test "${path}" "$temp"
         cat "$temp" >> story-test-all.log

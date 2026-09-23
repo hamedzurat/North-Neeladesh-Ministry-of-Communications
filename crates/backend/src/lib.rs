@@ -200,6 +200,7 @@ pub struct Backend {
     story_reward_paid: bool,
     story_followup_pending: bool,
     story_followup_call_started: bool,
+    shapla_story_completed: bool,
     story_completed: bool,
     story_thread: String,
     story_conversations: HashMap<u8, Vec<ConversationTurn>>,
@@ -303,6 +304,7 @@ impl Backend {
             story_reward_paid: false,
             story_followup_pending: false,
             story_followup_call_started: false,
+            shapla_story_completed: false,
             story_completed: false,
             story_thread: "intertwined".into(),
             story_conversations: HashMap::new(),
@@ -496,6 +498,7 @@ impl Backend {
         self.story_reward_paid = false;
         self.story_followup_pending = false;
         self.story_followup_call_started = false;
+        self.shapla_story_completed = false;
         self.story_completed = false;
         self.story_conversations.clear();
         self.ring_active_line = -1;
@@ -1016,6 +1019,13 @@ impl Backend {
     }
 
     fn complete_story_followup(&mut self) {
+        if matches!(
+            self.story_beat,
+            stories::shapla_apartments::Beat::HappyFollowup
+                | stories::shapla_apartments::Beat::NeutralFollowup
+        ) {
+            self.shapla_story_completed = true;
+        }
         if self.story_beat == stories::shapla_apartments::Beat::HappyFollowup
             && !self.story_reward_paid
         {
@@ -1063,7 +1073,7 @@ impl Backend {
                 && self
                     .story_conversations
                     .get(&line)
-                    .is_some_and(|conversation| conversation.len() > 2)
+                    .is_some_and(|conversation| conversation.len() >= 2)
             {
                 self.story_beat = stories::shapla_apartments::Beat::BadFollowup;
                 self.story_followup_pending = true;
@@ -1076,6 +1086,7 @@ impl Backend {
             }
             self.calls.remove(index);
             if self.story_followup_call_started {
+                self.shapla_story_completed = true;
                 self.story_completed =
                     self.neel_story_beat == stories::neel_university::Beat::Completed;
             }
@@ -1468,7 +1479,10 @@ impl Backend {
                     call.caller, call.callee, self.money
                 ),
             );
-            if self.neel_story_active() && call.caller == stories::neel_university::SHADHIN_LINE {
+            if self.neel_story_active()
+                && call.caller == stories::neel_university::SHADHIN_LINE
+                && call.callee == stories::neel_university::BELA_CAT_LINE
+            {
                 println!(
                     "[TRANSITION] Neel beat {:?} -> Completed after call {} -> {}",
                     self.neel_story_beat, call.caller, call.callee
@@ -1477,17 +1491,22 @@ impl Backend {
                 self.story_completed = self.story_beat
                     == stories::shapla_apartments::Beat::HappyFollowup
                     && self.story_followup_call_started;
-                if call.callee == stories::neel_university::BELA_CAT_LINE {
-                    self.earned += 100;
-                    self.money += 100;
-                    append_printer(
-                        &mut self.state,
-                        &format!(
-                            "MONEY // +$100 Arnab connected to Bela Bose 1032 // balance ${}",
-                            self.money
-                        ),
-                    );
-                }
+                self.earned += 100;
+                self.money += 100;
+                append_printer(
+                    &mut self.state,
+                    &format!(
+                        "MONEY // +$100 Arnab connected to Bela Bose 1032 // balance ${}",
+                        self.money
+                    ),
+                );
+            } else if self.neel_story_active()
+                && call.caller == stories::neel_university::SHADHIN_LINE
+            {
+                println!(
+                    "[TRANSITION] Neel beat {:?} remains ArnabDirectory after wrong call {} -> {}",
+                    self.neel_story_beat, call.caller, call.callee
+                );
             } else if self.neel_story_active()
                 && call.caller == stories::neel_university::NEEL_LINE
                 && self.neel_story_beat == stories::neel_university::Beat::ProfessorRouting
@@ -1700,9 +1719,7 @@ impl Backend {
             return;
         }
         let now = self.elapsed_seconds() as u64;
-        let shapla_completed = self.story_beat == stories::shapla_apartments::Beat::HappyFollowup
-            && self.story_followup_call_started;
-        if !shapla_completed
+        if !self.shapla_story_completed
             && self.story_beat != stories::shapla_apartments::Beat::BadFollowup
             && !self
                 .calls
@@ -2896,6 +2913,10 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
             && let Ok(mut state) = backend.lock()
         {
             state.story_controls = request.held_controls.clone();
+            // The text frontend represents a complete PTT turn. Mirror the
+            // controls captured at PTT start so story classification follows
+            // the same authoritative path as the voice worker.
+            state.voice_turn_controls = request.held_controls.clone();
             if state.voice_subscriber_line == Some(stories::shapla_apartments::CALLER_LINE) {
                 let service = if request.held_controls.police {
                     exchange_protocol::ServiceKind::Police

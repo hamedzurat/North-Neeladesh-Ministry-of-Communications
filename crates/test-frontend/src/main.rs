@@ -487,9 +487,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
+    if no_service {
+        state = exchange(
+            &mut backend,
+            input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+        )?;
+        revision = state.state_revision;
+    }
     let transition_debug = debug_snapshot(&mut debug)?;
     let expected_beat = if no_service {
-        "EmergencyCall"
+        "BadFollowup"
     } else if path == "police_success" {
         "NeutralFollowup"
     } else if classified_success {
@@ -497,16 +504,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         "BadFollowup"
     };
-    if transition_debug.snapshot.story_beat != expected_beat {
+    if transition_debug.snapshot.shapla_story_beat != expected_beat {
         return Err(format!(
             "path {path} expected backend beat {expected_beat}, got {}",
-            transition_debug.snapshot.story_beat
+            transition_debug.snapshot.shapla_story_beat
         )
         .into());
     }
     let branch = format!(
         "Backend transition: EmergencyCall -> {}.",
-        transition_debug.snapshot.story_beat
+        transition_debug.snapshot.shapla_story_beat
     );
     log.row(CsvRow {
         event: "beat_result",
@@ -518,17 +525,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         text: &branch,
     })?;
 
-    state = exchange(
-        &mut backend,
-        input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
-    )?;
-    revision = state.state_revision;
     if no_service {
         let abandonment_debug = debug_snapshot(&mut debug)?;
-        if abandonment_debug.snapshot.story_beat != "BadFollowup" {
+        if abandonment_debug.snapshot.shapla_story_beat != "BadFollowup" {
             return Err(format!(
                 "path {path} expected abandonment to select BadFollowup, got {}",
-                abandonment_debug.snapshot.story_beat
+                abandonment_debug.snapshot.shapla_story_beat
             )
             .into());
         }
@@ -551,6 +553,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         status: "accepted",
         text: "caller disconnected after service request",
     })?;
+
+    if state
+        .output
+        .calls
+        .iter()
+        .all(|active| active.caller_line != call.caller_line)
+        && debug_snapshot(&mut debug)?.snapshot.shapla_story_beat == "BadFollowup"
+    {
+        log.row(CsvRow {
+            event: "beat_result",
+            sequence,
+            revision,
+            caller: call.caller_line,
+            destination: call.requested_callee_line,
+            status: "accepted",
+            text: "BadFollowup is terminal; no second Shapla call is created.",
+        })?;
+        return Ok(());
+    }
 
     let followup = state
         .output
@@ -637,6 +658,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             followup_response.response_text.clone().unwrap_or_default()
         ),
     })?;
+    state = exchange(
+        &mut backend,
+        input(
+            &mut sequence,
+            revision,
+            vec![cord(
+                PortId::Subscriber(followup.caller_line),
+                PortId::Operator,
+            )],
+            false,
+            [0, 0, 0, 1],
+        ),
+    )?;
+    revision = state.state_revision;
     state = exchange(
         &mut backend,
         input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
@@ -1335,7 +1370,7 @@ fn run_neel_story(
         revision = state.state_revision;
         let snapshot = debug_snapshot(debug)?;
         if snapshot.snapshot.money != -4
-            || snapshot.snapshot.story_beat != "ProfessorRouting"
+            || snapshot.snapshot.neel_story_beat != "ProfessorRouting"
             || !state
                 .output
                 .printer_output
@@ -1344,7 +1379,9 @@ fn run_neel_story(
         {
             return Err(format!(
                 "Neel patience expiry was not recorded correctly: money={}, beat={}, printer={:?}",
-                snapshot.snapshot.money, snapshot.snapshot.story_beat, state.output.printer_output
+                snapshot.snapshot.money,
+                snapshot.snapshot.neel_story_beat,
+                state.output.printer_output
             )
             .into());
         }
@@ -1665,10 +1702,10 @@ fn run_neel_story(
     }
     revision = state.state_revision;
     let first_transition = debug_snapshot(debug)?;
-    if first_transition.snapshot.story_beat != "ArnabDirectory" {
+    if first_transition.snapshot.neel_story_beat != "ArnabDirectory" {
         return Err(format!(
             "Neel story did not enter ArnabDirectory: {}",
-            first_transition.snapshot.story_beat
+            first_transition.snapshot.neel_story_beat
         )
         .into());
     }
@@ -1722,7 +1759,7 @@ fn run_neel_story(
         )?;
         revision = state.state_revision;
         let snapshot = debug_snapshot(debug)?;
-        if snapshot.snapshot.story_beat != "Completed"
+        if snapshot.snapshot.neel_story_beat != "Completed"
             || !state
                 .output
                 .printer_output
@@ -1731,7 +1768,7 @@ fn run_neel_story(
         {
             return Err(format!(
                 "Arnab patience expiry was not recorded correctly: beat={}, printer={:?}",
-                snapshot.snapshot.story_beat, state.output.printer_output
+                snapshot.snapshot.neel_story_beat, state.output.printer_output
             )
             .into());
         }
@@ -1868,10 +1905,29 @@ fn run_neel_story(
         return Err(format!("Bela completion input rejected: {:?}", state.error).into());
     }
     let snapshot = debug_snapshot(debug)?;
-    if snapshot.snapshot.story_beat != "Completed" {
+    if destination == 4 {
+        if snapshot.snapshot.neel_story_beat != "ArnabDirectory" {
+            return Err(format!(
+                "wrong Bela route changed Neel beat unexpectedly: {}",
+                snapshot.snapshot.neel_story_beat
+            )
+            .into());
+        }
+        log.row(CsvRow {
+            event: "beat_result",
+            sequence,
+            revision,
+            caller: 3,
+            destination,
+            status: "accepted",
+            text: "Wrong Bela route preserved ArnabDirectory for retry.",
+        })?;
+        return Ok(());
+    }
+    if snapshot.snapshot.neel_story_beat != "Completed" {
         return Err(format!(
             "Neel story did not complete: beat={}, calls={:?}, state_calls={:?}, history={:?}",
-            snapshot.snapshot.story_beat,
+            snapshot.snapshot.neel_story_beat,
             snapshot.snapshot.active_calls,
             state.output.calls,
             snapshot.snapshot.call_history
@@ -1902,7 +1958,7 @@ fn run_neel_story(
         snapshot.snapshot.money,
         initial_money,
         snapshot.snapshot.money - initial_money,
-        snapshot.snapshot.story_beat,
+        snapshot.snapshot.neel_story_beat,
     );
     for entry in &state.output.printer_output {
         if entry.text.contains("MONEY //") {
