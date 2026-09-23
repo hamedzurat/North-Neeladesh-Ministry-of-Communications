@@ -36,7 +36,7 @@
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 </head>
 <body>
-  <header><div><div class="eyebrow">NORTH NEELADESH / LIVE OPERATIONS</div><h1>EXCHANGE CONTROL ROOM</h1></div><nav><button class="active" data-tab="overview">Live overview</button><button data-tab="details">Operations data</button></nav><div id="connection" class="connection bad">BACKEND OFFLINE</div></header>
+  <header><div><div class="eyebrow">NORTH NEELADESH / LIVE OPERATIONS</div><h1>EXCHANGE CONTROL ROOM</h1></div><nav><button class="active" data-tab="overview">Live overview</button><button data-tab="details">Operations data</button><button data-tab="llm">LLM conversations</button></nav><div id="connection" class="connection bad">BACKEND OFFLINE</div></header>
   <main>
     <div id="failure-alert" class="alert"></div>
     <section id="overview" class="tab active"><div class="overview">
@@ -50,8 +50,10 @@
        <div class="panel"><div class="panel-title"><h2>Operator controls</h2><span class="muted">backend-authoritative debug commands</span></div><div class="controls"><button class="danger" onclick="send('reset')">Reset run</button><input id="seconds" type="number" min="0" value="30"><button onclick="advance()">Advance time</button><input id="caller" type="number" min="0" max="11" value="0"><input id="callee" type="number" min="0" max="11" value="1"><button class="primary" onclick="injectCall()">Inject call</button></div><div id="action-status" class="action muted">No command sent.</div></div>
        <div class="panel"><div class="panel-title"><h2>Frontend wire state</h2><span class="muted">exact JSON received and sent · scrollable</span></div><div class="wire-grid"><section><div class="label">last input received from frontend</div><pre id="frontend-input">No frontend input received.</pre></section><section><div class="label">last output sent to frontend</div><pre id="frontend-output">No backend output sent.</pre></section></div><div class="panel-title" style="margin-top:16px"><h2>All frontend data</h2></div><pre id="frontend-all">Waiting for snapshot.</pre></div>
        <div class="panel"><div class="panel-title"><h2>Calls &amp; subscribers</h2><span class="muted">all retained operational state</span></div><div id="calls-table"></div><div style="margin-top:18px" id="subscribers"></div></div>
-       <div class="panel"><div class="panel-title"><h2>Voice evidence</h2><span class="muted">live transcript, generated text, replayable audio</span></div><div id="voice-history" class="cards"></div></div>
-     </section>
+      </section>
+      <section id="llm" class="tab scroll">
+        <div class="panel"><div class="panel-title"><h2>LLM conversations</h2><span class="muted">exact dialogue context, transcript, response, and replayable audio</span></div><div id="voice-history" class="cards"></div></div>
+      </section>
   </main>
   <script>
     let latestSnapshot = null;
