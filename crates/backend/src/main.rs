@@ -17,6 +17,10 @@ fn main() -> io::Result<()> {
         .as_deref()
         .map(bind_loopback_listener)
         .transpose()?;
+    println!(
+        "[BACKEND] game={bind} voice={voice_bind} debug={:?} text={:?}",
+        debug_bind, text_bind
+    );
     exchange_backend::serve_with_voice_debug_and_text(
         listener,
         Some(voice_socket),

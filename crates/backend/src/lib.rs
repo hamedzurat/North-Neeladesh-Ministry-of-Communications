@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::env;
+use std::fmt::Display;
 use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::process::Command;
@@ -121,6 +122,10 @@ impl Default for Backend {
 }
 
 impl Backend {
+    fn log(&self, category: &str, message: impl Display) {
+        println!("[+{:04}s] [{category}] {message}", self.elapsed_seconds());
+    }
+
     fn subscriber(&self, line: u8) -> &SubscriberConfig {
         self.config
             .subscribers
@@ -767,14 +772,17 @@ impl Backend {
             self.voice_turn_controls = input.held_controls.clone();
             self.voice_turn_id = self.next_voice_turn_id;
             self.next_voice_turn_id = self.next_voice_turn_id.wrapping_add(1);
-            println!(
-                "[TRANSITION] voice start caller={:?} turn={} ptt={} police={} ems={} tap={}",
-                caller,
-                self.voice_turn_id,
-                self.voice_turn_controls.ptt,
-                self.voice_turn_controls.police,
-                self.voice_turn_controls.ems,
-                self.voice_turn_controls.tap
+            self.log(
+                "VOICE",
+                format_args!(
+                    "start caller={:?} turn={} ptt={} police={} ems={} tap={}",
+                    caller,
+                    self.voice_turn_id,
+                    self.voice_turn_controls.ptt,
+                    self.voice_turn_controls.police,
+                    self.voice_turn_controls.ems,
+                    self.voice_turn_controls.tap
+                ),
             );
             self.cancelled_voice_turn = None;
         }
@@ -794,13 +802,16 @@ impl Backend {
             },
         });
         if !talking {
-            println!(
-                "[TRANSITION] voice release caller={:?} turn={} service_turn={} captured_controls_police={} captured_controls_ems={}",
-                caller,
-                self.voice_turn_id,
-                self.voice_turn_controls.police || self.voice_turn_controls.ems,
-                self.voice_turn_controls.police,
-                self.voice_turn_controls.ems
+            self.log(
+                "VOICE",
+                format_args!(
+                    "release caller={:?} turn={} service_turn={} police={} ems={}",
+                    caller,
+                    self.voice_turn_id,
+                    self.voice_turn_controls.police || self.voice_turn_controls.ems,
+                    self.voice_turn_controls.police,
+                    self.voice_turn_controls.ems
+                ),
             );
         }
         self.voice_state_revision = revision;
@@ -908,16 +919,19 @@ impl Backend {
         let controls = self.voice_turn_controls.clone();
         let police = controls.police;
         let ems = controls.ems;
-        println!(
-            "[TRANSITION] story classification={:?} police={} ems={} beat_before={:?}",
-            classification, police, ems, self.story_beat
+        self.log(
+            "STORY fallen_mother",
+            format_args!(
+                "classification={:?} police={} ems={} beat={:?}",
+                classification, police, ems, self.story_beat
+            ),
         );
         if let Some(next) =
             stories::fallen_mother::next_beat(self.story_beat, classification, police, ems)
         {
-            println!(
-                "[TRANSITION] story beat {:?} -> {:?}",
-                self.story_beat, next
+            self.log(
+                "STORY fallen_mother",
+                format_args!("beat {:?} -> {:?}", self.story_beat, next),
             );
             self.story_beat = next;
             self.story_followup_pending = true;
@@ -1165,20 +1179,33 @@ impl Backend {
                 && (Self::opening_dialogue(caller).is_some()
                     || stories::bela_bose::audio_path(caller, callee).is_some())
         };
+        let phase = self.calls[index].phase.clone();
+        self.log(
+            "CALL",
+            format_args!(
+                "connect {} -> {} from={:?} opening_audio={}",
+                caller, callee, phase, has_opening_audio
+            ),
+        );
+        let tts_prepared = self.tts_prepared;
+        if !has_opening_audio && !neel_story && !tts_prepared {
+            self.log(
+                "VOICE",
+                format_args!(
+                    "queue opening audio caller={caller} callee={callee} tts_prepared={tts_prepared}"
+                ),
+            );
+        }
         let Some(call) = self.calls.get_mut(index) else {
             return;
         };
-        println!(
-            "[TRANSITION] call {} -> {} phase={:?} connect_requested has_opening_audio={}",
-            caller, callee, call.phase, has_opening_audio
-        );
         if neel_story && !has_opening_audio {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
             call.audio_duration_seconds =
                 stories::bela_bose::audio_duration_seconds(caller, callee).unwrap_or(1);
-        } else if self.tts_prepared && !has_opening_audio {
+        } else if tts_prepared && !has_opening_audio {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
@@ -1189,10 +1216,6 @@ impl Backend {
                     2
                 };
         } else {
-            eprintln!(
-                "[VOICE-DEBUG] queueing opening audio caller={caller} callee={callee} has_opening_audio={has_opening_audio} tts_prepared={}",
-                self.tts_prepared
-            );
             call.phase = CallPhase::Held;
             call.connected_at = None;
             call.audio_duration_seconds = 0;
@@ -1210,8 +1233,8 @@ impl Backend {
         let duration = (samples.len() as u64)
             .div_ceil(u64::from(VOICE_AUDIO_SAMPLE_RATE))
             .max(1);
-        eprintln!(
-            "[VOICE-DEBUG] opening audio generated caller={caller} callee={callee} samples={} packets={}",
+        println!(
+            "[VOICE] opening audio generated caller={caller} callee={callee} samples={} packets={}",
             samples.len(),
             samples.len().div_ceil(VOICE_AUDIO_PACKET_SAMPLES)
         );
@@ -1305,10 +1328,10 @@ impl Backend {
             }
         }
         let Some(text) = Self::opening_dialogue(caller) else {
-            eprintln!("[VOICE-DEBUG] no defined opening dialogue caller={caller} callee={callee}");
+            println!("[VOICE] no opening dialogue caller={caller} callee={callee}");
             return Ok(Vec::new());
         };
-        eprintln!("[VOICE-DEBUG] synthesizing opening dialogue caller={caller} text={text:?}");
+        println!("[VOICE] synthesizing opening dialogue caller={caller} text={text:?}");
         let samples =
             with_persistent_pocket_tts(|tts| tts.synthesize(&caller_profile.voice_id, text))?;
         if samples.is_empty() {
@@ -1329,12 +1352,15 @@ impl Backend {
 
     fn finish_call(&mut self, index: usize, missed: bool) {
         let call = self.calls.remove(index);
-        println!(
-            "[TRANSITION] call {} -> {} phase={:?} -> {}",
-            call.caller,
-            call.callee,
-            call.phase,
-            if missed { "Missed" } else { "Completed" }
+        self.log(
+            "CALL",
+            format_args!(
+                "finished {} -> {} phase={:?} result={}",
+                call.caller,
+                call.callee,
+                call.phase,
+                if missed { "missed" } else { "completed" }
+            ),
         );
         self.call_history.push(DebugCallRecord {
             caller_line: call.caller,
@@ -1392,9 +1418,12 @@ impl Backend {
                     call.callee,
                 )
             {
-                println!(
-                    "[TRANSITION] Neel beat {:?} -> {:?} after call {} -> {}",
-                    self.neel_story_beat, next, call.caller, call.callee
+                self.log(
+                    "STORY bela_bose",
+                    format_args!(
+                        "beat {:?} -> {:?} after call {} -> {}",
+                        self.neel_story_beat, next, call.caller, call.callee
+                    ),
                 );
                 self.neel_story_beat = next;
                 match next {
@@ -1866,10 +1895,15 @@ pub fn serve_with_voice_debug_and_text(
         let debug_backend = Arc::clone(&backend);
         thread::spawn(move || {
             for stream in listener.incoming().flatten() {
+                let peer = stream
+                    .peer_addr()
+                    .map(|address| address.to_string())
+                    .unwrap_or_else(|_| "unknown".into());
+                println!("[FRONTEND] debug connected peer={peer}");
                 let connection_backend = Arc::clone(&debug_backend);
                 thread::spawn(move || {
                     if let Err(error) = handle_debug_connection(stream, connection_backend) {
-                        eprintln!("debug connection closed with error: {error}");
+                        eprintln!("[FRONTEND ERROR] debug connection closed: {error}");
                     }
                 });
             }
@@ -1879,10 +1913,15 @@ pub fn serve_with_voice_debug_and_text(
         let text_backend = Arc::clone(&backend);
         thread::spawn(move || {
             for stream in listener.incoming().flatten() {
+                let peer = stream
+                    .peer_addr()
+                    .map(|address| address.to_string())
+                    .unwrap_or_else(|_| "unknown".into());
+                println!("[FRONTEND] text connected peer={peer}");
                 let connection_backend = Arc::clone(&text_backend);
                 thread::spawn(move || {
                     if let Err(error) = handle_text_connection(stream, connection_backend) {
-                        eprintln!("text connection closed with error: {error}");
+                        eprintln!("[FRONTEND ERROR] text connection closed: {error}");
                     }
                 });
             }
@@ -1890,10 +1929,15 @@ pub fn serve_with_voice_debug_and_text(
     }
     for stream in listener.incoming() {
         let stream = stream?;
+        let peer = stream
+            .peer_addr()
+            .map(|address| address.to_string())
+            .unwrap_or_else(|_| "unknown".into());
+        println!("[FRONTEND] game connected peer={peer}");
         let connection_backend = Arc::clone(&backend);
         thread::spawn(move || {
             if let Err(error) = handle_connection(stream, connection_backend) {
-                eprintln!("frontend connection closed with error: {error}");
+                eprintln!("[FRONTEND ERROR] game connection closed: {error}");
             }
         });
     }
@@ -2005,13 +2049,16 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                         Some(VoiceStatus::GeneratingResponse)
                                     };
                                     state.voice_transcript = Some(transcript.to_string());
-                                    println!(
-                                        "[TRANSITION] voice transcript caller={} service_turn={} controls_police={} controls_ems={} text={:?}",
-                                        caller,
-                                        service_turn,
-                                        state.voice_turn_controls.police,
-                                        state.voice_turn_controls.ems,
-                                        transcript
+                                    state.log(
+                                        "VOICE",
+                                        format_args!(
+                                            "transcript caller={} service_turn={} police={} ems={} text={:?}",
+                                            caller,
+                                            service_turn,
+                                            state.voice_turn_controls.police,
+                                            state.voice_turn_controls.ems,
+                                            transcript
+                                        ),
                                     );
                                     if service_turn && caller == stories::fallen_mother::CALLER_LINE
                                     {
@@ -2022,16 +2069,22 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                         };
                                         match classify_story(transcript, service) {
                                             Ok(classification) => {
-                                                println!(
-                                                    "[TRANSITION] service classification service={:?} result={:?}",
-                                                    service, classification
+                                                state.log(
+                                                    "STORY fallen_mother",
+                                                    format_args!(
+                                                        "classification service={:?} result={:?}",
+                                                        service, classification
+                                                    ),
                                                 );
                                                 state.apply_story_classification(classification)
                                             }
                                             Err(error) => {
-                                                println!(
-                                                    "[TRANSITION] service classification failed service={:?} code={} message={}",
-                                                    service, error.code, error.message
+                                                state.log(
+                                                    "STORY fallen_mother ERROR",
+                                                    format_args!(
+                                                        "classification service={:?} code={} message={}",
+                                                        service, error.code, error.message
+                                                    ),
                                                 );
                                                 append_printer(
                                                     &mut state.state,
@@ -2249,19 +2302,25 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         && state.audio_call.is_some()
                         && state.audio_replay_call == state.audio_call
                     {
-                        println!(
-                            "[TRANSITION] tap replay call={:?} packets={}",
-                            state.audio_call,
-                            state.audio_replay.len()
+                        state.log(
+                            "VOICE",
+                            format_args!(
+                                "tap replay call={:?} packets={}",
+                                state.audio_call,
+                                state.audio_replay.len()
+                            ),
                         );
                         let replay = state.audio_replay.clone();
                         state.audio_queue.extend(replay);
                     } else {
-                        println!(
-                            "[TRANSITION] tap active call={:?} queued_packets={} replay_packets={}",
-                            state.audio_call,
-                            state.audio_queue.len(),
-                            state.audio_replay.len()
+                        state.log(
+                            "VOICE",
+                            format_args!(
+                                "tap active call={:?} queued_packets={} replay_packets={}",
+                                state.audio_call,
+                                state.audio_queue.len(),
+                                state.audio_replay.len()
+                            ),
                         );
                     }
                     state.audio_tap_was_active = true;
@@ -2276,8 +2335,8 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
             .unwrap_or_default();
         if let Some(address) = audio_peer {
             if !packets.is_empty() {
-                eprintln!(
-                    "[VOICE-DEBUG] sending {} queued RTP packets to {address}",
+                println!(
+                    "[VOICE] sending {} queued RTP packets to {address}",
                     packets.len()
                 );
             }
@@ -2536,7 +2595,7 @@ pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) ->
         };
         for (caller, callee, tap_audio) in pending_tts {
             println!(
-                "[VOICE-DEBUG] dispatching opening audio caller={caller} callee={callee} tap_audio={tap_audio}"
+                "[VOICE] dispatching opening audio caller={caller} callee={callee} tap_audio={tap_audio}"
             );
             let worker_backend = Arc::clone(&backend);
             let call_config = config.clone();
