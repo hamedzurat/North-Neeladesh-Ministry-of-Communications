@@ -56,9 +56,13 @@ impl GameLog {
     }
 
     fn row(&mut self, row: CsvRow<'_>) -> io::Result<()> {
-        let _ = (row.destination, row.status, row.sequence, row.revision);
         let prefix = format!("[{}]", self.entry_number + 1);
         self.entry_number += 1;
+        writeln!(
+            self.file,
+            "{prefix} TRACE event={} sequence={} revision={} caller={} destination={} status={}",
+            row.event, row.sequence, row.revision, row.caller, row.destination, row.status
+        )?;
         match row.event {
             "state" => writeln!(
                 self.file,
@@ -70,11 +74,7 @@ impl GameLog {
                 "{} You connect LINE {} to the Operator.",
                 prefix, row.caller
             ),
-            "opening" => writeln!(
-                self.file,
-                "{} The caller says: \"My mother fell down in the bathroom. I don't know what to do.\".",
-                prefix
-            ),
+            "opening" => writeln!(self.file, "{} The caller says: \"{}\".", prefix, row.text),
             "text_turn" => {
                 let parts: Vec<_> = row.text.split(" | ").collect();
                 let player = parts.first().unwrap_or(&"").trim_start_matches("player=");
@@ -153,6 +153,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         log.file,
         "=== STORY THREAD: {story_thread} / PATH: {path} ==="
     )?;
+    writeln!(
+        log.file,
+        "# Each action is followed by TRACE metadata: event, input sequence, backend revision, caller, destination, and result."
+    )?;
+    writeln!(
+        log.file,
+        "# Narration describes the simulated human action; transition/money lines describe backend decisions."
+    )?;
     if path == "intertwined_success" {
         return run_intertwined_story(
             &mut backend,
@@ -229,7 +237,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         caller: call.caller_line,
         destination: call.requested_callee_line,
         status: "accepted",
-        text: "opening caller dialogue",
+        text: "My mother fell down in the bathroom. I don't know what to do.",
     })?;
     log.row(CsvRow {
         event: "ptt_start",
