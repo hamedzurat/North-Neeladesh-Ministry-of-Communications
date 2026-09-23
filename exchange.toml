@@ -51,10 +51,10 @@ Example output:
 
 [[subscribers]]
 line = 0
-place = "LINE 00"
+place = "MOTIJHEEL FLAT"
 name = "Rafiq Ahmed"
-role = "unassigned"
-private_info = "Keeps a brass compass inherited from a grandfather."
+role = "night-shift building caretaker"
+private_info = "Knows which exchange lines ring after midnight and keeps a handwritten log of overnight callers."
 voice_id = "pocket-line-0"
 
 [[subscribers]]
