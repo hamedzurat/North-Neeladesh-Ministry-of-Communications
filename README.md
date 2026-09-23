@@ -20,6 +20,8 @@ Run all commands from the repository root.
 
 Gameplay tuning and Subscriber profiles live in [`exchange.toml`](exchange.toml).
 Set `NN_EXCHANGE_CONFIG` to use another configuration file.
+Shared physical game rules are documented in [`docs/mechanics.md`](docs/mechanics.md).
+The full player-facing mechanic and story guide is in [`docs/gameplay.md`](docs/gameplay.md).
 
 ## First Check
 

@@ -1,15 +1,22 @@
+use exchange_protocol::Mechanic;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const NEEL_LINE: u8 = 2;
-pub const SHADHIN_LINE: u8 = 3;
-pub const BELA_DOG_LINE: u8 = 4;
-pub const BELA_CAT_LINE: u8 = 5;
+pub const NEEL_DIRECTORY: u16 = 1023;
+pub const SHADHIN_DIRECTORY: u16 = 1024;
 pub const BELA_DOG_DIRECTORY: u16 = 1031;
 pub const BELA_CAT_DIRECTORY: u16 = 1032;
 pub const PROFESSOR_AUDIO: &str = "professor_arnab.wav";
 pub const WRONG_BELA_AUDIO: &str = "belabose_wrong.wav";
 pub const SUCCESS_BELA_AUDIO: &str = "belabose_success.m4a";
+pub const MECHANICS: &[Mechanic] = &[
+    Mechanic::OperatorConnection,
+    Mechanic::DirectorySelection,
+    Mechanic::DestinationRinging,
+    Mechanic::DirectRouting,
+    Mechanic::SubscriberConversation,
+    Mechanic::Scoring,
+];
 
 pub const PROFESSOR_DIALOGUE_PROMPT: &str = r#"
 You are Prof. Kashem, a professor calling from Neel University. You need the operator to connect you to Shadhin Housing.
@@ -31,18 +38,18 @@ pub const COMPLETED_DIALOGUE_PROMPT: &str =
 pub const BAD_ENDING_DIALOGUE_PROMPT: &str =
     "The story has ended unsuccessfully; do not generate another story reply.";
 
-pub const fn caller_for_beat(beat: Beat) -> u8 {
+pub const fn caller_directory_for_beat(beat: Beat) -> u16 {
     match beat {
-        Beat::ProfessorRouting => NEEL_LINE,
-        Beat::ArnabDirectory | Beat::Completed | Beat::BadEnding => SHADHIN_LINE,
+        Beat::ProfessorRouting => NEEL_DIRECTORY,
+        Beat::ArnabDirectory | Beat::Completed | Beat::BadEnding => SHADHIN_DIRECTORY,
     }
 }
 
-pub const fn requested_callee_for_beat(beat: Beat) -> u8 {
+pub const fn requested_directory_for_beat(beat: Beat) -> Option<u16> {
     match beat {
-        Beat::ProfessorRouting => SHADHIN_LINE,
-        Beat::ArnabDirectory => BELA_DOG_LINE,
-        Beat::Completed | Beat::BadEnding => 0,
+        Beat::ProfessorRouting => Some(SHADHIN_DIRECTORY),
+        Beat::ArnabDirectory => Some(BELA_DOG_DIRECTORY),
+        Beat::Completed | Beat::BadEnding => None,
     }
 }
 
@@ -50,34 +57,30 @@ pub const fn is_terminal(beat: Beat) -> bool {
     matches!(beat, Beat::Completed | Beat::BadEnding)
 }
 
-pub const fn is_bela_directory(id: u16) -> bool {
-    matches!(id, BELA_DOG_DIRECTORY | BELA_CAT_DIRECTORY)
-}
-
-pub const fn is_bela_destination(value: u16) -> bool {
-    is_bela_directory(value) || matches!(value, 4 | 5)
-}
-
-pub const fn next_beat_after_connection(beat: Beat, caller: u8, callee: u8) -> Option<Beat> {
+pub const fn next_beat_after_directory_connection(
+    beat: Beat,
+    caller: u16,
+    callee: u16,
+) -> Option<Beat> {
     match (beat, caller, callee) {
-        (Beat::ProfessorRouting, NEEL_LINE, SHADHIN_LINE) => Some(Beat::ArnabDirectory),
-        (Beat::ArnabDirectory, SHADHIN_LINE, BELA_CAT_LINE) => Some(Beat::Completed),
-        (Beat::ArnabDirectory, SHADHIN_LINE, BELA_DOG_LINE) => Some(Beat::BadEnding),
+        (Beat::ProfessorRouting, NEEL_DIRECTORY, SHADHIN_DIRECTORY) => Some(Beat::ArnabDirectory),
+        (Beat::ArnabDirectory, SHADHIN_DIRECTORY, BELA_CAT_DIRECTORY) => Some(Beat::Completed),
+        (Beat::ArnabDirectory, SHADHIN_DIRECTORY, BELA_DOG_DIRECTORY) => Some(Beat::BadEnding),
         _ => None,
     }
 }
 
-pub fn audio_path(caller: u8, callee: u8) -> Option<PathBuf> {
+pub fn audio_path(caller: u16, callee: u16) -> Option<PathBuf> {
     let name = match (caller, callee) {
-        (NEEL_LINE, SHADHIN_LINE) => PROFESSOR_AUDIO,
-        (SHADHIN_LINE, BELA_DOG_LINE) => WRONG_BELA_AUDIO,
-        (SHADHIN_LINE, BELA_CAT_LINE) => SUCCESS_BELA_AUDIO,
+        (NEEL_DIRECTORY, SHADHIN_DIRECTORY) => PROFESSOR_AUDIO,
+        (SHADHIN_DIRECTORY, BELA_DOG_DIRECTORY) => WRONG_BELA_AUDIO,
+        (SHADHIN_DIRECTORY, BELA_CAT_DIRECTORY) => SUCCESS_BELA_AUDIO,
         _ => return None,
     };
     Some(Path::new("assets/stories/bela_bose").join(name))
 }
 
-pub fn audio_duration_seconds(caller: u8, callee: u8) -> Option<u64> {
+pub fn audio_duration_seconds(caller: u16, callee: u16) -> Option<u64> {
     let path = audio_path(caller, callee)?;
     if !path.is_file() {
         return None;

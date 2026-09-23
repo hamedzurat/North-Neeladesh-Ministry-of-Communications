@@ -1,11 +1,12 @@
+use exchange_protocol::Mechanic;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const RAHMAN_LINE: u8 = 6;
-pub const FARHANA_LINE: u8 = 7;
-pub const TARIQ_LINE: u8 = 8;
-pub const KAMAL_LINE: u8 = 9;
-pub const REHANA_LINE: u8 = 10;
+pub const RAHMAN_DIRECTORY: u16 = 1025;
+pub const FARHANA_DIRECTORY: u16 = 1026;
+pub const TARIQ_DIRECTORY: u16 = 1027;
+pub const KAMAL_DIRECTORY: u16 = 1028;
+pub const REHANA_DIRECTORY: u16 = 1029;
 pub const CONTACT_BEATS: [Beat; 3] = [
     Beat::MundaneCall,
     Beat::WhistleblowerLeak,
@@ -15,6 +16,14 @@ pub const CONTACT_BEATS: [Beat; 3] = [
 pub const KAMAL_FARHANA_AUDIO: &str = "kamal_farhana.wav";
 pub const TARIQ_FARHANA_AUDIO: &str = "tariq_farhana.wav";
 pub const REHANA_FARHANA_AUDIO: &str = "rehana_farhana.wav";
+pub const MECHANICS: &[Mechanic] = &[
+    Mechanic::OperatorConnection,
+    Mechanic::DirectRouting,
+    Mechanic::TapMonitoring,
+    Mechanic::SubscriberConversation,
+    Mechanic::Patience,
+    Mechanic::Scoring,
+];
 
 pub const INSTRUCTION_PROMPT: &str = r#"
 You are Agent Rahman of the Secret Police Directorate, calling the Exchange Operator.
@@ -127,20 +136,25 @@ impl Beat {
         }
     }
 
-    pub const fn caller(self) -> u8 {
+    pub const fn directory_caller(self) -> u16 {
         match self {
-            Self::Instruction | Self::Interrogation => RAHMAN_LINE,
-            Self::MundaneCall => KAMAL_LINE,
-            Self::WhistleblowerLeak => TARIQ_LINE,
-            Self::SubscriberCall => REHANA_LINE,
-            Self::GoodEnding | Self::NeutralEnding | Self::BadEnding => RAHMAN_LINE,
+            Self::Instruction
+            | Self::Interrogation
+            | Self::GoodEnding
+            | Self::NeutralEnding
+            | Self::BadEnding => RAHMAN_DIRECTORY,
+            Self::MundaneCall => KAMAL_DIRECTORY,
+            Self::WhistleblowerLeak => TARIQ_DIRECTORY,
+            Self::SubscriberCall => REHANA_DIRECTORY,
         }
     }
 
-    pub const fn requested_callee(self) -> u8 {
+    pub const fn directory_callee(self) -> Option<u16> {
         match self {
-            Self::MundaneCall | Self::WhistleblowerLeak | Self::SubscriberCall => FARHANA_LINE,
-            _ => 0,
+            Self::MundaneCall | Self::WhistleblowerLeak | Self::SubscriberCall => {
+                Some(FARHANA_DIRECTORY)
+            }
+            _ => None,
         }
     }
 
@@ -172,26 +186,26 @@ impl Beat {
     }
 }
 
-pub const fn contact_beat(caller: u8) -> Option<Beat> {
-    match caller {
-        KAMAL_LINE => Some(Beat::MundaneCall),
-        TARIQ_LINE => Some(Beat::WhistleblowerLeak),
-        REHANA_LINE => Some(Beat::SubscriberCall),
+pub const fn contact_beat_by_directory(directory_id: u16) -> Option<Beat> {
+    match directory_id {
+        KAMAL_DIRECTORY => Some(Beat::MundaneCall),
+        TARIQ_DIRECTORY => Some(Beat::WhistleblowerLeak),
+        REHANA_DIRECTORY => Some(Beat::SubscriberCall),
         _ => None,
     }
 }
 
-pub fn audio_path(caller: u8, callee: u8) -> Option<PathBuf> {
+pub fn audio_path(caller: u16, callee: u16) -> Option<PathBuf> {
     let name = match (caller, callee) {
-        (KAMAL_LINE, FARHANA_LINE) => KAMAL_FARHANA_AUDIO,
-        (TARIQ_LINE, FARHANA_LINE) => TARIQ_FARHANA_AUDIO,
-        (REHANA_LINE, FARHANA_LINE) => REHANA_FARHANA_AUDIO,
+        (KAMAL_DIRECTORY, FARHANA_DIRECTORY) => KAMAL_FARHANA_AUDIO,
+        (TARIQ_DIRECTORY, FARHANA_DIRECTORY) => TARIQ_FARHANA_AUDIO,
+        (REHANA_DIRECTORY, FARHANA_DIRECTORY) => REHANA_FARHANA_AUDIO,
         _ => return None,
     };
     Some(Path::new("assets/stories/dirty_work").join(name))
 }
 
-pub fn audio_duration_seconds(caller: u8, callee: u8) -> Option<u64> {
+pub fn audio_duration_seconds(caller: u16, callee: u16) -> Option<u64> {
     let path = audio_path(caller, callee)?;
     if !path.is_file() {
         return None;
@@ -254,16 +268,22 @@ impl Outcome {
 
 #[cfg(test)]
 mod tests {
-    use super::{Beat, KAMAL_LINE, Outcome, REHANA_LINE, TARIQ_LINE};
+    use super::{Beat, KAMAL_DIRECTORY, Outcome, REHANA_DIRECTORY, TARIQ_DIRECTORY};
 
     #[test]
     fn contact_callers_map_to_their_beats() {
-        assert_eq!(super::contact_beat(KAMAL_LINE), Some(Beat::MundaneCall));
         assert_eq!(
-            super::contact_beat(TARIQ_LINE),
+            super::contact_beat_by_directory(KAMAL_DIRECTORY),
+            Some(Beat::MundaneCall)
+        );
+        assert_eq!(
+            super::contact_beat_by_directory(TARIQ_DIRECTORY),
             Some(Beat::WhistleblowerLeak)
         );
-        assert_eq!(super::contact_beat(REHANA_LINE), Some(Beat::SubscriberCall));
+        assert_eq!(
+            super::contact_beat_by_directory(REHANA_DIRECTORY),
+            Some(Beat::SubscriberCall)
+        );
     }
 
     #[test]

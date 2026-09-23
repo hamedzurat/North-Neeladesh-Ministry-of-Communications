@@ -1,10 +1,18 @@
+use exchange_protocol::Mechanic;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const NAHID_LINE: u8 = 11;
+pub const NAHID_DIRECTORY: u16 = 1030;
 pub const LOCATION: &str = "SHONARPARA TOWER";
 pub const PATIENCE_SECONDS: u64 = 64;
-pub const VICTIM_LINES: [u8; 5] = [0, 1, 4, 5, 10];
+pub const VICTIM_DIRECTORIES: [u16; 5] = [1021, 1022, 1031, 1032, 1029];
+pub const MECHANICS: &[Mechanic] = &[
+    Mechanic::OperatorConnection,
+    Mechanic::DirectRouting,
+    Mechanic::PoliceService,
+    Mechanic::Patience,
+    Mechanic::Scoring,
+];
 
 pub const DIALOGUE_PROMPT: &str = r#"
 You are Nahid, a scammer claiming to be from bKash. You are calling a new person
@@ -51,14 +59,22 @@ impl Beat {
     }
 }
 
-pub fn audio_path(caller: u8, callee: u8) -> Option<PathBuf> {
-    if caller != NAHID_LINE || !VICTIM_LINES.contains(&callee) {
+pub fn audio_path(caller: u16, callee: u16) -> Option<PathBuf> {
+    if caller != NAHID_DIRECTORY || !VICTIM_DIRECTORIES.contains(&callee) {
         return None;
     }
-    Some(Path::new("assets/stories/nahid").join(format!("nahid_{callee}.wav")))
+    let asset_suffix = match callee {
+        1021 => 0,
+        1022 => 1,
+        1031 => 4,
+        1032 => 5,
+        1029 => 10,
+        _ => return None,
+    };
+    Some(Path::new("assets/stories/nahid").join(format!("nahid_{asset_suffix}.wav")))
 }
 
-pub fn audio_duration_seconds(caller: u8, callee: u8) -> Option<u64> {
+pub fn audio_duration_seconds(caller: u16, callee: u16) -> Option<u64> {
     let path = audio_path(caller, callee)?;
     if !path.is_file() {
         return None;

@@ -108,6 +108,15 @@ pub(crate) fn directory_pages(
                 format!("NOTE // {note}"),
                 format!("DESTINATION // {}", simple_place(config, line)),
             ],
+            directory_id: Some(
+                config
+                    .subscribers
+                    .iter()
+                    .find(|s| s.line == line)
+                    .unwrap()
+                    .id,
+            ),
+            line: Some(line),
         }]
     } else {
         vec![exchange_protocol::DirectoryPage {
@@ -117,6 +126,8 @@ pub(crate) fn directory_pages(
                 format!("SUBSCRIBER ID {id:04}"),
                 "SELECT A LINE FROM 0000 THROUGH 0011".into(),
             ],
+            directory_id: None,
+            line: None,
         }]
     }
 }
@@ -261,9 +272,11 @@ pub(crate) fn lamps(calls: &[crate::calls::ActiveCall], ring_line: i16) -> [bool
 
 pub(crate) fn effective_ring_line(input: &InputState) -> i16 {
     let physical_line = physical_ring_line(input);
-    (input.ring_line == physical_line)
-        .then_some(physical_line)
-        .unwrap_or(-1)
+    if input.ring_line == physical_line {
+        physical_line
+    } else {
+        -1
+    }
 }
 
 pub(crate) fn physical_ring_line(input: &InputState) -> i16 {

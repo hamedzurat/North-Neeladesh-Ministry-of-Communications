@@ -108,6 +108,38 @@ pub struct HeldControls {
     pub tap: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mechanic {
+    OperatorConnection,
+    DirectorySelection,
+    DestinationRinging,
+    DirectRouting,
+    TapMonitoring,
+    SubscriberConversation,
+    PoliceService,
+    EmsService,
+    Patience,
+    Scoring,
+}
+
+impl Mechanic {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::OperatorConnection => "operator_connection",
+            Self::DirectorySelection => "directory_selection",
+            Self::DestinationRinging => "destination_ringing",
+            Self::DirectRouting => "direct_routing",
+            Self::TapMonitoring => "tap_monitoring",
+            Self::SubscriberConversation => "subscriber_conversation",
+            Self::PoliceService => "police_service",
+            Self::EmsService => "ems_service",
+            Self::Patience => "patience",
+            Self::Scoring => "scoring",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct TuningState {
@@ -204,6 +236,8 @@ pub struct DirectoryPage {
     pub page_number: u8,
     pub heading: String,
     pub lines: Vec<String>,
+    pub directory_id: Option<u16>,
+    pub line: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -211,6 +245,7 @@ pub struct DirectoryPage {
 pub struct CallStatus {
     pub caller_line: u8,
     pub requested_callee_line: u8,
+    pub requested_callee_directory_id: Option<u16>,
     pub phase: CallPhase,
 }
 
@@ -419,6 +454,19 @@ pub struct DebugSnapshot {
     pub voice: DebugVoiceState,
     pub frontend: DebugFrontendState,
     pub recent_errors: Vec<BackendDiagnostic>,
+    pub events: Vec<DebugEvent>,
+    pub story_mechanics: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugEvent {
+    pub id: u64,
+    pub elapsed_seconds: u32,
+    pub state_revision: u64,
+    pub category: String,
+    pub action: String,
+    pub details: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -426,6 +474,7 @@ pub struct DebugSnapshot {
 pub struct DebugActiveCall {
     pub caller_line: u8,
     pub requested_callee_line: u8,
+    pub requested_callee_directory_id: Option<u16>,
     pub phase: CallPhase,
     pub started_elapsed_seconds: u64,
     pub patience_deadline_elapsed_seconds: u64,

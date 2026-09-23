@@ -1,4 +1,5 @@
-# Mechanical exchange settings. Add [[subscribers]] entries for the story.
+# Shared exchange resources. Story beats, prompts, rewards, and authored audio
+# remain in the Rust story modules. Components share these subscriber records.
 active_calls = 3
 patience_min_seconds = 32
 patience_max_seconds = 64

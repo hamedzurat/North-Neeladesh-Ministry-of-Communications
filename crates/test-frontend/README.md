@@ -94,6 +94,14 @@ It must write JSON to stdout:
 The adapter generates only the player's words. The backend remains responsible
 for routing, dialogue response generation, and game state.
 
+The scripted frontend uses the same human actions as the cabinet.
+`route_direct_call` connects the caller to the operator, rings the destination,
+cranks the delayed ring, and routes the direct circuit. `route_tap_call` then
+connects the two TAP ports, holds TAP monitoring, waits for the prerecorded call
+to finish, and releases the control. Story paths may add speech or service
+actions around those shared routing actions, but should not duplicate the cord
+sequence.
+
 During a run, the terminal prints:
 
 ```text

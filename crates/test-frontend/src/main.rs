@@ -1052,7 +1052,7 @@ fn run_cross_thread_success(
             revision,
             ringing.clone(),
             false,
-            [0, 0, 0, 3],
+            directory_for_id(1024),
             3,
         ),
     )?;
@@ -1069,7 +1069,14 @@ fn run_cross_thread_success(
     let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 3 })?;
     state = exchange(
         backend,
-        input_with_ring(&mut sequence, revision, ringing, false, [0, 0, 0, 3], 3),
+        input_with_ring(
+            &mut sequence,
+            revision,
+            ringing,
+            false,
+            directory_for_id(1024),
+            3,
+        ),
     )?;
     revision = state.state_revision;
     log.row(CsvRow {
@@ -1088,7 +1095,7 @@ fn run_cross_thread_success(
             revision,
             vec![cord(PortId::Subscriber(2), PortId::Subscriber(3))],
             false,
-            [0, 0, 0, 3],
+            directory_for_id(1024),
         ),
     )?;
     revision = state.state_revision;
@@ -1121,7 +1128,7 @@ fn run_cross_thread_success(
             revision,
             vec![cord(PortId::Subscriber(2), PortId::Subscriber(3))],
             false,
-            [0, 0, 0, 3],
+            directory_for_id(1024),
         ),
     )?;
     revision = state.state_revision;
@@ -1888,7 +1895,15 @@ fn route_direct_call(
             revision,
             ringing.clone(),
             false,
-            [0, 0, 0, callee],
+            directory_for_id(
+                state
+                    .output
+                    .calls
+                    .iter()
+                    .find(|call| call.requested_callee_line == callee)
+                    .and_then(|call| call.requested_callee_directory_id)
+                    .ok_or("active call has no directory id")?,
+            ),
             callee as i16,
         ),
     )?;
@@ -1901,7 +1916,15 @@ fn route_direct_call(
             revision,
             ringing,
             false,
-            [0, 0, 0, callee],
+            directory_for_id(
+                state
+                    .output
+                    .calls
+                    .iter()
+                    .find(|call| call.requested_callee_line == callee)
+                    .and_then(|call| call.requested_callee_directory_id)
+                    .ok_or("active call has no directory id")?,
+            ),
             callee as i16,
         ),
     )?;
@@ -1909,13 +1932,41 @@ fn route_direct_call(
     let direct = vec![cord(PortId::Subscriber(caller), PortId::Subscriber(callee))];
     state = exchange(
         backend,
-        input(sequence, revision, direct.clone(), false, [0, 0, 0, callee]),
+        input(
+            sequence,
+            revision,
+            direct.clone(),
+            false,
+            directory_for_id(
+                state
+                    .output
+                    .calls
+                    .iter()
+                    .find(|call| call.requested_callee_line == callee)
+                    .and_then(|call| call.requested_callee_directory_id)
+                    .ok_or("active call has no directory id")?,
+            ),
+        ),
     )?;
     revision = state.state_revision;
     let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 3 })?;
     Ok(exchange(
         backend,
-        input(sequence, revision, direct, false, [0, 0, 0, callee]),
+        input(
+            sequence,
+            revision,
+            direct,
+            false,
+            directory_for_id(
+                state
+                    .output
+                    .calls
+                    .iter()
+                    .find(|call| call.requested_callee_line == callee)
+                    .and_then(|call| call.requested_callee_directory_id)
+                    .ok_or("active call has no directory id")?,
+            ),
+        ),
     )?)
 }
 
@@ -1935,7 +1986,21 @@ fn route_tap_call(
     ];
     let mut state = exchange(
         backend,
-        tap_input(sequence, revision, tap.clone(), true, [0, 0, 0, callee]),
+        tap_input(
+            sequence,
+            revision,
+            tap.clone(),
+            true,
+            directory_for_id(
+                state
+                    .output
+                    .calls
+                    .iter()
+                    .find(|call| call.requested_callee_line == callee)
+                    .and_then(|call| call.requested_callee_directory_id)
+                    .ok_or("active call has no directory id")?,
+            ),
+        ),
     )?;
     for _ in 0..30 {
         if state.output.tap_bridge_audio_active {
@@ -1949,7 +2014,15 @@ fn route_tap_call(
                 state.state_revision,
                 tap.clone(),
                 true,
-                [0, 0, 0, callee],
+                directory_for_id(
+                    state
+                        .output
+                        .calls
+                        .iter()
+                        .find(|call| call.requested_callee_line == callee)
+                        .and_then(|call| call.requested_callee_directory_id)
+                        .ok_or("active call has no directory id")?,
+                ),
             ),
         )?;
     }
@@ -1981,7 +2054,15 @@ fn route_tap_call(
             state.state_revision,
             tap,
             false,
-            [0, 0, 0, callee],
+            directory_for_id(
+                state
+                    .output
+                    .calls
+                    .iter()
+                    .find(|call| call.requested_callee_line == callee)
+                    .and_then(|call| call.requested_callee_directory_id)
+                    .ok_or("active call has no directory id")?,
+            ),
         ),
     )?)
 }
@@ -2132,7 +2213,13 @@ fn run_neel_story(
         let wrong = vec![cord(PortId::Subscriber(2), PortId::Subscriber(4))];
         let wrong_response = exchange(
             backend,
-            input(&mut sequence, revision, wrong, false, [0, 0, 0, 4]),
+            input(
+                &mut sequence,
+                revision,
+                wrong,
+                false,
+                directory_for_id(1031),
+            ),
         )?;
         if wrong_response.accepted {
             return Err("Neel misdirection unexpectedly succeeded".into());
@@ -2180,7 +2267,7 @@ fn run_neel_story(
             revision,
             ringing.clone(),
             false,
-            [0, 0, 0, 3],
+            directory_for_id(1024),
             3,
         ),
     )?;
@@ -2197,7 +2284,14 @@ fn run_neel_story(
     let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 3 })?;
     state = exchange(
         backend,
-        input_with_ring(&mut sequence, revision, ringing, false, [0, 0, 0, 3], 3),
+        input_with_ring(
+            &mut sequence,
+            revision,
+            ringing,
+            false,
+            directory_for_id(1024),
+            3,
+        ),
     )?;
     revision = state.state_revision;
     if !state.output.line_lamps[3] {
@@ -2215,7 +2309,13 @@ fn run_neel_story(
     let direct = vec![cord(PortId::Subscriber(2), PortId::Subscriber(3))];
     state = exchange(
         backend,
-        input(&mut sequence, revision, direct.clone(), false, [0, 0, 0, 3]),
+        input(
+            &mut sequence,
+            revision,
+            direct.clone(),
+            false,
+            directory_for_id(1024),
+        ),
     )?;
     revision = state.state_revision;
     if !state.accepted {
@@ -2274,7 +2374,13 @@ fn run_neel_story(
         if path.contains("rewire") {
             state = exchange(
                 backend,
-                input(&mut sequence, revision, vec![], false, [0, 0, 0, 3]),
+                input(
+                    &mut sequence,
+                    revision,
+                    vec![],
+                    false,
+                    directory_for_id(1024),
+                ),
             )?;
             revision = state.state_revision;
             if path.contains("late") {
@@ -2289,7 +2395,13 @@ fn run_neel_story(
         }
         state = exchange(
             backend,
-            tap_input(&mut sequence, revision, tap.clone(), true, [0, 0, 0, 3]),
+            tap_input(
+                &mut sequence,
+                revision,
+                tap.clone(),
+                true,
+                directory_for_id(1024),
+            ),
         )?;
         revision = state.state_revision;
         if path.contains("rewire_late") {
@@ -2351,7 +2463,7 @@ fn run_neel_story(
         )?;
         state = exchange(
             backend,
-            tap_input(&mut sequence, revision, tap, false, [0, 0, 0, 3]),
+            tap_input(&mut sequence, revision, tap, false, directory_for_id(1024)),
         )?;
         if state.output.line_lamps[2] {
             return Err("Neel LED remained active after the loaded audio duration".into());
@@ -2365,7 +2477,13 @@ fn run_neel_story(
         )?;
         state = exchange(
             backend,
-            input(&mut sequence, revision, direct.clone(), false, [0, 0, 0, 3]),
+            input(
+                &mut sequence,
+                revision,
+                direct.clone(),
+                false,
+                directory_for_id(1024),
+            ),
         )?;
     }
     revision = state.state_revision;
@@ -2670,6 +2788,15 @@ fn run_neel_story(
 
 fn cord(first: PortId, second: PortId) -> CordConnection {
     CordConnection { first, second }
+}
+
+fn directory_for_id(directory_id: u16) -> [u8; 4] {
+    [
+        (directory_id / 1000) as u8,
+        ((directory_id / 100) % 10) as u8,
+        ((directory_id / 10) % 10) as u8,
+        (directory_id % 10) as u8,
+    ]
 }
 
 fn input(

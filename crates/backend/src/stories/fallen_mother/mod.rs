@@ -1,4 +1,6 @@
-pub const CALLER_LINE: u8 = 1;
+use exchange_protocol::Mechanic;
+
+pub const CALLER_DIRECTORY: u16 = 1022;
 pub const PLACE: &str = "SHAPLA APARTMENTS";
 pub const OPENING_DIALOGUE: &str = "My mother fell down in the bathroom. I don't know what to do.";
 #[allow(dead_code)]
@@ -63,6 +65,14 @@ Say directly to the operator: "You failed to help, and I will pursue you for the
 Do not invent legal details or amounts.
 Return only the spoken sentence.
 "#;
+
+pub const MECHANICS: &[Mechanic] = &[
+    Mechanic::OperatorConnection,
+    Mechanic::SubscriberConversation,
+    Mechanic::PoliceService,
+    Mechanic::EmsService,
+    Mechanic::Scoring,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Beat {

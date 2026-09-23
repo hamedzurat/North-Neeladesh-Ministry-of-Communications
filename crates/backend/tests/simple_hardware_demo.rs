@@ -48,6 +48,18 @@ fn cord(first: PortId, second: PortId) -> CordConnection {
     CordConnection { first, second }
 }
 
+fn directory_id(line: u8) -> u16 {
+    match line {
+        0 => 1021,
+        1 => 1022,
+        2 => 1023,
+        3 => 1024,
+        4 => 1031,
+        5 => 1032,
+        _ => panic!("line {line} is outside the demo"),
+    }
+}
+
 #[test]
 fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
     let mut backend = Backend::new_simple_hardware_demo();
@@ -92,7 +104,7 @@ fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
             PortId::Subscriber(first.caller_line),
             PortId::Operator,
         )],
-        u16::from(first.requested_callee_line),
+        directory_id(first.requested_callee_line),
         [0; 4],
     ));
     assert_eq!(
@@ -110,7 +122,7 @@ fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
                 PortId::RingGenerator,
             ),
         ],
-        u16::from((first.requested_callee_line + 1) % 6),
+        directory_id((first.requested_callee_line + 1) % 6),
         [0, 0, 0, 100],
     ));
     assert!(wrong_directory.accepted);
@@ -126,7 +138,7 @@ fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
             PortId::Subscriber(first.caller_line),
             PortId::Subscriber(first.requested_callee_line),
         )],
-        u16::from(first.requested_callee_line),
+        directory_id(first.requested_callee_line),
         [0; 4],
     ));
     assert_eq!(connected.output.call.unwrap().phase, CallPhase::Connected);
@@ -148,7 +160,7 @@ fn live_hardware_loop_keeps_three_calls_on_lines_zero_through_five() {
             PortId::Subscriber(first.caller_line),
             PortId::Subscriber(first.requested_callee_line),
         )],
-        u16::from(first.requested_callee_line),
+        directory_id(first.requested_callee_line),
         [0; 4],
     ));
     assert_eq!(next.output.calls.len(), 3);

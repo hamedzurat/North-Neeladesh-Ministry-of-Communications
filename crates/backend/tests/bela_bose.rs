@@ -60,6 +60,8 @@ fn registered_stories_start_with_professor_routing_and_authored_directory_record
         .flat_map(|page| &page.lines)
         .collect::<Vec<_>>();
     assert_eq!(response.output.directory_pages[0].heading, "Meghna Abashon");
+    assert_eq!(response.output.directory_pages[0].directory_id, Some(1031));
+    assert_eq!(response.output.directory_pages[0].line, Some(4));
     assert!(dog.iter().any(|line| *line == "SUBSCRIBER // Bela Bose"));
     assert!(
         dog.iter()
@@ -77,6 +79,13 @@ fn registered_stories_start_with_professor_routing_and_authored_directory_record
     assert!(
         cat.iter()
             .any(|line| *line == "NOTE // has a cat named Tuli")
+    );
+    assert!(
+        backend
+            .debug_snapshot()
+            .story_mechanics
+            .iter()
+            .any(|mechanic| mechanic == "bela_bose // directory_selection")
     );
 }
 
@@ -105,7 +114,7 @@ fn professor_must_wait_for_delayed_ring_activation_before_direct_connection() {
         &backend,
         3,
         ringing.clone(),
-        [0, 0, 0, 3],
+        [1, 0, 2, 4],
         3,
     ));
     assert!(!backend.frontend_state().line_lamps[3]);
@@ -114,11 +123,11 @@ fn professor_must_wait_for_delayed_ring_activation_before_direct_connection() {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
         command: DebugCommand::AdvanceTime { seconds: 3 },
     });
-    let ready = backend.apply_input_message(input_with_ring(&backend, 4, ringing, [0, 0, 0, 3], 3));
+    let ready = backend.apply_input_message(input_with_ring(&backend, 4, ringing, [1, 0, 2, 4], 3));
     assert!(ready.output.line_lamps[3]);
 
     let direct = vec![cord(PortId::Subscriber(2), PortId::Subscriber(3))];
-    let response = backend.apply_input_message(input(&backend, 5, direct, [0, 0, 0, 3]));
+    let response = backend.apply_input_message(input(&backend, 5, direct, [1, 0, 2, 4]));
     assert!(response.accepted);
     assert_eq!(
         response

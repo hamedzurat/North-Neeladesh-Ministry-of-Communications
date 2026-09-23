@@ -33,6 +33,13 @@ fn production_exchange_starts_registered_story_callers() {
 
     assert!(response.accepted);
     assert_eq!(response.output.calls.len(), 4);
+    assert!(
+        backend
+            .debug_snapshot()
+            .events
+            .iter()
+            .any(|event| event.category == "input" && event.action == "accepted")
+    );
 
     let response = backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
