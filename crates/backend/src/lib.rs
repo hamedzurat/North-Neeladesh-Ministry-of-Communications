@@ -1081,7 +1081,12 @@ impl Backend {
     }
 
     fn record_story_turn(&mut self, speaker: &str, text: &str) {
-        if self.voice_subscriber_line != Some(self.story_caller()) {
+        let Some(caller) = self.voice_subscriber_line else {
+            return;
+        };
+        if !((self.shapla_story_active() && caller == stories::shapla_apartments::CALLER_LINE)
+            || self.is_neel_caller(caller))
+        {
             return;
         }
         self.story_conversation.push(ConversationTurn {
