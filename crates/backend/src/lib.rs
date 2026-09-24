@@ -1736,6 +1736,7 @@ impl Backend {
                 .and_then(|(caller, callee)| stories::bela_bose::audio_path(caller, callee))
                 .is_some();
         let authored_audio = authored_audio_path(&self.config, caller, callee).is_some();
+        let local_tap_audio = tap_audio && authored_audio;
         let has_opening_audio = if neel_audio {
             tap_audio && neel_audio
         } else {
@@ -1766,7 +1767,13 @@ impl Backend {
         let Some(call) = self.calls.get_mut(index) else {
             return;
         };
-        if neel_audio && !has_opening_audio {
+        if local_tap_audio {
+            call.phase = CallPhase::Connected;
+            call.connected_at = Some(Instant::now());
+            call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
+            call.audio_duration_seconds =
+                authored_audio_duration_seconds(&self.config, caller, callee).unwrap_or(1);
+        } else if neel_audio && !has_opening_audio {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);

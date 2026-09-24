@@ -361,6 +361,70 @@ voice_update_playback :: proc(app: ^Input_State) {
 	resize(&voice.playback_queue, len(voice.playback_queue) - VOICE_PLAYBACK_BUFFER_SAMPLES)
 }
 
+voice_update_tap_audio :: proc(app: ^Input_State, now: f64) {
+	voice := &app.voice
+	connected := false
+	caller: u8 = 0
+	callee: u8 = 0
+	if call, ok := app.backend_output.call.?; ok && call.phase == "Connected" {
+		connected = true
+		caller = call.caller_line
+		callee = call.requested_callee_line
+	}
+	if connected {
+		if !voice.tap_call_started || voice.tap_call_caller != caller || voice.tap_call_callee != callee {
+			voice.tap_call_started = true
+			voice.tap_call_started_at = now
+			voice.tap_call_caller = caller
+			voice.tap_call_callee = callee
+		}
+	} else {
+		voice.tap_call_started = false
+	}
+
+	tap_down := app.intent.held_controls.tap && app.backend_output.tap_audio_clip != ""
+	if !tap_down {
+		if voice.tap_sound_playing {
+			rl.StopSound(voice.tap_sound)
+			voice.tap_sound_playing = false
+		}
+		return
+	}
+	if voice.tap_sound_playing || !voice.tap_call_started do return
+
+	path := strings.clone_to_cstring(app.backend_output.tap_audio_clip, context.temp_allocator) or_else cstring("")
+	wave := rl.LoadWave(path)
+	if wave.data == nil || wave.frameCount == 0 {
+		fmt.println(fmt.tprintf("[VOICE-DEBUG] tap audio load failed path=%s", app.backend_output.tap_audio_clip))
+		return
+	}
+	offset_frames := u32(max(0, int((now - voice.tap_call_started_at) * f64(wave.sampleRate))))
+	if offset_frames >= wave.frameCount {
+		rl.UnloadWave(wave)
+		return
+	}
+	rl.WaveCrop(&wave, i32(offset_frames), i32(wave.frameCount))
+	sound := rl.LoadSoundFromWave(wave)
+	rl.UnloadWave(wave)
+	if sound.frameCount == 0 {
+		fmt.println(fmt.tprintf("[VOICE-DEBUG] tap audio conversion failed path=%s", app.backend_output.tap_audio_clip))
+		return
+	}
+	if voice.tap_sound_loaded {
+		rl.UnloadSound(voice.tap_sound)
+	}
+	voice.tap_sound = sound
+	voice.tap_sound_loaded = true
+	rl.SetSoundVolume(voice.tap_sound, 1.0)
+	rl.PlaySound(voice.tap_sound)
+	voice.tap_sound_playing = true
+	fmt.println(fmt.tprintf(
+		"[VOICE-DEBUG] tap local playback path=%s offset=%.3fs",
+		app.backend_output.tap_audio_clip,
+		now - voice.tap_call_started_at,
+	))
+}
+
 voice_finish_playback :: proc(voice: ^Voice_State) {
 	voice.playback_finishing = true
 	voice.has_audio_sequence = false
@@ -381,6 +445,12 @@ voice_close :: proc(voice: ^Voice_State) {
 	voice.playback_finishing = false
 	voice.accept_audio = false
 	delete(voice.playback_queue)
+	if voice.tap_sound_loaded {
+		rl.StopSound(voice.tap_sound)
+		rl.UnloadSound(voice.tap_sound)
+		voice.tap_sound_loaded = false
+		voice.tap_sound_playing = false
+	}
 	if voice.connected {
 		net.close(voice.socket)
 		voice.connected = false

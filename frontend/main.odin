@@ -32,6 +32,7 @@ main :: proc() {
 		delta := rl.GetFrameTime()
 		poll_backend(&app, rl.GetTime())
 		update_reference_controls(&app, delta)
+		voice_update_tap_audio(&app, rl.GetTime())
 		voice_poll(&app, rl.GetTime())
 		voice_update_playback(&app)
 

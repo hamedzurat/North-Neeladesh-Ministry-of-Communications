@@ -135,6 +135,13 @@ Voice_State :: struct {
 	accept_audio:         bool,
 	rtp_packets_received: u32,
 	rtp_samples_received: u64,
+	tap_sound:             rl.Sound,
+	tap_sound_loaded:      bool,
+	tap_sound_playing:     bool,
+	tap_call_started_at:   f64,
+	tap_call_started:      bool,
+	tap_call_caller:       u8,
+	tap_call_callee:       u8,
 	status:               string,
 }
 
