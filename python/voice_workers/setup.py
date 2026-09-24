@@ -4,10 +4,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub import hf_hub_download
 
 from .common import (
-    LLAMA_BINARY,
     MODEL_ROOT,
     POCKET_VOICES,
     WHISPER_BINARY,
@@ -39,10 +38,10 @@ POCKET_VOICE_FILES = {
 
 
 def main() -> int:
-    for binary in (WHISPER_BINARY, LLAMA_BINARY):
+    for binary in (WHISPER_BINARY, "ollama"):
         if shutil.which(binary) is None:
             raise RuntimeError(
-                f"missing {binary}; install it with: sudo pacman -S llama-cpp ggml-cuda whisper-cpp"
+                f"missing {binary}; install whisper.cpp and Ollama before running voice-setup"
             )
     MODEL_ROOT.mkdir(parents=True, exist_ok=True)
     print(f"Downloading voice models into {MODEL_ROOT}")
@@ -66,7 +65,6 @@ def main() -> int:
     print(f"  Dialogue: Ollama {OLLAMA_MODEL}")
     print(f"  PocketTTS voices: {len(POCKET_VOICES)} files in {next(iter(POCKET_VOICES.values())).parent}")
     print(f"  Whisper runtime: {shutil.which(WHISPER_BINARY)}")
-    print(f"  Dialogue runtime: {shutil.which(LLAMA_BINARY)}")
     return 0
 
 

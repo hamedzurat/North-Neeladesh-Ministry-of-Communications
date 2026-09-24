@@ -18,20 +18,20 @@ panel and render the returned state.
 The four directory digits are public subscriber IDs. They are not hardware
 line numbers. The current configuration contains these records:
 
-| Directory ID | Subscriber | Place | Hardware line |
-| --- | --- | --- | ---: |
-| 1021 | Rafiq Ahmed | Mohona Heights | 0 |
-| 1022 | Nusrat Rahman | Shapla Apartments | 1 |
-| 1023 | Prof. Kashem | Neel University | 2 |
-| 1024 | Arnab Bhattacharjee | Shadhin Housing | 3 |
-| 1031 | Bela Bose, dog entry | Meghna Abashon | 4 |
-| 1032 | Bela Bose, cat entry | Padma Nibash | 5 |
-| 1025 | Agent Rahman | Secret Police | 6 |
-| 1026 | Farhana | Bagha News | 7 |
-| 1027 | Tariq | Koyal Market | 8 |
-| 1028 | Dr. Kamal | Karnafuli Colony | 9 |
-| 1029 | Rehana | Teesta Bhaban | 10 |
-| 1030 | Nahid | Shonarpara Tower | 11 |
+| Directory ID | Subscriber           | Place             | Hardware line |
+| ------------ | -------------------- | ----------------- | ------------: |
+| 1021         | Rafiq Ahmed          | Mohona Heights    |             0 |
+| 1022         | Nusrat Rahman        | Shapla Apartments |             1 |
+| 1023         | Prof. Kashem         | Neel University   |             2 |
+| 1024         | Arnab Bhattacharjee  | Shadhin Housing   |             3 |
+| 1031         | Bela Bose, dog entry | Meghna Abashon    |             4 |
+| 1032         | Bela Bose, cat entry | Padma Nibash      |             5 |
+| 1025         | Agent Rahman         | Secret Police     |             6 |
+| 1026         | Farhana              | Bagha News        |             7 |
+| 1027         | Tariq                | Koyal Market      |             8 |
+| 1028         | Dr. Kamal            | Karnafuli Colony  |             9 |
+| 1029         | Rehana               | Teesta Bhaban     |            10 |
+| 1030         | Nahid                | Shonarpara Tower  |            11 |
 
 The physical line column is an implementation detail. Story rules use the
 directory IDs. A lookup for an unlisted ID displays `NO RECORD` and does not
@@ -73,12 +73,12 @@ endpoint can occur in only one cord.
 
 For routing, the important circuits are:
 
-| Circuit | Required cords | Use |
-| --- | --- | --- |
-| Operator session | Caller to `OPERATOR` | Speak with the caller. |
-| Ringing | Caller to `OPERATOR`, destination to `RING GENERATOR` | Start and arm a ring. |
-| Direct call | Caller to destination | Complete routing after the ring is ready. |
-| Tap monitoring | Caller to one Tap port, destination to the other Tap port | Listen to a connected call while holding `TAP`. |
+| Circuit          | Required cords                                            | Use                                             |
+| ---------------- | --------------------------------------------------------- | ----------------------------------------------- |
+| Operator session | Caller to `OPERATOR`                                      | Speak with the caller.                          |
+| Ringing          | Caller to `OPERATOR`, destination to `RING GENERATOR`     | Start and arm a ring.                           |
+| Direct call      | Caller to destination                                     | Complete routing after the ring is ready.       |
+| Tap monitoring   | Caller to one Tap port, destination to the other Tap port | Listen to a connected call while holding `TAP`. |
 
 Tap ports may be swapped. The backend accepts caller-to-`TAP 1` with
 destination-to-`TAP 2`, or the reverse. The Tap Bridge is active only while the
@@ -88,17 +88,17 @@ call is connected, the two Tap cords are exact, and `TAP` is held.
 
 The visible call phases mean:
 
-| Phase | Meaning |
-| --- | --- |
-| `Waiting` | The caller is waiting for the operator. |
-| `OperatorSession` | The caller is connected to the operator. |
-| `AwaitingRouting` | The caller was released from the operator and is waiting for routing. |
-| `Held` | Routing is accepted and authored opening audio is being prepared. |
-| `Ringing` | The Ring Generator has started the requested call. |
-| `Connected` | The call is in a direct or Tap circuit, or its authored audio is playing. |
-| `Completed` | Terminal history state for a successful call. |
-| `Missed` | The caller's waiting deadline expired. |
-| `Failed` | The operator made a disallowed connection or audio generation failed. |
+| Phase             | Meaning                                                                   |
+| ----------------- | ------------------------------------------------------------------------- |
+| `Waiting`         | The caller is waiting for the operator.                                   |
+| `OperatorSession` | The caller is connected to the operator.                                  |
+| `AwaitingRouting` | The caller was released from the operator and is waiting for routing.     |
+| `Held`            | Routing is accepted and authored opening audio is being prepared.         |
+| `Ringing`         | The Ring Generator has started the requested call.                        |
+| `Connected`       | The call is in a direct or Tap circuit, or its authored audio is playing. |
+| `Completed`       | Terminal history state for a successful call.                             |
+| `Missed`          | The caller's waiting deadline expired.                                    |
+| `Failed`          | The operator made a disallowed connection or audio generation failed.     |
 
 If a ringing circuit is removed before the direct circuit is ready, the call
 gets a 16-second ring grace period before returning to `AwaitingRouting`.
@@ -193,12 +193,12 @@ Apartments. The classifier must also return `success`.
 
 The transition table is:
 
-| Classifier result | Service control | Next beat |
-| --- | --- | --- |
-| `success` | `EMS` | `HappyFollowup` |
-| `success` | `POLICE` | `NeutralFollowup` |
-| `failure` | `EMS` or `POLICE` | `BadFollowup` |
-| No service turn | None | Remains in `EmergencyCall` |
+| Classifier result | Service control   | Next beat                  |
+| ----------------- | ----------------- | -------------------------- |
+| `success`         | `EMS`             | `HappyFollowup`            |
+| `success`         | `POLICE`          | `NeutralFollowup`          |
+| `failure`         | `EMS` or `POLICE` | `BadFollowup`              |
+| No service turn   | None              | Remains in `EmergencyCall` |
 
 The physical protocol rejects simultaneous `POLICE` and `EMS`. The story
 function has a police-first rule if both flags are supplied internally, but a
@@ -277,11 +277,11 @@ sequence. The next contact is selected in seeded pseudo-random order.
 
 The three contact beats are:
 
-| Beat | Caller | Caller ID | Destination |
-| --- | --- | ---: | --- |
-| `MundaneCall` | Dr. Kamal | 1028 | Farhana, 1026 |
-| `WhistleblowerLeak` | Tariq | 1027 | Farhana, 1026 |
-| `SubscriberCall` | Rehana | 1029 | Farhana, 1026 |
+| Beat                | Caller    | Caller ID | Destination   |
+| ------------------- | --------- | --------: | ------------- |
+| `MundaneCall`       | Dr. Kamal |      1028 | Farhana, 1026 |
+| `WhistleblowerLeak` | Tariq     |      1027 | Farhana, 1026 |
+| `SubscriberCall`    | Rehana    |      1029 | Farhana, 1026 |
 
 Each caller has authored audio. Route the call to Farhana, then use the two
 Tap Bridge cords and hold `TAP` to listen. The backend records the contact as
@@ -358,8 +358,7 @@ These are intentional implementation details worth deciding explicitly:
 3. Bela's callers have 32-second patience deadlines, but Bela's story mechanic
    declaration does not list `patience`. The call behavior still uses the
    32-second deadline.
-4. The directory no-record display still says `SELECT A LINE FROM 0000 THROUGH
-   0011`. The actual public IDs are the IDs in the table above.
+4. The directory no-record display still says `SELECT A LINE FROM 0000 THROUGH 0011`. The actual public IDs are the IDs in the table above.
 5. A normal connected call is considered complete after its authored audio
    duration. If its connected topology is invalid for five seconds, the
    backend also finishes it as completed rather than marking it missed.

@@ -2,20 +2,15 @@
 
 import json
 import os
-import shlex
-import shutil
-import subprocess
 import sys
 import urllib.error
 import urllib.request
 
-from .common import DIALOGUE_MODEL, LLAMA_BINARY, dialogue_prompt_template, fail, worker_timeout
+from .common import dialogue_prompt_template, fail, worker_timeout
 
 MAX_DIALOGUE_CHARS = 2_000
 MAX_TRANSCRIPT_CHARS = 4_000
 MAX_OUTPUT_TOKENS = 96
-DEFAULT_LLAMA_ARGS = "--ctx-size 4096 --n-gpu-layers 99 --no-warmup"
-
 NATURAL_REPLY_INSTRUCTIONS = """Before producing the JSON, follow these conversation rules:
 - Reply to the operator's latest question or statement first. Use the transcript to avoid asking for information the operator already gave you.
 - Sound like a real person speaking on a telephone: use plain, natural language and usually one or two concise sentences.
@@ -66,76 +61,6 @@ or repeat the caller's opening statement.
 {NATURAL_REPLY_INSTRUCTIONS}"""
 
 
-def main() -> int:
-    if "--persistent" in sys.argv:
-        return persistent_main()
-    try:
-        request = json.load(sys.stdin)
-    except json.JSONDecodeError as error:
-        fail(f"invalid dialogue request: {error}")
-    if not isinstance(request, dict):
-        fail("dialogue request must be a JSON object")
-
-    binary_name = os.environ.get("NN_LLAMA_CPP", str(LLAMA_BINARY))
-    binary = shutil.which(binary_name) or binary_name
-    model = os.environ.get("NN_QWEN3_MODEL", str(DIALOGUE_MODEL))
-    if not os.path.isfile(model):
-        fail(f"Qwen3 model does not exist: {model}")
-
-    command = [
-        binary,
-        "--model",
-        model,
-        "--prompt",
-        prompt_for(request),
-        "--n-predict",
-        str(MAX_OUTPUT_TOKENS),
-        "--temp",
-        os.environ.get("NN_DIALOGUE_TEMPERATURE", "0.35"),
-        "--no-display-prompt",
-        "--single-turn",
-        "--simple-io",
-        "--no-show-timings",
-    ]
-    command.extend(shlex.split(os.environ.get("NN_LLAMA_EXTRA_ARGS", DEFAULT_LLAMA_ARGS)))
-    try:
-        result = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=worker_timeout(),
-        )
-    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
-        fail(f"llama.cpp failed: {error}")
-    if result.returncode != 0:
-        fail(f"llama.cpp exited with {result.returncode}: {result.stderr.strip()}")
-
-    decoder = json.JSONDecoder()
-    response = None
-    for index, character in enumerate(result.stdout):
-        if character != "{":
-            continue
-        try:
-            candidate, _ = decoder.raw_decode(result.stdout[index:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(candidate, dict) and set(candidate) == {"dialogue"}:
-            response = candidate
-    if response is None:
-        fail("llama.cpp returned invalid dialogue JSON")
-    if not isinstance(response, dict) or set(response) != {"dialogue"}:
-        fail("dialogue JSON must contain only the dialogue property")
-    dialogue = response["dialogue"]
-    if not isinstance(dialogue, str) or not dialogue.strip():
-        fail("dialogue JSON did not contain non-empty dialogue")
-    dialogue = dialogue.strip()
-    if len(dialogue) > MAX_DIALOGUE_CHARS:
-        fail("dialogue exceeded the bounded turn limit")
-    json.dump({"dialogue": dialogue}, sys.stdout, ensure_ascii=False, separators=(",", ":"))
-    return 0
-
-
 def persistent_main() -> int:
     base_url = os.environ.get("NN_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
     model = os.environ.get("NN_OLLAMA_MODEL", "qwen3.5:4b")
@@ -182,4 +107,4 @@ def persistent_main() -> int:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(persistent_main())

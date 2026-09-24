@@ -22,11 +22,10 @@ backend can recover or retry the session.
 
 The backend uses the checked-in real worker adapters. The Pi relay uses Python,
 PipeWire's `pw-record`, and `aplay`, so the Pi needs no Rust toolchain or voice
-binary. The backend STT and dialogue invoke the pacman-installed whisper.cpp and
-llama.cpp runtimes. The Python workers run from the `python/` uv project;
+binary. The backend STT invokes the pacman-installed whisper.cpp runtime and
+dialogue uses the local Ollama service. The Python workers run from the `python/` uv project;
 `--no-sync` prevents the backend from installing packages or downloading a
-model at runtime. Install the runtimes with `sudo pacman -S llama-cpp ggml-cuda
-whisper-cpp`, provision the model assets with `just voice-setup`, then run
+model at runtime. Install whisper.cpp and Ollama, provision the model assets with `just voice-setup`, then run
 `just voice-preflight` before the first session.
 
 The real path requires these local assets and dependencies:
@@ -46,9 +45,8 @@ just voice-preflight
 just frontend
 ```
 
-The paths above are automatic defaults. `NN_VOICE_MODEL_ROOT`, `NN_WHISPER_MODEL`,
-`NN_QWEN3_MODEL` remains an optional override for a different dialogue-model
-installation. Each `SubscriberProfile.voice_id` selects one of the configured
+The paths above are automatic defaults. `NN_VOICE_MODEL_ROOT` and
+`NN_WHISPER_MODEL` remain optional Whisper overrides. Each `SubscriberProfile.voice_id` selects one of the configured
 PocketTTS voice embeddings; no TTS model override is supported. The active neutral
 Call selects the subscriber voice context for each request.
 

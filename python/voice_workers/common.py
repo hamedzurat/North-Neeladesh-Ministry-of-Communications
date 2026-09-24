@@ -12,14 +12,12 @@ MODEL_ROOT = Path(
     )
 )
 WHISPER_MODEL = MODEL_ROOT / "ggml-base.en.bin"
-DIALOGUE_MODEL = MODEL_ROOT / "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
 POCKET_VOICE_ROOT = Path(__file__).resolve().parents[1] / ".models"
 POCKET_VOICES = {
     f"pocket-line-{line}": POCKET_VOICE_ROOT / f"pocket-line-{line}.safetensors"
     for line in range(12)
 }
 WHISPER_BINARY = "whisper-cli"
-LLAMA_BINARY = "llama-cli"
 
 DEFAULT_DIALOGUE_PROMPT = """You are a configured subscriber in a telephone exchange.
 Generate only the subscriber's next spoken reply to the Exchange Operator.

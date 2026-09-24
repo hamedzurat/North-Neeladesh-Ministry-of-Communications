@@ -8,7 +8,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fmt::Display;
-use std::io::{self, ErrorKind};
+use std::fs;
+use std::io::{self, ErrorKind, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::PathBuf;
 use std::process::Command;
@@ -42,6 +43,40 @@ fn authored_audio_path(config: &GameConfig, caller: u8, callee: u8) -> Option<Pa
     stories::bela_bose::audio_path(caller, callee)
         .or_else(|| stories::dirty_work::audio_path(caller, callee))
         .or_else(|| stories::nahid::audio_path(caller, callee))
+}
+
+fn save_voice_capture_wav(
+    conversation_id: u64,
+    session_id: u64,
+    turn_id: u64,
+    samples: &[i16],
+) -> io::Result<PathBuf> {
+    let directory = env::var_os("NN_VOICE_DEBUG_AUDIO_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp/north-neeladesh-voice"));
+    fs::create_dir_all(&directory)?;
+    let path = directory.join(format!(
+        "capture-{conversation_id}-session-{session_id}-turn-{turn_id}.wav"
+    ));
+    let data_size = u32::try_from(samples.len().saturating_mul(2)).unwrap_or(u32::MAX);
+    let riff_size = 36_u32.saturating_add(data_size);
+    let mut file = fs::File::create(&path)?;
+    file.write_all(b"RIFF")?;
+    file.write_all(&riff_size.to_le_bytes())?;
+    file.write_all(b"WAVEfmt ")?;
+    file.write_all(&16_u32.to_le_bytes())?;
+    file.write_all(&1_u16.to_le_bytes())?;
+    file.write_all(&1_u16.to_le_bytes())?;
+    file.write_all(&16_000_u32.to_le_bytes())?;
+    file.write_all(&32_000_u32.to_le_bytes())?;
+    file.write_all(&2_u16.to_le_bytes())?;
+    file.write_all(&16_u16.to_le_bytes())?;
+    file.write_all(b"data")?;
+    file.write_all(&data_size.to_le_bytes())?;
+    for sample in samples {
+        file.write_all(&sample.to_le_bytes())?;
+    }
+    Ok(path)
 }
 
 fn authored_audio_duration_seconds(config: &GameConfig, caller: u8, callee: u8) -> Option<u64> {
@@ -2544,6 +2579,24 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                     } else {
                         None
                     };
+                    if let Some(conversation_id) = conversation_id {
+                        match save_voice_capture_wav(
+                            conversation_id,
+                            input.session_id,
+                            input.turn_id,
+                            &samples,
+                        ) {
+                            Ok(path) => println!(
+                                "[VOICE] capture_saved conversation={} path={}",
+                                conversation_id,
+                                path.display()
+                            ),
+                            Err(error) => eprintln!(
+                                "[VOICE] capture_save_failed conversation={} error={error}",
+                                conversation_id
+                            ),
+                        }
+                    }
                     if let Ok(mut state) = backend.lock() {
                         state.voice_status = Some(VoiceStatus::Transcribing);
                     }
