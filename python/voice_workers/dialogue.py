@@ -149,13 +149,13 @@ def persistent_main() -> int:
                 {
                     "model": model,
                     "messages": [{"role": "user", "content": prompt}],
-                    "think": False,
+                    "think": os.environ.get("NN_OLLAMA_THINK", "false").lower() in {"1", "true", "yes"},
                     "format": "json",
                     "stream": False,
                     "keep_alive": 600,
                     "options": {
-                        "temperature": float(os.environ.get("NN_DIALOGUE_TEMPERATURE", "0.35")),
-                        "num_predict": MAX_OUTPUT_TOKENS,
+                         "temperature": float(os.environ.get("NN_DIALOGUE_TEMPERATURE", "0.35")),
+                         "num_predict": int(os.environ.get("NN_OLLAMA_DIALOGUE_NUM_PREDICT", str(MAX_OUTPUT_TOKENS))),
                     },
                 }
             ).encode()

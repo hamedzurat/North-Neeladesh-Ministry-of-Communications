@@ -20,9 +20,12 @@ def main() -> int:
             {
                 "model": os.environ.get("NN_OLLAMA_CLASSIFIER_MODEL", "qwen3.5:4b"),
                 "messages": [{"role": "user", "content": full_prompt}],
-                "think": False,
+                "think": os.environ.get("NN_OLLAMA_THINK", "false").lower() in {"1", "true", "yes"},
                 "stream": False,
-                "options": {"temperature": 0.0, "num_predict": 8},
+                "options": {
+                    "temperature": 0.0,
+                    "num_predict": int(os.environ.get("NN_OLLAMA_CLASSIFIER_NUM_PREDICT", "8")),
+                },
             }
         ).encode()
         request = urllib.request.Request(

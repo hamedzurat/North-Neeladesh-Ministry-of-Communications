@@ -137,10 +137,13 @@ def main() -> int:
             {
                 "model": os.environ.get("NN_OLLAMA_PLAYER_MODEL", "qwen3.5:4b"),
                 "messages": [{"role": "user", "content": prompt}],
-                "think": False,
+                "think": os.environ.get("NN_OLLAMA_THINK", "false").lower() in {"1", "true", "yes"},
                 "format": "json",
                 "stream": False,
-                "options": {"temperature": 0.2, "num_predict": 80},
+                "options": {
+                    "temperature": 0.2,
+                    "num_predict": int(os.environ.get("NN_OLLAMA_PLAYER_NUM_PREDICT", "80")),
+                },
             }
         ).encode()
         http_request = urllib.request.Request(

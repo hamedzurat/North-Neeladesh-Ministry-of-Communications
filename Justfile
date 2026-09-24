@@ -19,7 +19,11 @@ story-test-all:
         just story-test "${path}" "$temp"
         cat "$temp" >> story-test-all.log
         printf '\n' >> story-test-all.log
+
     done
+
+ollama-benchmark:
+    ./scripts/benchmark_ollama_models.sh
 
 frontend-raylib:
     test -f /usr/lib/libraylib.so || (echo "missing /usr/lib/libraylib.so; install raylib 6.0" >&2 && exit 1)

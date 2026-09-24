@@ -1,0 +1,4 @@
+profile	model	think	wall_seconds	status
+qwen35-4b-no-thinking	qwen3.5:4b	false	103	fail
+qwen35-0.8b-no-thinking	qwen3.5:0.8b	false	35	fail
+qwen35-2b-no-thinking	qwen3.5:2b	false	68	fail
