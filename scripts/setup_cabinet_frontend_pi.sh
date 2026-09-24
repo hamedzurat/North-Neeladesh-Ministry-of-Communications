@@ -41,7 +41,7 @@ fi
 
 if command -v apt-get >/dev/null 2>&1 && ! ldconfig -p 2>/dev/null | grep -q 'libportaudio'; then
     printf 'Installing PortAudio runtime for callback-based capture.\n'
-    sudo apt-get install -y libportaudio2
+    sudo apt-get install -y libportaudio2 libasound2-plugins
 fi
 
 UV_BIN="${UV_BIN:-}"

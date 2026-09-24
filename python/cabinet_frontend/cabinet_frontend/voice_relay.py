@@ -570,14 +570,8 @@ class VoiceRelay:
         self.connection.close()
 
 
-def _capture(command: str | None) -> Capture:
-    if command and command.strip():
-        return AlsaCapture(command)
-    try:
-        return SoundDeviceCapture(status_sink=print)
-    except RuntimeError as error:
-        print(f"VOICE CAPTURE // library unavailable, falling back to pw-record: {error}", flush=True)
-        return PipeWireCapture(status_sink=print)
+def _capture() -> Capture:
+    return SoundDeviceCapture(status_sink=print)
 
 
 def run_embedded(stop: threading.Event) -> None:
@@ -593,7 +587,6 @@ def run_embedded(stop: threading.Event) -> None:
     default_host = backend_host or (backend_address.rsplit(":", 1)[0] if backend_address else "127.0.0.1")
     address = os.environ.get("NN_VOICE_BACKEND_ADDRESS", f"{default_host}:7879")
     host, port_text = address.rsplit(":", 1)
-    capture = os.environ.get("NN_VOICE_CAPTURE_COMMAND")
     playback = os.environ.get("NN_VOICE_PLAYBACK_COMMAND")
     diagnostics = ChangeLogger(print)
     while not stop.is_set():
@@ -605,7 +598,7 @@ def run_embedded(stop: threading.Event) -> None:
             connection.settimeout(5.0)
             relay = VoiceRelay(
                 connection,
-                _capture(capture),
+                _capture(),
                 AlsaPlayback(playback),
                 status_sink=print,
             )
