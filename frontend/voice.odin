@@ -20,7 +20,10 @@ VOICE_INPUT_SAMPLE_RATE :: 16000
 VOICE_INPUT_PACKET_SAMPLES :: 320
 VOICE_AUDIO_SAMPLE_RATE :: 24000
 VOICE_AUDIO_PACKET_SAMPLES :: 480
-VOICE_PLAYBACK_BUFFER_SAMPLES :: VOICE_AUDIO_PACKET_SAMPLES * 4
+// Keep a short startup buffer so streamed TTS begins promptly. RTP packet
+// loss is tolerated below; a lost packet creates a small gap, not a dead turn.
+VOICE_PLAYBACK_BUFFER_PACKETS :: 4
+VOICE_PLAYBACK_BUFFER_SAMPLES :: VOICE_AUDIO_PACKET_SAMPLES * VOICE_PLAYBACK_BUFFER_PACKETS
 VOICE_AUDIO_PAYLOAD_TYPE :: u8(96)
 VOICE_AUDIO_SSRC :: u32(0x4e45_5554)
 VOICE_MAX_CAPTURE_SAMPLES :: VOICE_INPUT_SAMPLE_RATE * 15
@@ -283,15 +286,22 @@ voice_handle_rtp :: proc(voice: ^Voice_State, packet: []byte) {
 	if ssrc != VOICE_AUDIO_SSRC do return
 	sequence := u16(packet[2]) << 8 | u16(packet[3])
 	marker := packet[1] & 0x80 != 0
-	if !voice.accept_audio && !marker do return
-	if marker {
+	if !voice.accept_audio {
 		voice.accept_audio = true
 		voice.rtp_packets_received = 0
 		voice.rtp_samples_received = 0
-		fmt.println(fmt.tprintf("[VOICE-DEBUG] RTP start sequence=%d", sequence))
+		fmt.println(fmt.tprintf(
+			"[VOICE-DEBUG] RTP start sequence=%d marker=%t",
+			sequence,
+			marker,
+		))
 	}
 	if voice.has_audio_sequence && sequence != voice.last_audio_sequence + 1 {
-		// UDP loss is audible but does not invalidate the rest of the turn.
+		fmt.println(fmt.tprintf(
+			"[VOICE-DEBUG] RTP gap expected=%d received=%d",
+			voice.last_audio_sequence + 1,
+			sequence,
+		))
 	}
 	voice.last_audio_sequence = sequence
 	voice.has_audio_sequence = true

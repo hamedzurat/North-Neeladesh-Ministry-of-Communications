@@ -24,9 +24,9 @@ use exchange_protocol::{
     FrameError, GamePhase, HeldControls, InputMessage, InputState, PROTOCOL_VERSION, PortId,
     ProtocolError, RtpL16Packet, ShiftPhase, StateMessage, StateOutput, TEXT_PROTOCOL_VERSION,
     TextInputMessage, TextResponseMessage, TextStatus, VOICE_AUDIO_PACKET_SAMPLES,
-    VOICE_AUDIO_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl, VoiceControlMessage,
-    VoiceStatus, VoiceStatusMessage, decode_voice_input_audio, decode_voice_status,
-    encode_voice_control, encode_voice_status, read_frame, write_frame,
+    VOICE_AUDIO_SAMPLE_RATE, VOICE_INPUT_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl,
+    VoiceControlMessage, VoiceStatus, VoiceStatusMessage, decode_voice_input_audio,
+    decode_voice_status, encode_voice_control, encode_voice_status, read_frame, write_frame,
 };
 
 fn directory_id_for_line(config: &GameConfig, line: u8) -> Option<u16> {
@@ -45,10 +45,12 @@ fn authored_audio_path(config: &GameConfig, caller: u8, callee: u8) -> Option<Pa
         .or_else(|| stories::nahid::audio_path(caller, callee))
 }
 
-fn save_voice_capture_wav(
+fn save_voice_wav(
+    kind: &str,
     conversation_id: u64,
     session_id: u64,
     turn_id: u64,
+    sample_rate: u32,
     samples: &[i16],
 ) -> io::Result<PathBuf> {
     let directory = env::var_os("NN_VOICE_DEBUG_AUDIO_DIR")
@@ -56,7 +58,7 @@ fn save_voice_capture_wav(
         .unwrap_or_else(|| PathBuf::from("/tmp/north-neeladesh-voice"));
     fs::create_dir_all(&directory)?;
     let path = directory.join(format!(
-        "capture-{conversation_id}-session-{session_id}-turn-{turn_id}.wav"
+        "{kind}-{conversation_id}-session-{session_id}-turn-{turn_id}.wav"
     ));
     let data_size = u32::try_from(samples.len().saturating_mul(2)).unwrap_or(u32::MAX);
     let riff_size = 36_u32.saturating_add(data_size);
@@ -67,8 +69,8 @@ fn save_voice_capture_wav(
     file.write_all(&16_u32.to_le_bytes())?;
     file.write_all(&1_u16.to_le_bytes())?;
     file.write_all(&1_u16.to_le_bytes())?;
-    file.write_all(&16_000_u32.to_le_bytes())?;
-    file.write_all(&32_000_u32.to_le_bytes())?;
+    file.write_all(&sample_rate.to_le_bytes())?;
+    file.write_all(&(sample_rate.saturating_mul(2)).to_le_bytes())?;
     file.write_all(&2_u16.to_le_bytes())?;
     file.write_all(&16_u16.to_le_bytes())?;
     file.write_all(b"data")?;
@@ -2580,10 +2582,12 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         None
                     };
                     if let Some(conversation_id) = conversation_id {
-                        match save_voice_capture_wav(
+                        match save_voice_wav(
+                            "capture",
                             conversation_id,
                             input.session_id,
                             input.turn_id,
+                            VOICE_INPUT_SAMPLE_RATE,
                             &samples,
                         ) {
                             Ok(path) => println!(
@@ -2603,6 +2607,8 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                     let turn_id = input.turn_id;
                     thread::spawn(move || {
                         let transcript_backend = Arc::clone(&worker_backend);
+                        let mut packet_index = 0_usize;
+                        let mut sample_offset = 0_usize;
                         let result = generate_operator_response(
                             context,
                             caller,
@@ -2736,6 +2742,38 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                     }
                                 }
                             },
+                            &mut |samples| {
+                                if voice_turn_cancelled(&worker_backend, input.turn_id) {
+                                    return Err(VoiceError::new(
+                                        "worker_cancelled",
+                                        "voice playback was cancelled",
+                                    ));
+                                }
+                                let chunks = samples.chunks(VOICE_AUDIO_PACKET_SAMPLES);
+                                for chunk in chunks {
+                                    if packet_index > 0 {
+                                        thread::sleep(Duration::from_millis(20));
+                                    }
+                                    let packet = RtpL16Packet {
+                                        marker: packet_index == 0,
+                                        sequence: packet_index as u16,
+                                        timestamp: sample_offset as u32,
+                                        ssrc: 0x4e45_5554,
+                                        samples: chunk.to_vec(),
+                                    };
+                                    worker_socket.send_to(&packet.encode(), address).map_err(
+                                        |error| {
+                                            VoiceError::new(
+                                                "voice_audio_send_failed",
+                                                error.to_string(),
+                                            )
+                                        },
+                                    )?;
+                                    packet_index += 1;
+                                    sample_offset += chunk.len();
+                                }
+                                Ok(())
+                            },
                         );
                         let (transcript, response, audio) = match result {
                             Ok(value) => value,
@@ -2816,6 +2854,28 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         let has_response = !response.is_empty();
                         let transcript_for_history = transcript.clone();
                         let response_for_history = response.clone();
+                        if let Some(conversation_id) = conversation_id
+                            && !audio.is_empty()
+                        {
+                            match save_voice_wav(
+                                "tts",
+                                conversation_id,
+                                input.session_id,
+                                input.turn_id,
+                                VOICE_AUDIO_SAMPLE_RATE,
+                                &audio,
+                            ) {
+                                Ok(path) => println!(
+                                    "[VOICE] tts_saved conversation={} path={}",
+                                    conversation_id,
+                                    path.display()
+                                ),
+                                Err(error) => eprintln!(
+                                    "[VOICE] tts_save_failed conversation={} error={error}",
+                                    conversation_id
+                                ),
+                            }
+                        }
                         let status = VoiceStatusMessage {
                             protocol_version: VOICE_PROTOCOL_VERSION,
                             session_id: input.session_id,
@@ -2855,19 +2915,6 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         }
                         if let Ok(datagram) = encode_voice_status(&status) {
                             let _ = worker_socket.send_to(&datagram, address);
-                        }
-                        for (index, chunk) in audio.chunks(VOICE_AUDIO_PACKET_SAMPLES).enumerate() {
-                            if voice_turn_cancelled(&worker_backend, input.turn_id) {
-                                return;
-                            }
-                            let packet = RtpL16Packet {
-                                marker: index == 0,
-                                sequence: index as u16,
-                                timestamp: (index * VOICE_AUDIO_PACKET_SAMPLES) as u32,
-                                ssrc: 0x4e45_5554,
-                                samples: chunk.to_vec(),
-                            };
-                            let _ = worker_socket.send_to(&packet.encode(), address);
                         }
                         if voice_turn_cancelled(&worker_backend, input.turn_id) {
                             return;
@@ -2978,6 +3025,7 @@ fn generate_operator_response(
     transcript_sink: &dyn Fn(&str),
     llm_prompt_sink: &dyn Fn(&str),
     llm_response_sink: &dyn Fn(&str),
+    audio_sink: &mut dyn FnMut(&[i16]) -> Result<(), VoiceError>,
 ) -> Result<(String, String, Vec<i16>), VoiceError> {
     if samples.is_empty() {
         return Ok((String::new(), String::new(), Vec::new()));
@@ -2999,8 +3047,12 @@ fn generate_operator_response(
     llm_prompt_sink(&prompt);
     let response = generate_dialogue(&context, &transcript)?;
     llm_response_sink(&response);
-    let audio = with_persistent_pocket_tts(|tts| {
-        tts.synthesize(&format!("pocket-line-{caller}"), &response)
+    let mut audio = Vec::new();
+    with_persistent_pocket_tts(|tts| {
+        tts.synthesize_stream(&format!("pocket-line-{caller}"), &response, &mut |chunk| {
+            audio.extend_from_slice(chunk);
+            audio_sink(chunk)
+        })
     })?;
     if audio.is_empty() {
         return Err(VoiceError::new(
