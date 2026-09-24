@@ -1284,8 +1284,26 @@ impl Backend {
         if current == self.tap_topology_log {
             return;
         }
+        let previous = self.tap_topology_log;
         self.tap_topology_log = current;
 
+        if current.is_none() {
+            if let Some((caller, callee, caller_tap, callee_tap)) = previous {
+                match (caller_tap, callee_tap) {
+                    (true, true) => {
+                        self.log("CALL", format_args!("disconnect {caller} -> tap -> {callee}"));
+                    }
+                    (true, false) => {
+                        self.log("CALL", format_args!("disconnect {caller} -> tap"));
+                    }
+                    (false, true) => {
+                        self.log("CALL", format_args!("disconnect tap -> {callee}"));
+                    }
+                    (false, false) => {}
+                }
+            }
+            return;
+        }
         let Some((caller, callee, caller_tap, callee_tap)) = current else {
             return;
         };

@@ -67,7 +67,7 @@ class HardwareConfig:
     line_lamp_count: int = 12
     poll_interval: float = 0.1
     input_status_interval: float = 5.0
-    pair_scan_interval: float = 2.0
+    pair_scan_interval: float = 0.5
     epaper_page_interval: float = 8.0
     crank_detents_per_rotation: int = 2
     epaper_rotation: int = 0
@@ -105,4 +105,5 @@ class HardwareConfig:
         host, port = parse_backend_address(address)
         return cls(
             backend_address=(host, port),
+            pair_scan_interval=float(os.environ.get("NN_PAIR_SCAN_INTERVAL", "0.5")),
         )

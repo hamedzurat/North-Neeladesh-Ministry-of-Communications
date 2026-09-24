@@ -128,6 +128,9 @@ only when overriding the default ports independently.
   `tap_1` and `tap_2`.
 - Toggle switches GPIO 5, 22, 9, and 0 map to PTT, Police, EMS, and Tap.
   Inputs use 50 ms debounce.
+- Patch-panel topology is rescanned every 0.5 seconds by default. Set
+  `NN_PAIR_SCAN_INTERVAL` during setup to override it; once a change is found,
+  the next 50 Hz frontend exchange sends it to the backend.
 - E-paper buttons GPIO 4, 6, 13, and 26 increment directory digits 1 through
   4, respectively.
 
