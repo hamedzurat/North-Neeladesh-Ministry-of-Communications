@@ -7,6 +7,8 @@ from collections.abc import Callable
 from functools import partial
 from typing import Any
 
+from .diagnostics import ChangeLogger
+
 
 class OutputMapper:
     def __init__(
@@ -36,7 +38,8 @@ class OutputMapper:
         self._last_run_generation: int | None = None
         self._last_calls: tuple[tuple[int, int, str], ...] | None = None
         self._last_service: tuple[str, str] | None = None
-        self.status_sink = status_sink
+        self.status_sink = status_sink or (lambda _message: None)
+        self.diagnostics = ChangeLogger(self.status_sink)
         self.faults: list[str] = []
 
     def apply(self, output: dict[str, Any], now: float | None = None) -> None:
@@ -76,6 +79,8 @@ class OutputMapper:
             self._seen_printer_entries.clear()
             self._last_calls = None
             self._last_service = None
+            for key in ("calls", "service", "printer_output"):
+                self.diagnostics.reset(key)
         self._last_run_generation = run_generation
         self._log_authoritative_activity(output)
         printer_entries = output.get("printer_output", [])
@@ -88,36 +93,137 @@ class OutputMapper:
                 self._seen_printer_entries.add(entry_id)
 
     def _log_authoritative_activity(self, output: dict[str, Any]) -> None:
-        if "calls" not in output and "service_call" not in output:
-            return
-        calls = tuple(
-            (
-                int(call.get("caller_line", -1)),
-                int(call.get("requested_callee_line", -1)),
-                str(call.get("phase", "")),
-            )
-            for call in output.get("calls", [])
-            if isinstance(call, dict)
-        )
-        if calls != self._last_calls:
-            self._last_calls = calls
-            if calls:
-                rendered = ", ".join(
-                    f"LINE {caller} -> LINE {callee} ({phase})"
-                    for caller, callee, phase in calls
+        if "calls" in output or "service_call" in output:
+            calls = tuple(
+                (
+                    int(call.get("caller_line", -1)),
+                    int(call.get("requested_callee_line", -1)),
+                    str(call.get("phase", "")),
                 )
-                self.status_sink(f"CALLS // {rendered}")
-            else:
-                self.status_sink("CALLS // none")
+                for call in output.get("calls", [])
+                if isinstance(call, dict)
+            )
+            if calls != self._last_calls:
+                self._last_calls = calls
+                if calls:
+                    rendered = ", ".join(
+                        f"LINE {caller} -> LINE {callee} ({phase})"
+                        for caller, callee, phase in calls
+                    )
+                    self.diagnostics.emit("calls", calls, f"CALLS // {rendered}")
+                else:
+                    self.diagnostics.emit("calls", calls, "CALLS // none")
 
-        service = output.get("service_call")
-        service_state = None
-        if isinstance(service, dict):
-            service_state = (str(service.get("service", "")), str(service.get("phase", "")))
-        if service_state != self._last_service:
-            self._last_service = service_state
-            if service_state is not None:
-                self.status_sink(f"SERVICE // {service_state[0]} {service_state[1]}")
+            service = output.get("service_call")
+            service_state = None
+            if isinstance(service, dict):
+                service_state = (str(service.get("service", "")), str(service.get("phase", "")))
+            if service_state != self._last_service:
+                self._last_service = service_state
+                if service_state is not None:
+                    self.diagnostics.emit(
+                        "service",
+                        service_state,
+                        f"SERVICE // {service_state[0]} {service_state[1]}",
+                    )
+
+        if "directory_pages" in output:
+            pages = tuple(repr(page) for page in output["directory_pages"])
+            self.diagnostics.emit("directory_pages", pages, f"DIRECTORY // pages={len(pages)}")
+        if "clock" in output and isinstance(output["clock"], dict) and "shift" in output["clock"]:
+            clock = output["clock"]
+            clock_state = (clock.get("shift"), clock.get("elapsed_seconds"))
+            self.diagnostics.emit(
+                "clock",
+                clock_state,
+                f"CLOCK // shift={clock_state[0]} seconds={clock_state[1]}",
+            )
+        if "shift" in output and isinstance(output["shift"], dict):
+            shift = output["shift"]
+            shift_state = (
+                shift.get("number"),
+                shift.get("phase"),
+                shift.get("active_call_count"),
+                shift.get("completed_routings"),
+                shift.get("required_service_calls"),
+                shift.get("completed_service_calls"),
+                shift.get("service_errors"),
+            )
+            self.diagnostics.emit("shift", shift_state, f"SHIFT // {shift_state}")
+        if "run_generation" in output:
+            self.diagnostics.emit(
+                "run_generation",
+                output["run_generation"],
+                f"RUN // generation={output['run_generation']}",
+            )
+        if "printer_output" in output and isinstance(output["printer_output"], list):
+            printer_state = tuple(
+                (entry.get("entry_id"), entry.get("text"))
+                for entry in output["printer_output"]
+                if isinstance(entry, dict)
+            )
+            self.diagnostics.emit(
+                "printer_output",
+                printer_state,
+                f"PRINTER // entries={len(printer_state)}",
+            )
+
+        if "tap_bridge_monitoring" in output:
+            monitoring = output.get("tap_bridge_monitoring")
+            if isinstance(monitoring, dict):
+                value = (
+                    int(monitoring.get("caller_line", -1)),
+                    int(monitoring.get("callee_line", -1)),
+                    int(monitoring.get("caller_tap_port", -1)),
+                    int(monitoring.get("callee_tap_port", -1)),
+                )
+                self.diagnostics.emit(
+                    "tap_bridge_monitoring",
+                    value,
+                    "TAP BRIDGE // monitoring "
+                    f"LINE {value[0]} -> LINE {value[1]} "
+                    f"ports={value[2]},{value[3]}",
+                )
+            else:
+                self.diagnostics.emit("tap_bridge_monitoring", None, "TAP BRIDGE // monitoring stopped")
+
+        for key, label in (
+            ("speaker_active", "SPEAKER"),
+            ("tap_bridge_audio_active", "TAP BRIDGE AUDIO"),
+            ("game_phase", "GAME PHASE"),
+            ("interference_level", "INTERFERENCE"),
+        ):
+            if key in output:
+                self.diagnostics.emit(key, output[key], f"{label} // {output[key]}")
+
+        for key in (
+            "shapla_story_beat",
+            "neel_story_beat",
+            "dirty_work_story_beat",
+            "dirty_work_completed_contacts",
+            "nahid_story_beat",
+            "nahid_scam_count",
+        ):
+            if key in output:
+                self.diagnostics.emit("story_" + key, output[key], f"STORY // {key}={output[key]}")
+
+        if "debug" in output:
+            debug_messages = output.get("debug", {}).get("messages", [])
+            if isinstance(debug_messages, list):
+                debug_state = tuple(
+                    (str(item.get("code", "unknown")), str(item.get("message", "")))
+                    for item in debug_messages
+                    if isinstance(item, dict)
+                )
+                self.diagnostics.emit(
+                    "backend_debug",
+                    debug_state,
+                    "BACKEND DEBUG // "
+                    + (
+                        "; ".join(f"{code}: {message}" for code, message in debug_state)
+                        or "clear"
+                    ),
+                )
 
     def _try(self, name: str, operation: Any) -> bool:
         try:

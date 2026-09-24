@@ -85,7 +85,7 @@ def build_real_components(config: HardwareConfig) -> ComponentBundle:
             config.toggle_switch_pins,
             config.epaper_button_pins,
             config.directory_digits,
-            debounce_ms=0,
+            debounce_ms=config.control_debounce_ms,
         )
         printer = DevicePrinter(config.printer_device)
         initialized.append(controls)

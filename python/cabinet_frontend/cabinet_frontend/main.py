@@ -10,6 +10,7 @@ from typing import Any
 
 from .components.factory import ComponentBundle, build_real_components
 from .config import HardwareConfig, parse_backend_address
+from .diagnostics import ChangeLogger
 from .input_mapper import InputSource, PhysicalInputSource
 from .output_mapper import OutputMapper
 from .protocol import BackendClient
@@ -25,6 +26,7 @@ class HardwareFrontend:
         output_mapper: OutputMapper,
         firmware_version: str = "north-neeladesh-pi/0.1.0",
         extra_closers: list[object] | None = None,
+        status_sink: Callable[[str], None] | None = print,
     ) -> None:
         self.client = client
         self.input_source = input_source
@@ -33,6 +35,7 @@ class HardwareFrontend:
         self.extra_closers = extra_closers or []
         self.input_sequence = 0
         self.state_revision = 0
+        self.diagnostics = ChangeLogger(status_sink)
 
     def step(self, now: float | None = None) -> dict[str, Any]:
         self.input_sequence += 1
@@ -49,6 +52,11 @@ class HardwareFrontend:
         )
         response = self.client.exchange(message)
         self.state_revision = int(response.get("state_revision", self.state_revision))
+        self.diagnostics.emit(
+            "backend_acceptance",
+            (response.get("accepted"), response.get("error")),
+            _backend_result_message(response),
+        )
         self.output_mapper.apply(dict(response.get("output", {})))
         return response
 
@@ -107,6 +115,7 @@ def run_forever(
 ) -> None:
     """Reconnect until interrupted."""
     factory = client_factory or (lambda: BackendClient.connect(config.backend_address))
+    diagnostics = ChangeLogger(print)
     while True:
         client = None
         frontend = None
@@ -114,7 +123,11 @@ def run_forever(
         voice_thread: threading.Thread | None = None
         try:
             client = factory()
-            print("CABINET FRONTEND // backend connected", flush=True)
+            diagnostics.emit(
+                "transport",
+                "connected",
+                "CABINET FRONTEND // backend connected",
+            )
             voice_stop = threading.Event()
             voice_thread = threading.Thread(
                 target=run_embedded,
@@ -138,7 +151,11 @@ def run_forever(
                 client.close()
             return
         except Exception as error:  # noqa: BLE001 - restart after any device/transport failure
-            print(f"CABINET FRONTEND OFFLINE // {error}", flush=True)
+            diagnostics.emit(
+                "transport",
+                ("offline", type(error).__name__, str(error)),
+                f"CABINET FRONTEND OFFLINE // {type(error).__name__}: {error}",
+            )
             if voice_stop is not None and voice_thread is not None:
                 voice_stop.set()
                 voice_thread.join(timeout=2.0)
@@ -165,6 +182,13 @@ def main() -> int:
         )
     run_forever(config)
     return 0
+
+
+def _backend_result_message(response: dict[str, Any]) -> str:
+    error = response.get("error")
+    if isinstance(error, dict):
+        return f"BACKEND // rejected code={error.get('code', 'unknown')} message={error.get('message', '')}"
+    return f"BACKEND // accepted state_revision={response.get('state_revision', '?')}"
 
 
 if __name__ == "__main__":

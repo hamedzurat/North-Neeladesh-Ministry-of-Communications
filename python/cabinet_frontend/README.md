@@ -26,6 +26,18 @@ UDP for control, status, and 16 kHz input PCM, plus RTP/L16 at 24 kHz for
 speaker audio. Configure `NN_VOICE_BACKEND_ADDRESS` during setup if the backend
 is not on localhost.
 
+## Diagnostics
+
+The frontend logs connection changes, backend acceptance/rejection changes,
+hardware faults, calls, service calls, Tap Bridge monitoring, story progress,
+voice status transitions, RTP stream changes, packet gaps, and recovery events.
+Repeated polling of an unchanged state is intentionally silent. On the Pi,
+these messages are available with:
+
+```sh
+journalctl -u north-neeladesh-cabinet-frontend.service -f
+```
+
 ## Physical hardware smoke test
 
 For the complete laptop-to-Pi Wi‑Fi deployment procedure, see

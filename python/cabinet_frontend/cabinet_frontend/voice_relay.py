@@ -13,6 +13,7 @@ from collections import deque
 from collections.abc import Sequence
 from typing import Any, Protocol
 
+from .diagnostics import ChangeLogger
 from .protocol import CborCodec
 
 VOICE_PROTOCOL_VERSION = 2
@@ -273,6 +274,7 @@ class VoiceRelay:
         capture: Capture,
         playback: Playback,
         codec: CborCodec | None = None,
+        status_sink: Any = None,
     ) -> None:
         self.connection = connection
         self.capture = capture
@@ -282,7 +284,9 @@ class VoiceRelay:
         self.turn_id = 1
         self.state_revision = 0
         self.last_sequence: int | None = None
+        self.last_ssrc: int | None = None
         self.closed = False
+        self.diagnostics = ChangeLogger(status_sink)
 
     def send_status(
         self,
@@ -291,6 +295,11 @@ class VoiceRelay:
         response_text: str | None = None,
         error: dict[str, str] | None = None,
     ) -> None:
+        self.diagnostics.emit(
+            "local_status",
+            (status, transcript, response_text, error),
+            "VOICE // " + status + (f" error={error}" if error else ""),
+        )
         self.connection.send(
             _tagged(
                 self.codec,
@@ -333,6 +342,11 @@ class VoiceRelay:
 
     def handle_control(self, message: dict[str, Any]) -> None:
         if message.get("protocol_version") != VOICE_PROTOCOL_VERSION or message.get("session_id") != self.session_id:
+            self.diagnostics.emit(
+                "ignored_control",
+                (message.get("protocol_version"), message.get("session_id")),
+                "VOICE // ignored control from an unknown session",
+            )
             return
         self.turn_id = int(message["turn_id"])
         self.state_revision = int(message["state_revision"])
@@ -369,12 +383,45 @@ class VoiceRelay:
                 or status.get("session_id") != self.session_id
                 or status.get("turn_id") != self.turn_id
             ):
+                self.diagnostics.emit(
+                    "ignored_status",
+                    (
+                        status.get("protocol_version"),
+                        status.get("session_id"),
+                        status.get("turn_id"),
+                    ),
+                    "VOICE // ignored status from an obsolete turn",
+                )
                 return
             self.state_revision = int(status.get("state_revision", self.state_revision))
+            self.diagnostics.emit(
+                "backend_status",
+                (
+                    status.get("status"),
+                    status.get("error"),
+                    status.get("transcript"),
+                    status.get("response_text"),
+                ),
+                "VOICE BACKEND // "
+                f"{status.get('status', 'unknown')}"
+                + (f" error={status['error']}" if status.get("error") else "")
+                + (f" transcript={status['transcript']}" if status.get("transcript") else "")
+                + (f" response={status['response_text']}" if status.get("response_text") else ""),
+            )
             if status.get("status") in {"completed", "failed", "cancelled"}:
                 self.playback.finish()
         else:
-            sequence, _timestamp, _ssrc, _marker, samples = _decode_rtp(datagram)
+            sequence, _timestamp, ssrc, _marker, samples = _decode_rtp(datagram)
+            if self.last_ssrc != ssrc:
+                self.diagnostics.emit("rtp_ssrc", ssrc, f"VOICE RTP // stream={ssrc}")
+            if self.last_sequence is not None and sequence != (self.last_sequence + 1) & 0xFFFF:
+                self.diagnostics.emit(
+                    "rtp_sequence_gap",
+                    (self.last_sequence, sequence),
+                    "VOICE RTP // sequence gap "
+                    f"expected={(self.last_sequence + 1) & 0xFFFF} received={sequence}",
+                )
+            self.last_ssrc = ssrc
             self.last_sequence = sequence
             self.playback.write(samples)
 
@@ -416,6 +463,7 @@ def run_embedded(stop: threading.Event) -> None:
     host, port_text = address.rsplit(":", 1)
     capture = os.environ.get("NN_VOICE_CAPTURE_COMMAND")
     playback = os.environ.get("NN_VOICE_PLAYBACK_COMMAND")
+    diagnostics = ChangeLogger(print)
     while not stop.is_set():
         connection: socket.socket | None = None
         relay: VoiceRelay | None = None
@@ -423,11 +471,20 @@ def run_embedded(stop: threading.Event) -> None:
             connection = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             connection.connect((host, int(port_text)))
             connection.settimeout(5.0)
-            relay = VoiceRelay(connection, _capture(capture), AlsaPlayback(playback))
+            relay = VoiceRelay(
+                connection,
+                _capture(capture),
+                AlsaPlayback(playback),
+                status_sink=print,
+            )
             relay.run(stop)
         except Exception as error:  # noqa: BLE001 - keep hardware frontend alive
             if not stop.is_set():
-                print(f"CABINET VOICE OFFLINE // {error}", flush=True)
+                diagnostics.emit(
+                    "relay_transport",
+                    (type(error).__name__, str(error)),
+                    f"CABINET VOICE OFFLINE // {type(error).__name__}: {error}",
+                )
         finally:
             if relay is not None:
                 relay.close()
@@ -441,6 +498,7 @@ def run_forever() -> None:
     host, port_text = address.rsplit(":", 1)
     capture = os.environ.get("NN_VOICE_CAPTURE_COMMAND")
     playback = os.environ.get("NN_VOICE_PLAYBACK_COMMAND")
+    diagnostics = ChangeLogger(print)
     while True:
         connection: socket.socket | None = None
         relay: VoiceRelay | None = None
@@ -448,12 +506,21 @@ def run_forever() -> None:
             connection = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             connection.connect((host, int(port_text)))
             connection.settimeout(5.0)
-            relay = VoiceRelay(connection, _capture(capture), AlsaPlayback(playback))
+            relay = VoiceRelay(
+                connection,
+                _capture(capture),
+                AlsaPlayback(playback),
+                status_sink=print,
+            )
             relay.run()
         except KeyboardInterrupt:
             return
         except Exception as error:  # noqa: BLE001 - daemon recovery loop
-            print(f"VOICE RELAY OFFLINE // {error}", flush=True)
+            diagnostics.emit(
+                "relay_transport",
+                (type(error).__name__, str(error)),
+                f"VOICE RELAY OFFLINE // {type(error).__name__}: {error}",
+            )
         finally:
             if relay is not None:
                 relay.close()

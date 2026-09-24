@@ -71,8 +71,8 @@ def validate_input_message(message: dict[str, Any]) -> None:
     _require_keys(message, "protocol_version", "input_sequence", "expected_state_revision", "input")
     if message["protocol_version"] != 3:
         raise ProtocolValidationError("unsupported input protocol version")
-    if not isinstance(message["input_sequence"], int) or message["input_sequence"] <= 0:
-        raise ProtocolValidationError("input_sequence must be a positive integer")
+    _require_int_range(message["input_sequence"], "input_sequence", 1, None)
+    _require_int_range(message["expected_state_revision"], "expected_state_revision", 0, None)
     input_state = _map(message["input"], "input")
     _require_keys(
         input_state,
@@ -109,7 +109,7 @@ def validate_input_message(message: dict[str, Any]) -> None:
     if (
         not isinstance(digits, list)
         or len(digits) != 4
-        or any(not isinstance(value, int) or not 0 <= value <= 9 for value in digits)
+        or any(type(value) is not int or not 0 <= value <= 9 for value in digits)
     ):
         raise ProtocolValidationError("directory_digits must contain four digits")
 
@@ -119,8 +119,7 @@ def validate_input_message(message: dict[str, Any]) -> None:
 
     tuning = _map(input_state["tuning"], "tuning")
     for key in ("coarse", "fine"):
-        if not isinstance(tuning.get(key), int) or not 0 <= tuning[key] <= 1023:
-            raise ProtocolValidationError(f"tuning.{key} must be between 0 and 1023")
+        _require_int_range(tuning.get(key), f"tuning.{key}", 0, 1023)
 
     debug = _map(input_state["debug"], "debug")
     if not isinstance(debug.get("firmware_version"), (str, type(None))):
@@ -201,6 +200,30 @@ def validate_state_message(message: dict[str, Any]) -> None:
         isinstance(page, dict) for page in output["directory_pages"]
     ):
         raise ProtocolValidationError("output.directory_pages must be a list")
+    calls = output["calls"]
+    if not isinstance(calls, list):
+        raise ProtocolValidationError("output.calls must be a list")
+    for call in calls:
+        call_map = _map(call, "output.calls entry")
+        _require_keys(call_map, "caller_line", "requested_callee_line", "phase")
+        _require_int_range(call_map["caller_line"], "calls.caller_line", 0, 11)
+        _require_int_range(call_map["requested_callee_line"], "calls.requested_callee_line", 0, 11)
+        if not isinstance(call_map["phase"], str):
+            raise ProtocolValidationError("calls.phase must be a string")
+    service_call = output["service_call"]
+    if service_call is not None:
+        service_map = _map(service_call, "output.service_call")
+        _require_keys(service_map, "service", "phase")
+        if not all(isinstance(service_map[key], str) for key in ("service", "phase")):
+            raise ProtocolValidationError("service_call.service and phase must be strings")
+    monitoring = output["tap_bridge_monitoring"]
+    if monitoring is not None:
+        monitoring_map = _map(monitoring, "output.tap_bridge_monitoring")
+        _require_keys(monitoring_map, "caller_line", "callee_line", "caller_tap_port", "callee_tap_port")
+        for key in ("caller_line", "callee_line"):
+            _require_int_range(monitoring_map[key], f"tap_bridge_monitoring.{key}", 0, 11)
+        for key in ("caller_tap_port", "callee_tap_port"):
+            _require_int_range(monitoring_map[key], f"tap_bridge_monitoring.{key}", 1, 2)
     printer_output = output["printer_output"]
     if not isinstance(printer_output, list):
         raise ProtocolValidationError("output.printer_output must be a list")
@@ -210,8 +233,6 @@ def validate_state_message(message: dict[str, Any]) -> None:
         _require_int_range(entry_map["entry_id"], "printer_output.entry_id", None, None)
         if not isinstance(entry_map["text"], str):
             raise ProtocolValidationError("printer_output.text must be a string")
-    if not isinstance(output["calls"], list):
-        raise ProtocolValidationError("output printer_output and calls must be lists")
     shift = _map(output["shift"], "output.shift")
     _require_keys(
         shift,
@@ -228,6 +249,11 @@ def validate_state_message(message: dict[str, Any]) -> None:
     _require_keys(debug, "messages")
     if not isinstance(debug["messages"], list):
         raise ProtocolValidationError("output.debug.messages must be a list")
+    for entry in debug["messages"]:
+        entry_map = _map(entry, "output.debug.messages entry")
+        _require_keys(entry_map, "code", "message")
+        if not all(isinstance(entry_map[key], str) for key in ("code", "message")):
+            raise ProtocolValidationError("debug message code and message must be strings")
 
 
 def _require_keys(value: dict[str, Any], *keys: str) -> None:
