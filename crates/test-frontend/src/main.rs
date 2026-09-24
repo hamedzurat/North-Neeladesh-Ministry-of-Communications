@@ -2038,7 +2038,7 @@ fn route_tap_call(
             seconds: duration.saturating_add(1) as u32,
         },
     )?;
-    Ok(exchange(
+    let state = exchange(
         backend,
         tap_input(
             sequence,
@@ -2055,6 +2055,13 @@ fn route_tap_call(
                     .ok_or("active call has no directory id")?,
             ),
         ),
+    )?;
+    // A completed monitored call keeps the story disconnect gate until its
+    // TAP cords are released. Clear the cords before exposing the next state
+    // to callers so the next story contact can be queued.
+    Ok(exchange(
+        backend,
+        tap_input(sequence, state.state_revision, vec![], false, [0, 0, 0, 1]),
     )?)
 }
 
@@ -2456,6 +2463,19 @@ fn run_neel_story(
             backend,
             tap_input(&mut sequence, revision, tap, false, directory_for_id(1024)),
         )?;
+        // Release the TAP cords after the recording ends. Keeping either TAP
+        // cord connected intentionally holds the completed story circuit's
+        // disconnect gate, which prevents Arnab's follow-up from being queued.
+        state = exchange(
+            backend,
+            tap_input(
+                &mut sequence,
+                state.state_revision,
+                vec![],
+                false,
+                directory_for_id(1024),
+            ),
+        )?;
         if state.output.line_lamps[2] {
             return Err("Neel LED remained active after the loaded audio duration".into());
         }
@@ -2472,6 +2492,19 @@ fn run_neel_story(
                 &mut sequence,
                 revision,
                 direct.clone(),
+                false,
+                directory_for_id(1024),
+            ),
+        )?;
+        // The completed direct circuit is removed during the input above. The
+        // next story caller is queued only after that removal, so release the
+        // old circuit before looking for Arnab's follow-up call.
+        state = exchange(
+            backend,
+            input(
+                &mut sequence,
+                state.state_revision,
+                vec![],
                 false,
                 directory_for_id(1024),
             ),
