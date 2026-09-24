@@ -159,23 +159,48 @@ class PhysicalInputSource:
         self._next_status_log = now + self.status_interval
 
     def _scan_topology(self) -> list[dict[str, str]]:
+        first_topology, first_faults = self._scan_topology_once()
+        second_topology, second_faults = self._scan_topology_once()
+        if first_topology != second_topology or first_faults != second_faults:
+            self._topology_rejections = [
+                "pair_detector: unstable scan; retaining last valid topology"
+            ]
+            return list(self.topology)
+        self._topology_rejections = first_faults
+        if first_faults:
+            return list(self.topology)
+        return second_topology
+
+    def _scan_topology_once(
+        self,
+    ) -> tuple[list[dict[str, str]], list[str]]:
         cords: list[dict[str, str]] = []
         used_endpoints: set[str] = set()
-        self._topology_rejections = []
+        repeated_endpoints: set[str] = set()
+        rejected_cords = 0
         for first_pin, second_pin in self.scanner.find_pairs():
             first = self.pin_to_port.get(first_pin)
             second = self.pin_to_port.get(second_pin)
             if first is None or second is None or first == second:
                 continue
             if first in used_endpoints or second in used_endpoints:
-                repeated = first if first in used_endpoints else second
-                self._topology_rejections.append(
-                    f"pair_detector: repeated endpoint {repeated}; ignored {first}>{second}"
-                )
+                if first in used_endpoints:
+                    repeated_endpoints.add(first)
+                if second in used_endpoints:
+                    repeated_endpoints.add(second)
+                rejected_cords += 1
                 continue
             used_endpoints.update((first, second))
             cords.append({"first": first, "second": second})
-        return cords[:8]
+        if repeated_endpoints:
+            endpoints = ",".join(sorted(repeated_endpoints))
+            return cords, [
+                (
+                    "pair_detector: ambiguous endpoint(s) "
+                    f"{endpoints}; ignored {rejected_cords} cord(s), retaining last valid topology"
+                )
+            ]
+        return cords[:8], []
 
     def _ring_generator_line(self) -> int:
         for connection in self.topology:

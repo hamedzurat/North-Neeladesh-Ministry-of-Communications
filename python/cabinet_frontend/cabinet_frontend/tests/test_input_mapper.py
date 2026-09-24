@@ -31,6 +31,15 @@ class Scanner:
         return None
 
 
+class ChangingScanner(Scanner):
+    def __init__(self, scans: list[list[tuple[int, int]]]) -> None:
+        super().__init__([])
+        self.scans = iter(scans)
+
+    def find_pairs(self) -> list[tuple[int, int]]:
+        return next(self.scans)
+
+
 class FailingRotary:
     def read(self) -> int:
         raise OSError("encoder unavailable")
@@ -81,12 +90,29 @@ class InputMapperTests(unittest.TestCase):
 
         self.assertEqual(
             physical.cord_topology,
-            [
-                {"first": "subscriber_4", "second": "operator"},
-                {"first": "subscriber_3", "second": "ring_generator"},
-            ],
+            [],
         )
-        self.assertTrue(any("repeated endpoint operator" in fault for fault in source.faults))
+        self.assertTrue(any("ambiguous endpoint(s) operator" in fault for fault in source.faults))
+
+    def test_retains_last_topology_when_consecutive_scans_disagree(self) -> None:
+        source = PhysicalInputSource(
+            Rotary([0, 0, 0]),
+            ChangingScanner([
+                [(0, 1)],
+                [(0, 2)],
+                [(0, 2)],
+                [(0, 2)],
+            ]),
+            {0: "subscriber_0", 1: "subscriber_1", 2: "subscriber_2"},
+            (0, 0, 0, 1),
+            pair_scan_interval=0,
+        )
+
+        first = source.poll(now=0)
+        second = source.poll(now=1)
+
+        self.assertEqual(first.cord_topology, [])
+        self.assertEqual(second.cord_topology, [{"first": "subscriber_0", "second": "subscriber_2"}])
 
     def test_default_mcp_ports_cover_patch_panel_and_tap_bridge(self) -> None:
         config = HardwareConfig()
