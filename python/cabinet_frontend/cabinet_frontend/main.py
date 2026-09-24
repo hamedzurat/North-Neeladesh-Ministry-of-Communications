@@ -124,13 +124,7 @@ def run_forever(
     input_sequence = 0
     state_revision = 0
     voice_stop = threading.Event()
-    voice_thread = threading.Thread(
-        target=run_embedded,
-        args=(voice_stop,),
-        name="cabinet-voice-relay",
-        daemon=True,
-    )
-    voice_thread.start()
+    voice_thread: threading.Thread | None = None
     while True:
         client = None
         frontend = None
@@ -141,6 +135,14 @@ def run_forever(
                 "connected",
                 "CABINET FRONTEND // backend connected",
             )
+            if voice_thread is None:
+                voice_thread = threading.Thread(
+                    target=run_embedded,
+                    args=(voice_stop,),
+                    name="cabinet-voice-relay",
+                    daemon=True,
+                )
+                voice_thread.start()
             frontend = create_frontend(config, client, input_sequence, state_revision)
             while True:
                 frontend.step()
@@ -148,7 +150,8 @@ def run_forever(
                 sleep(min(config.poll_interval, 0.02))
         except KeyboardInterrupt:
             voice_stop.set()
-            voice_thread.join(timeout=2.0)
+            if voice_thread is not None:
+                voice_thread.join(timeout=2.0)
             if frontend is not None:
                 frontend.close()
             elif client is not None:

@@ -18,6 +18,22 @@ if [[ ! -x "$VENV/bin/python" ]]; then
 fi
 
 cd "$APP_ROOT"
+if ! "$VENV/bin/python" - "$NN_BACKEND_HOST" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+try:
+    with socket.create_connection((host, 7878), timeout=2):
+        pass
+except OSError as error:
+    print(f"Backend unavailable at {host}:7878: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+then
+    exit 1
+fi
+
 exec env \
     PYTHONPATH="$APP_ROOT:/home/$APP_USER/Desktop" \
     XDG_RUNTIME_DIR="/run/user/$APP_UID" \
