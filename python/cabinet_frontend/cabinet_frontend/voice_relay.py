@@ -71,6 +71,7 @@ class AlsaCapture:
             stderr=subprocess.DEVNULL,
         )
         assert self.process.stdout is not None
+        self.diagnostics.emit("stream", "recording", "VOICE CAPTURE // continuous recording active")
 
         def read() -> None:
             try:
@@ -119,7 +120,11 @@ class AlsaCapture:
 class PipeWireCapture:
     """Keep a PipeWire microphone stream open and retain a bounded PCM ring."""
 
-    def __init__(self, max_samples: int = MAX_CAPTURE_SAMPLES) -> None:
+    def __init__(
+        self,
+        max_samples: int = MAX_CAPTURE_SAMPLES,
+        status_sink: Any = print,
+    ) -> None:
         self.command = _command(
             None,
             "pw-record --raw --format s16 --channels 1 --rate 16000 -",
@@ -130,6 +135,9 @@ class PipeWireCapture:
         self.samples: deque[int] = deque(maxlen=max_samples)
         self.lock = threading.Lock()
         self.error: BaseException | None = None
+        self.sample_count = 0
+        self.capture_start_count: int | None = None
+        self.diagnostics = ChangeLogger(status_sink)
         self._start_worker()
 
     def _start_worker(self) -> None:
@@ -151,6 +159,7 @@ class PipeWireCapture:
                     values = struct.unpack(f"<{usable // 2}h", chunk[:usable])
                     with self.lock:
                         self.samples.extend(values)
+                        self.sample_count += len(values)
             except OSError as error:  # pragma: no cover - OS failure path
                 self.error = error
 
@@ -163,7 +172,12 @@ class PipeWireCapture:
         if self.error is not None:
             raise RuntimeError(f"PipeWire microphone read failed: {self.error}")
         with self.lock:
-            self.samples.clear()
+            self.capture_start_count = self.sample_count
+        self.diagnostics.emit(
+            "ptt_capture",
+            "recording",
+            "VOICE CAPTURE // PTT boundary marked; continuous recording remains active",
+        )
 
     def finish(self) -> list[int]:
         if self.process is None or self.process.poll() is not None:
@@ -171,13 +185,24 @@ class PipeWireCapture:
         if self.error is not None:
             raise RuntimeError(f"PipeWire microphone read failed: {self.error}")
         with self.lock:
-            values = list(self.samples)
-            self.samples.clear()
+            start_count = self.capture_start_count
+            if start_count is None:
+                raise RuntimeError("microphone was not started")
+            requested = self.sample_count - start_count
+            available = min(max(0, requested), len(self.samples))
+            values = list(self.samples)[-available:] if available else []
+            self.capture_start_count = None
+        self.diagnostics.emit(
+            "ptt_capture",
+            "released",
+            f"VOICE CAPTURE // PTT segment ready samples={len(values)}",
+        )
         return values
 
     def cancel(self) -> None:
         with self.lock:
-            self.samples.clear()
+            self.capture_start_count = None
+        self.diagnostics.emit("ptt_capture", "cancelled", "VOICE CAPTURE // PTT segment cancelled")
 
     def close(self) -> None:
         process = self.process
@@ -191,6 +216,7 @@ class PipeWireCapture:
                 process.wait()
         if self.reader is not None:
             self.reader.join(timeout=1)
+        self.diagnostics.emit("stream", "closed", "VOICE CAPTURE // continuous recording stopped")
 
 
 class AlsaPlayback:
@@ -445,7 +471,7 @@ class VoiceRelay:
 
 
 def _capture(command: str | None) -> Capture:
-    return AlsaCapture(command) if command and command.strip() else PipeWireCapture()
+    return AlsaCapture(command) if command and command.strip() else PipeWireCapture(status_sink=print)
 
 
 def run_embedded(stop: threading.Event) -> None:

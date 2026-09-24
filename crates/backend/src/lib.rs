@@ -37,6 +37,15 @@ enum StoryId {
     Nahid,
 }
 
+fn port_label(port: &PortId) -> String {
+    match port {
+        PortId::Subscriber(line) => format!("subscriber_{line}"),
+        PortId::Operator => "operator".into(),
+        PortId::RingGenerator => "ring_generator".into(),
+        PortId::Tap(port) => format!("tap_{port}"),
+    }
+}
+
 fn directory_id_for_line(config: &GameConfig, line: u8) -> Option<u16> {
     config
         .subscribers
@@ -196,6 +205,7 @@ pub struct Backend {
     story_completed: bool,
     story_connections_pending_disconnect: HashMap<StoryId, (u8, u8)>,
     story_conversations: HashMap<u8, Vec<ConversationTurn>>,
+    topology_log: Option<Vec<exchange_protocol::CordConnection>>,
     tap_topology_log: Option<(u8, u8, bool, bool)>,
     ring_active_line: i16,
     godmode: bool,
@@ -431,6 +441,7 @@ impl Backend {
             story_completed: false,
             story_connections_pending_disconnect: HashMap::new(),
             story_conversations: HashMap::new(),
+            topology_log: None,
             tap_topology_log: None,
             ring_active_line: -1,
             godmode: false,
@@ -1004,6 +1015,7 @@ impl Backend {
         if error.is_none() {
             error = self.advance(input, focused, selected);
         }
+        self.log_input_topology(input);
         self.log_tap_topology(input);
         if self.bypass_restrictions {
             error = None;
@@ -1301,6 +1313,34 @@ impl Backend {
             }
             (false, false) => {}
         }
+    }
+
+    fn log_input_topology(&mut self, input: &InputState) {
+        if self.topology_log.as_ref() == Some(&input.cord_topology) {
+            return;
+        }
+        self.topology_log = Some(input.cord_topology.clone());
+        let topology = input
+            .cord_topology
+            .iter()
+            .map(|cord| format!("{}>{}", port_label(&cord.first), port_label(&cord.second)))
+            .collect::<Vec<_>>();
+        self.log(
+            "INPUT",
+            format_args!(
+                "topology={} ring_line={} controls=ptt:{} police:{} ems:{} tap:{}",
+                if topology.is_empty() {
+                    "-".to_string()
+                } else {
+                    topology.join(",")
+                },
+                input.ring_line,
+                input.held_controls.ptt,
+                input.held_controls.police,
+                input.held_controls.ems,
+                input.held_controls.tap,
+            ),
+        );
     }
 
     fn update_ring_activation(&mut self, input: &InputState) {

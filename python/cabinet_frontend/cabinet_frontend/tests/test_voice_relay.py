@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import struct
+import threading
 import unittest
+from collections import deque
 
+from cabinet_frontend.diagnostics import ChangeLogger
 from cabinet_frontend.voice_relay import (
     VOICE_AUDIO_PAYLOAD_TYPE,
     VOICE_INPUT_AUDIO_TAG,
     VOICE_STATUS_TAG,
+    PipeWireCapture,
     VoiceRelay,
     _decode_rtp,
 )
@@ -66,6 +70,11 @@ class Playback:
 
     def finish(self) -> None:
         self.finished += 1
+
+
+class RunningProcess:
+    def poll(self) -> None:
+        return None
 
 
 class VoiceRelayTests(unittest.TestCase):
@@ -137,3 +146,31 @@ class VoiceRelayTests(unittest.TestCase):
             }
         )
         self.assertEqual(self.capture.started, 0)
+
+    def test_pipewire_ptt_marks_boundary_without_clearing_continuous_ring(self) -> None:
+        capture = PipeWireCapture.__new__(PipeWireCapture)
+        capture.process = RunningProcess()
+        capture.error = None
+        capture.samples = deque([1, 2, 3], maxlen=10)
+        capture.lock = threading.Lock()
+        capture.sample_count = 3
+        capture.capture_start_count = None
+        capture.diagnostics = ChangeLogger(None)
+
+        capture.start()
+
+        self.assertEqual(list(capture.samples), [1, 2, 3])
+        self.assertEqual(capture.capture_start_count, 3)
+
+    def test_pipewire_release_sends_only_samples_since_ptt_boundary(self) -> None:
+        capture = PipeWireCapture.__new__(PipeWireCapture)
+        capture.process = RunningProcess()
+        capture.error = None
+        capture.samples = deque([1, 2, 3, 4, 5], maxlen=10)
+        capture.lock = threading.Lock()
+        capture.sample_count = 5
+        capture.capture_start_count = 2
+        capture.diagnostics = ChangeLogger(None)
+
+        self.assertEqual(capture.finish(), [3, 4, 5])
+        self.assertIsNone(capture.capture_start_count)

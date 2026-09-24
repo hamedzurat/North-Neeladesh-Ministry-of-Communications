@@ -18,9 +18,10 @@ inside the cabinet frontend process; no Rust toolchain, voice daemon binary, or
 second service is required on the Pi.
 
 The relay keeps one bounded PipeWire capture stream open for the lifetime of the
-frontend. It clears the ring on each PTT, Police, or EMS start and sends the
-captured window on release. Set `NN_VOICE_CAPTURE_COMMAND` only to use a custom
-capture command instead. The relay remains wire-compatible with the backend:
+frontend, even while the game TCP connection is unavailable. PTT, Police, and
+EMS mark a capture boundary; releasing the control sends the audio collected
+since that boundary. Set `NN_VOICE_CAPTURE_COMMAND` only to use a custom capture
+command instead. The relay remains wire-compatible with the backend:
 tagged CBOR over connected
 UDP for control, status, and 16 kHz input PCM, plus RTP/L16 at 24 kHz for
 speaker audio. Configure `NN_VOICE_BACKEND_ADDRESS` during setup if the backend
@@ -74,6 +75,11 @@ an enabled but stopped systemd service. It does not start hardware
 automatically. The audio files are kept in the Pi bundle so the deployment is
 self-contained and can also be used if the authoritative backend is moved to
 the Pi later.
+
+The setup also grants the service access to the `lp` group and `/dev/usb/lp0`
+through udev. A new login may be required for the user-level group membership,
+but the systemd service receives `lp` through `SupplementaryGroups` immediately
+after it is restarted.
 
 Start and inspect it on the Pi:
 

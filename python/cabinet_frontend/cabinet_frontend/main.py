@@ -116,11 +116,17 @@ def run_forever(
     """Reconnect until interrupted."""
     factory = client_factory or (lambda: BackendClient.connect(config.backend_address))
     diagnostics = ChangeLogger(print)
+    voice_stop = threading.Event()
+    voice_thread = threading.Thread(
+        target=run_embedded,
+        args=(voice_stop,),
+        name="cabinet-voice-relay",
+        daemon=True,
+    )
+    voice_thread.start()
     while True:
         client = None
         frontend = None
-        voice_stop: threading.Event | None = None
-        voice_thread: threading.Thread | None = None
         try:
             client = factory()
             diagnostics.emit(
@@ -128,23 +134,14 @@ def run_forever(
                 "connected",
                 "CABINET FRONTEND // backend connected",
             )
-            voice_stop = threading.Event()
-            voice_thread = threading.Thread(
-                target=run_embedded,
-                args=(voice_stop,),
-                name="cabinet-voice-relay",
-                daemon=True,
-            )
-            voice_thread.start()
             frontend = create_frontend(config, client)
             while True:
                 frontend.step()
                 # Sample physical controls faster than the normal backend cadence.
                 sleep(min(config.poll_interval, 0.02))
         except KeyboardInterrupt:
-            if voice_stop is not None and voice_thread is not None:
-                voice_stop.set()
-                voice_thread.join(timeout=2.0)
+            voice_stop.set()
+            voice_thread.join(timeout=2.0)
             if frontend is not None:
                 frontend.close()
             elif client is not None:
@@ -156,9 +153,6 @@ def run_forever(
                 ("offline", type(error).__name__, str(error)),
                 f"CABINET FRONTEND OFFLINE // {type(error).__name__}: {error}",
             )
-            if voice_stop is not None and voice_thread is not None:
-                voice_stop.set()
-                voice_thread.join(timeout=2.0)
             if frontend is not None:
                 frontend.close()
             elif client is not None:
