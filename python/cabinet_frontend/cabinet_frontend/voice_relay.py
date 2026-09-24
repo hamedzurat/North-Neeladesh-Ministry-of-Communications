@@ -71,7 +71,6 @@ class AlsaCapture:
             stderr=subprocess.DEVNULL,
         )
         assert self.process.stdout is not None
-        self.diagnostics.emit("stream", "recording", "VOICE CAPTURE // continuous recording active")
 
         def read() -> None:
             try:
@@ -148,12 +147,22 @@ class PipeWireCapture:
             bufsize=0,
         )
         assert self.process.stdout is not None
+        process = self.process
+        self.diagnostics.emit("stream", "recording", "VOICE CAPTURE // continuous recording active")
 
         def read() -> None:
             try:
                 while True:
-                    chunk = self.process.stdout.read(8192)
+                    chunk = process.stdout.read(8192)
                     if not chunk:
+                        return_code = process.poll()
+                        if return_code is not None:
+                            self.error = RuntimeError(f"pw-record exited with {return_code}")
+                            self.diagnostics.emit(
+                                "stream_failure",
+                                return_code,
+                                f"VOICE CAPTURE FAILED // pw-record exited with {return_code}",
+                            )
                         return
                     usable = len(chunk) - len(chunk) % 2
                     values = struct.unpack(f"<{usable // 2}h", chunk[:usable])
@@ -217,6 +226,97 @@ class PipeWireCapture:
         if self.reader is not None:
             self.reader.join(timeout=1)
         self.diagnostics.emit("stream", "closed", "VOICE CAPTURE // continuous recording stopped")
+
+
+class SoundDeviceCapture:
+    """Continuous callback-based capture through PortAudio/PipeWire."""
+
+    def __init__(self, max_samples: int = MAX_CAPTURE_SAMPLES, status_sink: Any = print) -> None:
+        try:
+            import sounddevice
+        except ImportError as error:
+            raise RuntimeError("sounddevice is not installed") from error
+
+        self.sounddevice = sounddevice
+        self.max_samples = max_samples
+        self.samples: deque[int] = deque(maxlen=max_samples)
+        self.lock = threading.Lock()
+        self.sample_count = 0
+        self.capture_start_count: int | None = None
+        self.error: BaseException | None = None
+        self.stream: Any = None
+        self.diagnostics = ChangeLogger(status_sink)
+        self._start_stream()
+
+    def _start_stream(self) -> None:
+        def callback(indata: Any, _frames: int, _time_info: Any, status: Any) -> None:
+            if status:
+                self.diagnostics.emit("stream_status", str(status), f"VOICE CAPTURE // {status}")
+            try:
+                values = memoryview(indata).cast("h")
+                with self.lock:
+                    self.samples.extend(values)
+                    self.sample_count += len(values)
+            except Exception as error:  # noqa: BLE001 - callback failures must be surfaced
+                self.error = error
+
+        try:
+            self.stream = self.sounddevice.RawInputStream(
+                samplerate=VOICE_INPUT_SAMPLE_RATE,
+                channels=1,
+                dtype="int16",
+                blocksize=VOICE_INPUT_PACKET_SAMPLES,
+                callback=callback,
+            )
+            self.stream.start()
+        except Exception as error:
+            self.stream = None
+            raise RuntimeError(f"PortAudio capture setup failed: {error}") from error
+        self.diagnostics.emit("stream", "recording", "VOICE CAPTURE // library stream active")
+
+    def start(self) -> None:
+        if self.stream is None or not self.stream.active:
+            raise RuntimeError("PortAudio microphone stream is not running")
+        if self.error is not None:
+            raise RuntimeError(f"PortAudio microphone read failed: {self.error}")
+        with self.lock:
+            self.capture_start_count = self.sample_count
+        self.diagnostics.emit(
+            "ptt_capture",
+            "recording",
+            "VOICE CAPTURE // PTT boundary marked; continuous recording remains active",
+        )
+
+    def finish(self) -> list[int]:
+        if self.stream is None or not self.stream.active:
+            raise RuntimeError("PortAudio microphone stream is not running")
+        if self.error is not None:
+            raise RuntimeError(f"PortAudio microphone read failed: {self.error}")
+        with self.lock:
+            if self.capture_start_count is None:
+                raise RuntimeError("microphone was not started")
+            requested = self.sample_count - self.capture_start_count
+            available = min(max(0, requested), len(self.samples))
+            values = list(self.samples)[-available:] if available else []
+            self.capture_start_count = None
+        self.diagnostics.emit(
+            "ptt_capture",
+            "released",
+            f"VOICE CAPTURE // PTT segment ready samples={len(values)}",
+        )
+        return values
+
+    def cancel(self) -> None:
+        with self.lock:
+            self.capture_start_count = None
+        self.diagnostics.emit("ptt_capture", "cancelled", "VOICE CAPTURE // PTT segment cancelled")
+
+    def close(self) -> None:
+        if self.stream is not None:
+            self.stream.stop()
+            self.stream.close()
+            self.stream = None
+        self.diagnostics.emit("stream", "closed", "VOICE CAPTURE // library stream stopped")
 
 
 class AlsaPlayback:
@@ -471,7 +571,13 @@ class VoiceRelay:
 
 
 def _capture(command: str | None) -> Capture:
-    return AlsaCapture(command) if command and command.strip() else PipeWireCapture(status_sink=print)
+    if command and command.strip():
+        return AlsaCapture(command)
+    try:
+        return SoundDeviceCapture(status_sink=print)
+    except RuntimeError as error:
+        print(f"VOICE CAPTURE // library unavailable, falling back to pw-record: {error}", flush=True)
+        return PipeWireCapture(status_sink=print)
 
 
 def run_embedded(stop: threading.Event) -> None:

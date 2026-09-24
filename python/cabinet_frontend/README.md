@@ -21,7 +21,9 @@ The relay keeps one bounded PipeWire capture stream open for the lifetime of the
 frontend, even while the game TCP connection is unavailable. PTT, Police, and
 EMS mark a capture boundary; releasing the control sends the audio collected
 since that boundary. Set `NN_VOICE_CAPTURE_COMMAND` only to use a custom capture
-command instead. The relay remains wire-compatible with the backend:
+command instead. The normal path uses a callback-based `sounddevice`/
+PortAudio stream routed through PipeWire; `pw-record` remains a fallback. The
+relay remains wire-compatible with the backend:
 tagged CBOR over connected
 UDP for control, status, and 16 kHz input PCM, plus RTP/L16 at 24 kHz for
 speaker audio. Configure `NN_VOICE_BACKEND_ADDRESS` during setup if the backend

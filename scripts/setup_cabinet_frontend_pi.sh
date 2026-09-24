@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APP_USER="${SUDO_USER:-${USER:?missing USER}}"
+APP_UID="$(id -u "$APP_USER")"
 APP_ROOT="${NN_CABINET_ROOT:-/home/$APP_USER/Desktop/cabinet-frontend}"
 VENV="${NN_HARDWARE_VENV:-/home/$APP_USER/venv}"
 SERVICE_NAME="north-neeladesh-cabinet-frontend"
@@ -36,6 +37,11 @@ fi
 if [[ -z "${NN_VOICE_PLAYBACK_COMMAND:-}" ]] && ! command -v aplay >/dev/null 2>&1; then
     printf 'aplay is required for the default voice playback path.\n' >&2
     exit 1
+fi
+
+if command -v apt-get >/dev/null 2>&1 && ! ldconfig -p 2>/dev/null | grep -q 'libportaudio'; then
+    printf 'Installing PortAudio runtime for callback-based capture.\n'
+    sudo apt-get install -y libportaudio2
 fi
 
 UV_BIN="${UV_BIN:-}"
@@ -79,6 +85,7 @@ SupplementaryGroups=gpio i2c spi audio lp
 WorkingDirectory=$APP_ROOT
 Environment=NN_BACKEND_ADDRESS=$BACKEND_ADDRESS
 Environment="NN_VOICE_BACKEND_ADDRESS=$VOICE_BACKEND_ADDRESS"
+Environment=XDG_RUNTIME_DIR=/run/user/$APP_UID
 Environment="NN_VOICE_CAPTURE_COMMAND=${NN_VOICE_CAPTURE_COMMAND:-}"
 Environment="NN_VOICE_PLAYBACK_COMMAND=${NN_VOICE_PLAYBACK_COMMAND:-}"
 Environment=PYTHONPATH=$APP_ROOT:/home/$APP_USER/Desktop
