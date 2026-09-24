@@ -130,24 +130,11 @@ class OutputMapper:
         if "directory_pages" in output:
             pages = tuple(repr(page) for page in output["directory_pages"])
             self.diagnostics.emit("directory_pages", pages, f"DIRECTORY // pages={len(pages)}")
-        if "clock" in output and isinstance(output["clock"], dict) and "shift" in output["clock"]:
-            clock = output["clock"]
-            clock_state = (clock.get("shift"), clock.get("elapsed_seconds"))
-            self.diagnostics.emit(
-                "clock",
-                clock_state,
-                f"CLOCK // shift={clock_state[0]} seconds={clock_state[1]}",
-            )
         if "shift" in output and isinstance(output["shift"], dict):
             shift = output["shift"]
             shift_state = (
                 shift.get("number"),
                 shift.get("phase"),
-                shift.get("active_call_count"),
-                shift.get("completed_routings"),
-                shift.get("required_service_calls"),
-                shift.get("completed_service_calls"),
-                shift.get("service_errors"),
             )
             self.diagnostics.emit("shift", shift_state, f"SHIFT // {shift_state}")
         if "run_generation" in output:

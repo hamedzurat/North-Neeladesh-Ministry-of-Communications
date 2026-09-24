@@ -36,6 +36,9 @@ rsync --archive --compress \
     "$ROOT_DIR/scripts/setup_cabinet_frontend_pi.sh" \
     "$PI_HOST:$REMOTE_ROOT/scripts/setup_cabinet_frontend_pi.sh"
 rsync --archive --compress \
+    "$ROOT_DIR/scripts/run_cabinet_frontend_pi.sh" \
+    "$PI_HOST:$REMOTE_ROOT/scripts/run_cabinet_frontend_pi.sh"
+rsync --archive --compress \
     --delete \
     "$AUDIO_ROOT/" \
     "$PI_HOST:$REMOTE_ROOT/assets/stories/"

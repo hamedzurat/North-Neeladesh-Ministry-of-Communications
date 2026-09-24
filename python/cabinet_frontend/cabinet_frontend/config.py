@@ -70,7 +70,7 @@ class HardwareConfig:
     pair_scan_interval: float = 0.5
     epaper_page_interval: float = 8.0
     crank_detents_per_rotation: int = 2
-    epaper_rotation: int = 0
+    epaper_rotation: int = 90
     tuning_coarse: int = 0
     tuning_fine: int = 0
 
@@ -106,4 +106,5 @@ class HardwareConfig:
         return cls(
             backend_address=(host, port),
             pair_scan_interval=float(os.environ.get("NN_PAIR_SCAN_INTERVAL", "0.5")),
+            epaper_rotation=int(os.environ.get("NN_EPAPER_ROTATION", "90")),
         )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from typing import Protocol
 
+from .diagnostics import log_runtime
 from .state import HeldControls, PhysicalInput
 
 
@@ -76,8 +77,6 @@ class PhysicalInputSource:
         try:
             event = self.rotary.read()
             if event:
-                print(f"ROTARY {event:+d}", flush=True)
-            if event:
                 self.crank_detents += 1
                 if self.crank_detents >= self.crank_detents_per_rotation:
                     self.crank_detents -= self.crank_detents_per_rotation
@@ -90,7 +89,7 @@ class PhysicalInputSource:
                 physical_ring_line = self._ring_generator_line()
                 if completed_rotation:
                     self.ring_line = physical_ring_line
-                    print(f"CRANK ring_line={self.ring_line}", flush=True)
+                    log_runtime(f"CRANK // ring_line={self.ring_line}")
                     rotation_armed = True
                 elif physical_ring_line != self.ring_line:
                     self.ring_line = -1
@@ -99,7 +98,7 @@ class PhysicalInputSource:
             self.next_scan_at = now + self.pair_scan_interval
         if completed_rotation and not rotation_armed:
             self.ring_line = self._ring_generator_line()
-            print(f"CRANK ring_line={self.ring_line}", flush=True)
+            log_runtime(f"CRANK // ring_line={self.ring_line}")
         if self.controls is None:
             held_controls = HeldControls()
         else:
@@ -153,7 +152,7 @@ class PhysicalInputSource:
         )
         if self.faults:
             message += f" faults={';'.join(self.faults)}"
-        print(message, flush=True)
+        log_runtime(message)
         self._last_status = status
         self._next_status_log = now + self.status_interval
 
@@ -181,17 +180,15 @@ class PhysicalInputSource:
             try:
                 component.close()
             except Exception as error:  # noqa: BLE001 - hardware cleanup must be best effort
-                print(
-                    f"CABINET FRONTEND // cleanup failed component={name} "
-                    f"error={type(error).__name__}: {error}",
-                    flush=True,
+                log_runtime(
+                    f"FRONTEND // cleanup failed component={name} "
+                    f"error={type(error).__name__}: {error}"
                 )
         if self.controls is not None:
             try:
                 self.controls.close()
             except Exception as error:  # noqa: BLE001 - hardware cleanup must be best effort
-                print(
-                    "CABINET FRONTEND // cleanup failed component=controls "
-                    f"error={type(error).__name__}: {error}",
-                    flush=True,
+                log_runtime(
+                    "FRONTEND // cleanup failed component=controls "
+                    f"error={type(error).__name__}: {error}"
                 )

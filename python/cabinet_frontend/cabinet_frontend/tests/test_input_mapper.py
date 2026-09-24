@@ -211,9 +211,9 @@ class InputMapperTests(unittest.TestCase):
             source.poll(now=1)
 
         text = output.getvalue()
-        self.assertIn("INPUT //", text)
+        self.assertIn("[INPUT]", text)
         self.assertIn("switches=ptt,ems", text)
         self.assertIn("digits=1234", text)
         self.assertIn("subscriber_0>operator", text)
         self.assertIn("tap_1>tap_2", text)
-        self.assertEqual(text.count("INPUT //"), 1)
+        self.assertEqual(text.count("[INPUT]"), 1)

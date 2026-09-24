@@ -90,6 +90,21 @@ sudo systemctl start north-neeladesh-cabinet-frontend.service
 journalctl -u north-neeladesh-cabinet-frontend.service -f
 ```
 
+## Run manually
+
+Stop the systemd service first, then run the guarded launcher in the foreground:
+
+```sh
+ssh -t taki@10.15.32.101 \
+  'sudo systemctl stop north-neeladesh-cabinet-frontend.service'
+ssh -t taki@10.15.32.101 \
+  'NN_BACKEND_HOST=10.15.28.117 \
+   /home/taki/Desktop/cabinet-frontend/scripts/run_cabinet_frontend_pi.sh'
+```
+
+The launcher refuses to run if systemd is still active. Press `Ctrl-C` to stop
+the foreground process, then start systemd again when required.
+
 From the development machine, inspect the frontend service on the Pi:
 
 ```sh

@@ -34,8 +34,6 @@ class GpioRotaryEncoder:
         state = self._state()
         event = self.decoder.update(state)
         if state != self.last_reported_state or event:
-            if event:
-                print(f"ROTARY {event:+d}", flush=True)
             self.last_reported_state = state
         return event
 
