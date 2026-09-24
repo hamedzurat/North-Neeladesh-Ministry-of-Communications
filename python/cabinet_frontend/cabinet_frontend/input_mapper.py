@@ -65,6 +65,7 @@ class PhysicalInputSource:
         self.held_controls = HeldControls()
         self.next_scan_at = 0.0
         self.faults: list[str] = []
+        self._topology_rejections: list[str] = []
         self._last_status: tuple[object, ...] | None = None
         self._next_status_log = 0.0
 
@@ -86,6 +87,7 @@ class PhysicalInputSource:
         if now >= self.next_scan_at:
             try:
                 self.topology = self._scan_topology()
+                self.faults.extend(self._topology_rejections)
                 physical_ring_line = self._ring_generator_line()
                 if completed_rotation:
                     self.ring_line = physical_ring_line
@@ -158,11 +160,20 @@ class PhysicalInputSource:
 
     def _scan_topology(self) -> list[dict[str, str]]:
         cords: list[dict[str, str]] = []
+        used_endpoints: set[str] = set()
+        self._topology_rejections = []
         for first_pin, second_pin in self.scanner.find_pairs():
             first = self.pin_to_port.get(first_pin)
             second = self.pin_to_port.get(second_pin)
             if first is None or second is None or first == second:
                 continue
+            if first in used_endpoints or second in used_endpoints:
+                repeated = first if first in used_endpoints else second
+                self._topology_rejections.append(
+                    f"pair_detector: repeated endpoint {repeated}; ignored {first}>{second}"
+                )
+                continue
+            used_endpoints.update((first, second))
             cords.append({"first": first, "second": second})
         return cords[:8]
 

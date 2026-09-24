@@ -68,6 +68,26 @@ class Controls:
 
 
 class InputMapperTests(unittest.TestCase):
+    def test_discards_duplicate_endpoints_before_backend_submission(self) -> None:
+        source = PhysicalInputSource(
+            Rotary([0]),
+            Scanner([(4, 12), (7, 12), (3, 13)]),
+            HardwareConfig().pin_to_port,
+            (0, 0, 0, 1),
+            pair_scan_interval=0,
+        )
+
+        physical = source.poll(now=0)
+
+        self.assertEqual(
+            physical.cord_topology,
+            [
+                {"first": "subscriber_4", "second": "operator"},
+                {"first": "subscriber_3", "second": "ring_generator"},
+            ],
+        )
+        self.assertTrue(any("repeated endpoint operator" in fault for fault in source.faults))
+
     def test_default_mcp_ports_cover_patch_panel_and_tap_bridge(self) -> None:
         config = HardwareConfig()
 

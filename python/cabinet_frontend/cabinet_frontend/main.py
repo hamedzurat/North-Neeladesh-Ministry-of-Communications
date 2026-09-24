@@ -83,6 +83,8 @@ class HardwareFrontend:
 def create_frontend(
     config: HardwareConfig,
     client: Any,
+    input_sequence: int = 0,
+    state_revision: int = 0,
 ) -> HardwareFrontend:
     components: ComponentBundle
     components = build_real_components(config)
@@ -105,7 +107,10 @@ def create_frontend(
         line_lamp_count=config.line_lamp_count,
         epaper_page_interval=config.epaper_page_interval,
     )
-    return HardwareFrontend(client, input_source, mapper, extra_closers=components.extra_closers)
+    frontend = HardwareFrontend(client, input_source, mapper, extra_closers=components.extra_closers)
+    frontend.input_sequence = input_sequence
+    frontend.state_revision = state_revision
+    return frontend
 
 
 def run_forever(
@@ -116,6 +121,8 @@ def run_forever(
     """Reconnect until interrupted."""
     factory = client_factory or (lambda: BackendClient.connect(config.backend_address))
     diagnostics = ChangeLogger(print)
+    input_sequence = 0
+    state_revision = 0
     voice_stop = threading.Event()
     voice_thread = threading.Thread(
         target=run_embedded,
@@ -134,7 +141,7 @@ def run_forever(
                 "connected",
                 "CABINET FRONTEND // backend connected",
             )
-            frontend = create_frontend(config, client)
+            frontend = create_frontend(config, client, input_sequence, state_revision)
             while True:
                 frontend.step()
                 # Sample physical controls faster than the normal backend cadence.
@@ -154,6 +161,8 @@ def run_forever(
                 f"CABINET FRONTEND OFFLINE // {type(error).__name__}: {error}",
             )
             if frontend is not None:
+                input_sequence = frontend.input_sequence
+                state_revision = frontend.state_revision
                 frontend.close()
             elif client is not None:
                 client.close()
