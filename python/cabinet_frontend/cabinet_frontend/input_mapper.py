@@ -176,8 +176,10 @@ class PhysicalInputSource:
     ) -> tuple[list[dict[str, str]], list[str]]:
         cords: list[dict[str, str]] = []
         used_endpoints: set[str] = set()
+        endpoint_pairs: dict[str, str] = {}
         repeated_endpoints: set[str] = set()
         rejected_cords = 0
+        conflicting_pairs: set[str] = set()
         for first_pin, second_pin in self.scanner.find_pairs():
             first = self.pin_to_port.get(first_pin)
             second = self.pin_to_port.get(second_pin)
@@ -186,18 +188,26 @@ class PhysicalInputSource:
             if first in used_endpoints or second in used_endpoints:
                 if first in used_endpoints:
                     repeated_endpoints.add(first)
+                    conflicting_pairs.add(endpoint_pairs[first])
+                    conflicting_pairs.add(f"{first}>{second}")
                 if second in used_endpoints:
                     repeated_endpoints.add(second)
+                    conflicting_pairs.add(endpoint_pairs[second])
+                    conflicting_pairs.add(f"{first}>{second}")
                 rejected_cords += 1
                 continue
             used_endpoints.update((first, second))
+            pair_name = f"{first}>{second}"
+            endpoint_pairs[first] = pair_name
+            endpoint_pairs[second] = pair_name
             cords.append({"first": first, "second": second})
         if repeated_endpoints:
             endpoints = ",".join(sorted(repeated_endpoints))
             return cords, [
                 (
                     "pair_detector: ambiguous endpoint(s) "
-                    f"{endpoints}; ignored {rejected_cords} cord(s), retaining last valid topology"
+                    f"{endpoints}; pairs={','.join(sorted(conflicting_pairs))}; "
+                    f"ignored {rejected_cords} cord(s), retaining last valid topology"
                 )
             ]
         return cords[:8], []
