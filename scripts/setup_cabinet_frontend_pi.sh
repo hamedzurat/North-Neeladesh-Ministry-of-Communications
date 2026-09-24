@@ -7,6 +7,7 @@ VENV="${NN_HARDWARE_VENV:-/home/$APP_USER/venv}"
 SERVICE_NAME="north-neeladesh-cabinet-frontend"
 SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME.service"
 RULE_PATH="/etc/udev/rules.d/99-north-neeladesh-cabinet-leds.rules"
+AUDIO_ROOT="${NN_AUDIO_ROOT:-$APP_ROOT/assets/stories}"
 BACKEND_ADDRESS="${NN_BACKEND_ADDRESS:-127.0.0.1:7878}"
 if [[ -n "${NN_BACKEND_HOST:-}" ]]; then
     BACKEND_ADDRESS="${NN_BACKEND_ADDRESS:-$NN_BACKEND_HOST:7878}"
@@ -14,9 +15,17 @@ fi
 BACKEND_HOST="${BACKEND_ADDRESS%:*}"
 VOICE_BACKEND_ADDRESS="${NN_VOICE_BACKEND_ADDRESS:-$BACKEND_HOST:7879}"
 
-if [[ ! -x "$VENV/bin/python" ]]; then
-    printf 'Missing Python virtual environment: %s\n' "$VENV" >&2
+if [[ ! -d "$AUDIO_ROOT" ]] || ! find "$AUDIO_ROOT" -type f \( -name '*.wav' -o -name '*.m4a' \) -print -quit | grep -q .; then
+    printf 'No authored audio files found under %s. Deploy the assets or run `just story-audio` first.\n' \
+        "$AUDIO_ROOT" >&2
     exit 1
+fi
+
+if [[ -f "$APP_ROOT/audio-manifest.sha256" ]]; then
+    if ! (cd "$APP_ROOT" && sha256sum --check audio-manifest.sha256); then
+        printf 'Authored audio verification failed under %s.\n' "$AUDIO_ROOT" >&2
+        exit 1
+    fi
 fi
 
 if [[ -z "${NN_VOICE_CAPTURE_COMMAND:-}" ]] && ! command -v pw-record >/dev/null 2>&1; then
@@ -80,6 +89,7 @@ sudo systemctl disable --now north-neeladesh-voice-relay.service 2>/dev/null || 
 sudo systemctl enable "$SERVICE_NAME.service"
 
 printf '\nInstalled %s.service.\n' "$SERVICE_NAME"
+printf 'Authored audio assets: %s\n' "$AUDIO_ROOT"
 printf 'The service is enabled but not started.\n'
 printf 'Start: sudo systemctl start %s.service\n' "$SERVICE_NAME"
 printf 'Logs:  journalctl -u %s.service -f\n' "$SERVICE_NAME"

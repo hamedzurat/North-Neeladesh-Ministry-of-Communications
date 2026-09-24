@@ -55,10 +55,13 @@ PI_HOST=taki@192.168.1.34 BACKEND_HOST=192.168.1.8 \
   ./scripts/deploy_cabinet_frontend.sh
 ```
 
-The setup script installs the locked project and its stable dependencies into
-`/home/taki/venv` with `uv sync`, grants the `gpio` group access to `/dev/leds0`,
-and installs an enabled but stopped systemd service. It does not start hardware
-automatically.
+The setup script creates the locked project environment and installs its stable dependencies into
+`/home/taki/venv` with `uv sync`, copies the authored story audio into
+`assets/stories`, grants the `gpio` group access to `/dev/leds0`, and installs
+an enabled but stopped systemd service. It does not start hardware
+automatically. The audio files are kept in the Pi bundle so the deployment is
+self-contained and can also be used if the authoritative backend is moved to
+the Pi later.
 
 Start and inspect it on the Pi:
 

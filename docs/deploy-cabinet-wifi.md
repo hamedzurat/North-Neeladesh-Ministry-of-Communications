@@ -30,7 +30,9 @@ BACKEND_HOST=192.168.1.8 \
 ```
 
 Replace both values for the local network. The deployment copies the Python
-project and setup script to the Pi, then prints the exact setup command.
+project, setup script, and authored story audio under `assets/stories` to the Pi,
+then prints the exact setup command. Run `just story-audio` first if the
+generated recordings are missing.
 
 ## 3. Install and configure the Pi service
 
@@ -42,7 +44,7 @@ ssh taki@192.168.1.34 \
    /home/taki/Desktop/cabinet-frontend/scripts/setup_cabinet_frontend_pi.sh'
 ```
 
-The setup script installs the locked Python environment, checks the Pi's
+The setup script verifies the authored audio bundle, installs the locked Python environment, checks the Pi's
 `pw-record`/`aplay` tools, configures GPIO/audio permissions, and writes one
 systemd service:
 
