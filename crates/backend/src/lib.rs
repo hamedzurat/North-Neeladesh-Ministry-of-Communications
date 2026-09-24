@@ -29,6 +29,14 @@ use exchange_protocol::{
     decode_voice_status, encode_voice_control, encode_voice_status, read_frame, write_frame,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum StoryId {
+    Shapla,
+    BelaBose,
+    DirtyWork,
+    Nahid,
+}
+
 fn directory_id_for_line(config: &GameConfig, line: u8) -> Option<u16> {
     config
         .subscribers
@@ -142,10 +150,13 @@ pub struct Backend {
     audio_call: Option<(u8, u8)>,
     audio_replay: Vec<Vec<u8>>,
     audio_replay_call: Option<(u8, u8)>,
+    audio_next_send_at: Option<Instant>,
+    audio_queue_tap_only: bool,
     audio_sequence: u16,
     audio_timestamp: u32,
     audio_tap_was_active: bool,
     pending_tts: Vec<(u8, u8, bool)>,
+    tap_replay_offsets: HashMap<(u8, u8), usize>,
     tts_prepared: bool,
     last_ptt: bool,
     voice_peer: Option<SocketAddr>,
@@ -183,7 +194,9 @@ pub struct Backend {
     story_followup_call_started: bool,
     shapla_story_completed: bool,
     story_completed: bool,
+    story_connections_pending_disconnect: HashMap<StoryId, (u8, u8)>,
     story_conversations: HashMap<u8, Vec<ConversationTurn>>,
+    tap_topology_log: Option<(u8, u8, bool, bool)>,
     ring_active_line: i16,
     godmode: bool,
     bypass_restrictions: bool,
@@ -197,10 +210,15 @@ impl Default for Backend {
 
 impl Backend {
     fn log(&self, category: &str, message: impl Display) {
+        let elapsed_millis = self
+            .clock_started
+            .elapsed()
+            .as_millis()
+            .saturating_add(u128::from(self.debug_elapsed.saturating_mul(1_000)));
         println!(
-            "[run={} +{:04}s] [{category}] {message}",
-            self.run_generation as u32 + 1,
-            self.elapsed_seconds()
+            "[{}.{:03}] [{category}] {message}",
+            elapsed_millis / 1_000,
+            elapsed_millis % 1_000
         );
     }
 
@@ -250,6 +268,25 @@ impl Backend {
             stories::nahid::NAHID_DIRECTORY,
         ]
         .map(|directory_id| self.line_for_directory(directory_id))
+    }
+
+    fn story_id_for_caller(&self, caller: u8) -> Option<StoryId> {
+        if self.is_directory_line(caller, stories::fallen_mother::CALLER_DIRECTORY) {
+            Some(StoryId::Shapla)
+        } else if self.is_neel_caller(caller) {
+            Some(StoryId::BelaBose)
+        } else if self.is_dirty_work_caller(caller) {
+            Some(StoryId::DirtyWork)
+        } else if self.is_nahid_caller(caller) {
+            Some(StoryId::Nahid)
+        } else {
+            None
+        }
+    }
+
+    fn story_connection_is_blocked(&self, story: StoryId) -> bool {
+        self.story_connections_pending_disconnect
+            .contains_key(&story)
     }
 
     fn validate_story_directories(config: &GameConfig) {
@@ -348,10 +385,13 @@ impl Backend {
             audio_call: None,
             audio_replay: Vec::new(),
             audio_replay_call: None,
+            audio_next_send_at: None,
+            audio_queue_tap_only: false,
             audio_sequence: 0,
             audio_timestamp: 0,
             audio_tap_was_active: false,
             pending_tts: Vec::new(),
+            tap_replay_offsets: HashMap::new(),
             tts_prepared: false,
             last_ptt: false,
             voice_peer: None,
@@ -389,7 +429,9 @@ impl Backend {
             story_followup_call_started: false,
             shapla_story_completed: false,
             story_completed: false,
+            story_connections_pending_disconnect: HashMap::new(),
             story_conversations: HashMap::new(),
+            tap_topology_log: None,
             ring_active_line: -1,
             godmode: false,
             bypass_restrictions: false,
@@ -596,10 +638,13 @@ impl Backend {
         self.audio_call = None;
         self.audio_replay.clear();
         self.audio_replay_call = None;
+        self.audio_next_send_at = None;
+        self.audio_queue_tap_only = false;
         self.audio_sequence = 0;
         self.audio_timestamp = 0;
         self.audio_tap_was_active = false;
         self.pending_tts.clear();
+        self.tap_replay_offsets.clear();
         self.last_ptt = false;
         self.pending_voice_control = None;
         self.voice_turn_id = 0;
@@ -629,7 +674,9 @@ impl Backend {
         self.story_followup_call_started = false;
         self.shapla_story_completed = false;
         self.story_completed = false;
+        self.story_connections_pending_disconnect.clear();
         self.story_conversations.clear();
+        self.tap_topology_log = None;
         self.ring_active_line = -1;
         self.godmode = false;
         self.bypass_restrictions = false;
@@ -652,8 +699,7 @@ impl Backend {
                 phase: call.phase.clone(),
             })
             .collect();
-        self.state.line_lamps = lamps(&self.calls, -1);
-        self.sync_story_lamp();
+        self.sync_lamps(-1);
         self.state.shift.active_call_count = self.calls.len() as u8;
         self.state.game_phase = GamePhase::Shift;
         self.log("RUN", "reset; all registered story threads initialized");
@@ -890,6 +936,7 @@ impl Backend {
             );
         }
         self.debug_elapsed = self.debug_elapsed.saturating_add(0);
+        self.release_story_connection_gate(input);
         if self.state.shift.phase == ShiftPhase::Ready && self.calls.is_empty() {
             self.refill_calls(self.call_target);
         }
@@ -904,6 +951,7 @@ impl Backend {
         self.refill_calls(self.call_target);
         self.update_ring_activation(input);
         self.connect_ready_direct_calls(input);
+        self.finish_ready_connected_calls(input);
         if self.state.shift.phase == ShiftPhase::Active
             && self.elapsed_seconds() as u64
                 >= self.shift_started_elapsed_seconds + self.config.shift_duration_seconds
@@ -956,6 +1004,7 @@ impl Backend {
         if error.is_none() {
             error = self.advance(input, focused, selected);
         }
+        self.log_tap_topology(input);
         if self.bypass_restrictions {
             error = None;
         }
@@ -991,11 +1040,78 @@ impl Backend {
                 .find(|c| c.caller_line == line)
                 .cloned()
         });
-        self.state.line_lamps = lamps(&self.calls, self.effective_ring_line(input));
+        self.sync_lamps(self.effective_ring_line(input));
+        if self.story_controls.tap != input.held_controls.tap {
+            self.log(
+                "CALL",
+                if input.held_controls.tap {
+                    "tap button pressed"
+                } else {
+                    "tap button released"
+                },
+            );
+        }
+        if self.story_controls.police != input.held_controls.police {
+            self.log(
+                "CALL",
+                if input.held_controls.police {
+                    "POLICE pressed"
+                } else {
+                    "POLICE released"
+                },
+            );
+        }
+        if self.story_controls.ems != input.held_controls.ems {
+            self.log(
+                "CALL",
+                if input.held_controls.ems {
+                    "EMS pressed"
+                } else {
+                    "EMS released"
+                },
+            );
+        }
         self.story_controls = input.held_controls.clone();
-        self.sync_story_lamp();
         self.state.shift.active_call_count = self.calls.len() as u8;
-        self.state.tap_bridge_monitoring = tap_monitor(input, &self.state);
+        let tap_was_active = self.state.tap_bridge_monitoring.is_some();
+        self.state.tap_bridge_monitoring = tap_monitor(input, &self.state).map(|mut monitoring| {
+            monitoring.audio_clip =
+                authored_audio_path(&self.config, monitoring.caller_line, monitoring.callee_line)
+                    .map(|path| path.to_string_lossy().into_owned());
+            monitoring
+        });
+        if !tap_was_active
+            && let Some(monitoring) = self.state.tap_bridge_monitoring.as_ref()
+            && self.audio_replay_call != Some((monitoring.caller_line, monitoring.callee_line))
+            && authored_audio_path(&self.config, monitoring.caller_line, monitoring.callee_line)
+                .is_some()
+        {
+            let replay_offset_samples = self
+                .calls
+                .iter()
+                .find(|call| {
+                    call.caller == monitoring.caller_line && call.callee == monitoring.callee_line
+                })
+                .and_then(|call| call.connected_at)
+                .map(|connected_at| {
+                    (connected_at.elapsed().as_secs_f64() * f64::from(VOICE_AUDIO_SAMPLE_RATE))
+                        as usize
+                })
+                .unwrap_or(0);
+            self.log(
+                "VOICE",
+                format_args!(
+                    "tap audio requested call={}->{} offset_samples={replay_offset_samples}",
+                    monitoring.caller_line, monitoring.callee_line
+                ),
+            );
+            self.tap_replay_offsets.insert(
+                (monitoring.caller_line, monitoring.callee_line),
+                replay_offset_samples,
+            );
+            self.pending_tts
+                .push((monitoring.caller_line, monitoring.callee_line, true));
+        }
         self.state.tap_bridge_audio_active = self.state.tap_bridge_monitoring.is_some();
         self.sync_story_output();
         self.update_voice_control(input, self.revision);
@@ -1058,14 +1174,12 @@ impl Backend {
             self.voice_turn_id = self.next_voice_turn_id;
             self.next_voice_turn_id = self.next_voice_turn_id.wrapping_add(1);
             self.log(
-                "VOICE",
+                "CALL",
                 format_args!(
-                    "start caller={:?} turn={} ptt={} police={} ems={} tap={}",
+                    "PTT started caller={:?} turn={} service={} tap={}",
                     caller,
                     self.voice_turn_id,
-                    self.voice_turn_controls.ptt,
-                    self.voice_turn_controls.police,
-                    self.voice_turn_controls.ems,
+                    self.voice_turn_controls.police || self.voice_turn_controls.ems,
                     self.voice_turn_controls.tap
                 ),
             );
@@ -1088,14 +1202,12 @@ impl Backend {
         });
         if !talking {
             self.log(
-                "VOICE",
+                "CALL",
                 format_args!(
-                    "release caller={:?} turn={} service_turn={} police={} ems={}",
+                    "PTT released caller={:?} turn={} service={}",
                     caller,
                     self.voice_turn_id,
                     self.voice_turn_controls.police || self.voice_turn_controls.ems,
-                    self.voice_turn_controls.police,
-                    self.voice_turn_controls.ems
                 ),
             );
         }
@@ -1106,13 +1218,88 @@ impl Backend {
         if !self.story_enabled {
             return;
         }
-        if self.shapla_story_active() {
+        if !self.story_connection_is_blocked(StoryId::Shapla)
+            && !self.shapla_story_completed
+            && self.story_beat != stories::fallen_mother::Beat::BadFollowup
+        {
             self.state.line_lamps
                 [self.line_for_directory(stories::fallen_mother::CALLER_DIRECTORY) as usize] = true;
         }
-        if self.story_enabled {
+        if !self.story_connection_is_blocked(StoryId::BelaBose)
+            && !stories::bela_bose::is_terminal(self.neel_story_beat)
+        {
+            self.state.line_lamps[self.story_caller_for_neel() as usize] = true;
+        }
+        if !self.story_connection_is_blocked(StoryId::DirtyWork)
+            && !self.dirty_work_beat.is_terminal()
+        {
             self.state.line_lamps
                 [self.line_for_directory(stories::dirty_work::RAHMAN_DIRECTORY) as usize] = true;
+        }
+        if !self.story_connection_is_blocked(StoryId::Nahid) && !self.nahid_beat.is_terminal() {
+            self.state.line_lamps
+                [self.line_for_directory(stories::nahid::NAHID_DIRECTORY) as usize] = true;
+        }
+    }
+
+    fn release_story_connection_gate(&mut self, input: &InputState) {
+        self.story_connections_pending_disconnect
+            .retain(|_, connection| {
+                let (caller, callee) = *connection;
+                valid_direct_circuit(input, caller, callee)
+                    || has_cord(input, PortId::Subscriber(caller), PortId::Tap(1))
+                    || has_cord(input, PortId::Subscriber(caller), PortId::Tap(2))
+                    || has_cord(input, PortId::Subscriber(callee), PortId::Tap(1))
+                    || has_cord(input, PortId::Subscriber(callee), PortId::Tap(2))
+            });
+    }
+
+    fn sync_lamps(&mut self, ring_line: i16) {
+        let previous = self.state.line_lamps;
+        self.state.line_lamps = lamps(&self.calls, ring_line);
+        self.sync_story_lamp();
+        for (line, (&was_on, &is_on)) in previous
+            .iter()
+            .zip(self.state.line_lamps.iter())
+            .enumerate()
+        {
+            if was_on != is_on {
+                self.log(
+                    "LED",
+                    format_args!("line {line} {}", if is_on { "on" } else { "off" }),
+                );
+            }
+        }
+    }
+
+    fn log_tap_topology(&mut self, input: &InputState) {
+        let current = self.calls.iter().find_map(|call| {
+            let caller_tap = has_cord(input, PortId::Subscriber(call.caller), PortId::Tap(1))
+                || has_cord(input, PortId::Subscriber(call.caller), PortId::Tap(2));
+            let callee_tap = has_cord(input, PortId::Subscriber(call.callee), PortId::Tap(1))
+                || has_cord(input, PortId::Subscriber(call.callee), PortId::Tap(2));
+            (caller_tap || callee_tap).then_some((call.caller, call.callee, caller_tap, callee_tap))
+        });
+
+        if current == self.tap_topology_log {
+            return;
+        }
+        self.tap_topology_log = current;
+
+        let Some((caller, callee, caller_tap, callee_tap)) = current else {
+            return;
+        };
+        match (caller_tap, callee_tap) {
+            (true, true) => {
+                self.log("CALL", format_args!("connect {caller} -> tap -> {callee}"));
+            }
+            (true, false) => {
+                self.log("CALL", format_args!("connect {caller} -> tap"));
+            }
+            (false, true) => {
+                self.log("CALL", format_args!("connect tap -> {callee}"));
+            }
+            (false, false) => {}
         }
     }
 
@@ -1161,6 +1348,17 @@ impl Backend {
         if operator_line(&input.cord_topology) == Some(line) {
             return;
         }
+        // Removing the operator cord is expected once a call has been
+        // connected directly.  The voice worker may still be playing the
+        // call's opening audio, so do not mistake that normal transition for
+        // an abandoned operator conversation.
+        if self
+            .calls
+            .iter()
+            .any(|call| call.caller == line && call.phase == CallPhase::Connected)
+        {
+            return;
+        }
         let active = self.voice_speaker_active
             || self
                 .voice_status
@@ -1169,7 +1367,26 @@ impl Backend {
             return;
         }
         self.cancelled_voice_turn = Some(self.voice_turn_id);
-        if self.story_beat == stories::fallen_mother::Beat::EmergencyCall {
+        if line == self.story_caller()
+            && self.story_beat == stories::fallen_mother::Beat::EmergencyCall
+        {
+            self.log(
+                "STORY fallen_mother",
+                format_args!(
+                    "beat {:?} -> {:?} after operator disconnect",
+                    self.story_beat,
+                    stories::fallen_mother::Beat::BadFollowup
+                ),
+            );
+            self.record_event(
+                "story",
+                "transition",
+                format!(
+                    "fallen_mother {:?} -> {:?} after operator disconnect",
+                    self.story_beat,
+                    stories::fallen_mother::Beat::BadFollowup
+                ),
+            );
             self.story_beat = stories::fallen_mother::Beat::BadFollowup;
             self.money -= 100;
             self.deductions += 100;
@@ -1240,7 +1457,13 @@ impl Backend {
         }
     }
 
-    fn complete_story_followup(&mut self) {
+    fn complete_story_followup(&mut self, caller: u8) {
+        // Follow-up completion belongs to Fallen Mother/Shapla only. Other
+        // stories also produce voice responses, but must not consume this
+        // story's pending follow-up or reward.
+        if !self.is_directory_line(caller, stories::fallen_mother::CALLER_DIRECTORY) {
+            return;
+        }
         if matches!(
             self.story_beat,
             stories::fallen_mother::Beat::HappyFollowup
@@ -1257,10 +1480,7 @@ impl Backend {
         }
     }
 
-    fn record_story_turn(&mut self, speaker: &str, text: &str) {
-        let Some(caller) = self.voice_subscriber_line else {
-            return;
-        };
+    fn record_story_turn(&mut self, caller: u8, speaker: &str, text: &str) {
         if !self.story_enabled || !self.story_caller_lines().contains(&caller) {
             return;
         }
@@ -1348,13 +1568,16 @@ impl Backend {
         let shadhin_line = self.line_for_directory(stories::bela_bose::SHADHIN_DIRECTORY);
         let bela_dog_line = self.line_for_directory(stories::bela_bose::BELA_DOG_DIRECTORY);
         let bela_cat_line = self.line_for_directory(stories::bela_bose::BELA_CAT_DIRECTORY);
+        let mut ring_started_log = false;
+        let mut operator_started_log = false;
         let call = &mut self.calls[index];
         let call_caller = call.caller;
         let call_callee = call.callee;
         if neel_arnab_beat && call.caller == shadhin_line {
             for target in [bela_dog_line, bela_cat_line] {
-                if selected_line == Some(target)
-                    && direct(&input.cord_topology, call.caller, target)
+                if requested_ring_line == i16::from(target)
+                    || (selected_line == Some(target)
+                        && direct(&input.cord_topology, call.caller, target))
                 {
                     call.callee = target;
                 }
@@ -1367,14 +1590,15 @@ impl Backend {
         let tap_route =
             input.held_controls.tap && valid_tap_circuit(input, call.caller, call.callee);
         match call.phase {
-            CallPhase::Waiting if tap_route && selected_line == Some(call.callee) => {
+            CallPhase::Waiting if tap_route => {
                 connect = true;
             }
             CallPhase::Waiting if operator => {
+                operator_started_log = true;
                 call.phase = CallPhase::OperatorSession;
             }
             CallPhase::OperatorSession | CallPhase::AwaitingRouting => {
-                if tap_route && selected_line == Some(call.callee) {
+                if tap_route {
                     connect = true;
                 } else if (direct_route
                     && (neel_arnab_destination || selected_line == Some(call.callee))
@@ -1388,6 +1612,7 @@ impl Backend {
                     ));
                 } else if ring_requested {
                     if valid_ringing_circuit(input, call.caller, call.callee) {
+                        ring_started_log = true;
                         call.ring_started_at = Some(now);
                         call.ring_ready_at = Some(now + ring_delay);
                         call.phase = CallPhase::Ringing;
@@ -1404,6 +1629,16 @@ impl Backend {
                     connect = true;
                 } else if input.cord_topology.is_empty() {
                     call.phase = CallPhase::AwaitingRouting;
+                }
+            }
+            CallPhase::Ringing if tap_route => {
+                if !call.ring_activated {
+                    error = Some((
+                        "ringing_not_ready",
+                        "keep the Ring Generator connected until the line LED lights",
+                    ));
+                } else {
+                    connect = true;
                 }
             }
             CallPhase::Ringing if ring_requested => {}
@@ -1468,6 +1703,12 @@ impl Backend {
         }
         if call.phase == CallPhase::OperatorSession && input.cord_topology.is_empty() {
             call.phase = CallPhase::AwaitingRouting;
+        }
+        if ring_started_log {
+            self.log("CALL", format_args!("connect ring -> {}", call_callee));
+        }
+        if operator_started_log {
+            self.log("CALL", format_args!("connect operator -> {}", call_caller));
         }
         if finish {
             self.finish_call(index, false);
@@ -1550,27 +1791,61 @@ impl Backend {
             call.audio_duration_seconds = 0;
             self.pending_tts.push((caller, callee, tap_audio));
         }
+        if self.calls[index].phase == CallPhase::Connected {
+            let remaining = self.calls[index]
+                .deadline
+                .checked_sub(self.elapsed_seconds() as u64);
+            self.log(
+                "CALL",
+                format_args!(
+                    "line connected {} -> {} beat_time_remaining={:?}",
+                    caller, callee, remaining
+                ),
+            );
+        }
     }
 
-    fn install_generated_audio(&mut self, caller: u8, callee: u8, samples: Vec<i16>) {
+    fn install_generated_audio(
+        &mut self,
+        caller: u8,
+        callee: u8,
+        tap_audio: bool,
+        samples: Vec<i16>,
+    ) {
         let connected_elapsed_seconds = self.elapsed_seconds() as u64;
-        let Some(call) = self.calls.iter_mut().find(|call| {
-            call.caller == caller && call.callee == callee && call.phase == CallPhase::Held
-        }) else {
-            return;
+        let replay_offset_samples = if tap_audio {
+            self.tap_replay_offsets
+                .remove(&(caller, callee))
+                .unwrap_or(0)
+        } else {
+            0
         };
         let duration = (samples.len() as u64)
             .div_ceil(u64::from(VOICE_AUDIO_SAMPLE_RATE))
             .max(1);
-        println!(
-            "[VOICE] opening audio generated caller={caller} callee={callee} samples={} packets={}",
-            samples.len(),
-            samples.len().div_ceil(VOICE_AUDIO_PACKET_SAMPLES)
+        let beat_time_remaining = {
+            let Some(call) = self.calls.iter_mut().find(|call| {
+                call.caller == caller
+                    && call.callee == callee
+                    && matches!(call.phase, CallPhase::Held | CallPhase::Connected)
+            }) else {
+                return;
+            };
+            if call.phase == CallPhase::Held {
+                call.audio_duration_seconds = duration;
+                call.phase = CallPhase::Connected;
+                call.connected_at = Some(Instant::now());
+                call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
+            }
+            call.deadline.checked_sub(connected_elapsed_seconds)
+        };
+        self.log(
+            "CALL",
+            format_args!(
+                "line connected {} -> {} beat_time_remaining={:?}",
+                caller, callee, beat_time_remaining
+            ),
         );
-        call.audio_duration_seconds = duration;
-        call.phase = CallPhase::Connected;
-        call.connected_at = Some(Instant::now());
-        call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
         self.sync_call_state();
         self.audio_call = Some((caller, callee));
         let sequence = self.audio_sequence;
@@ -1588,9 +1863,29 @@ impl Backend {
                 .encode(),
             );
         }
+        self.log(
+            "VOICE",
+            format_args!(
+                "audio queued call={}->{} source={} packets={}",
+                caller,
+                callee,
+                if authored_audio_path(&self.config, caller, callee).is_some() {
+                    "prerecorded"
+                } else {
+                    "generated"
+                },
+                packets
+                    .len()
+                    .saturating_sub(replay_offset_samples / VOICE_AUDIO_PACKET_SAMPLES,)
+            ),
+        );
         self.audio_replay = packets.clone();
         self.audio_replay_call = Some((caller, callee));
-        for packet in packets {
+        self.audio_queue_tap_only = tap_audio;
+        for packet in packets
+            .into_iter()
+            .skip(replay_offset_samples / VOICE_AUDIO_PACKET_SAMPLES)
+        {
             if self.audio_queue.len() >= MAX_AUDIO_PACKETS {
                 self.audio_queue.pop_front();
             }
@@ -1663,10 +1958,8 @@ impl Backend {
         let Some(text) = (caller_directory == Some(stories::fallen_mother::CALLER_DIRECTORY))
             .then_some(stories::fallen_mother::OPENING_DIALOGUE)
         else {
-            println!("[VOICE] no opening dialogue caller={caller} callee={callee}");
             return Ok(Vec::new());
         };
-        println!("[VOICE] synthesizing opening dialogue caller={caller} text={text:?}");
         let samples =
             with_persistent_pocket_tts(|tts| tts.synthesize(&caller_profile.voice_id, text))?;
         if samples.is_empty() {
@@ -1687,6 +1980,13 @@ impl Backend {
 
     fn finish_call(&mut self, index: usize, missed: bool) {
         let call = self.calls.remove(index);
+        if !missed
+            && call.phase == CallPhase::Connected
+            && let Some(story) = self.story_id_for_caller(call.caller)
+        {
+            self.story_connections_pending_disconnect
+                .insert(story, (call.caller, call.callee));
+        }
         self.log(
             "CALL",
             format_args!(
@@ -1769,6 +2069,23 @@ impl Backend {
                     format_args!("completed scam {} of 5", self.nahid_scam_count),
                 );
                 if self.nahid_scam_count >= 5 {
+                    self.log(
+                        "STORY nahid",
+                        format_args!(
+                            "beat {:?} -> {:?}",
+                            self.nahid_beat,
+                            stories::nahid::Beat::Penalized
+                        ),
+                    );
+                    self.record_event(
+                        "story",
+                        "transition",
+                        format!(
+                            "nahid {:?} -> {:?}",
+                            self.nahid_beat,
+                            stories::nahid::Beat::Penalized
+                        ),
+                    );
                     self.nahid_beat = stories::nahid::Beat::Penalized;
                     self.deductions += 100;
                     self.money -= 100;
@@ -1811,6 +2128,11 @@ impl Backend {
                         "beat {:?} -> {:?} after call {} -> {}",
                         self.neel_story_beat, next, call.caller, call.callee
                     ),
+                );
+                self.record_event(
+                    "story",
+                    "transition",
+                    format!("bela_bose {:?} -> {:?}", self.neel_story_beat, next),
                 );
                 self.neel_story_beat = next;
                 match next {
@@ -1855,6 +2177,11 @@ impl Backend {
                         "beat {:?} -> {:?} after call {} -> {}",
                         self.dirty_work_beat, next, call.caller, call.callee
                     ),
+                );
+                self.record_event(
+                    "story",
+                    "transition",
+                    format!("dirty_work {:?} -> {:?}", self.dirty_work_beat, next),
                 );
                 self.dirty_work_beat = next;
             }
@@ -1953,6 +2280,33 @@ impl Backend {
             .collect::<Vec<_>>();
         for index in ready {
             self.connect_call(index, false);
+        }
+    }
+
+    fn finish_ready_connected_calls(&mut self, input: &InputState) {
+        let now = self.elapsed_seconds() as u64;
+        let ready = self
+            .calls
+            .iter()
+            .enumerate()
+            .filter(|(_, call)| {
+                call.phase == CallPhase::Connected
+                    && call.connected_elapsed_seconds.is_some_and(|started| {
+                        now.saturating_sub(started) >= call.audio_duration_seconds
+                    })
+                    && valid_connected_circuit(input, call.caller, call.callee)
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+
+        // Remove in reverse order because finishing a call mutates the call
+        // list. This must not depend on which call currently has operator
+        // focus: a later interaction on another line must not hold an older
+        // connected story call open forever.
+        for index in ready.into_iter().rev() {
+            if index < self.calls.len() {
+                self.finish_call(index, false);
+            }
         }
     }
 
@@ -2076,7 +2430,8 @@ impl Backend {
             return;
         }
         let now = self.elapsed_seconds() as u64;
-        if !self.shapla_story_completed
+        if !self.story_connection_is_blocked(StoryId::Shapla)
+            && !self.shapla_story_completed
             && self.story_beat != stories::fallen_mother::Beat::BadFollowup
             && !self.calls.iter().any(|call| {
                 self.is_directory_line(call.caller, stories::fallen_mother::CALLER_DIRECTORY)
@@ -2100,7 +2455,8 @@ impl Backend {
                 audio_duration_seconds: 0,
             });
         }
-        if !stories::bela_bose::is_terminal(self.neel_story_beat)
+        if !self.story_connection_is_blocked(StoryId::BelaBose)
+            && !stories::bela_bose::is_terminal(self.neel_story_beat)
             && !self
                 .calls
                 .iter()
@@ -2122,7 +2478,8 @@ impl Backend {
                 audio_duration_seconds: 0,
             });
         }
-        if !self.dirty_work_beat.is_terminal()
+        if !self.story_connection_is_blocked(StoryId::DirtyWork)
+            && !self.dirty_work_beat.is_terminal()
             && !self
                 .calls
                 .iter()
@@ -2143,7 +2500,8 @@ impl Backend {
                 audio_duration_seconds: 0,
             });
         }
-        if !self.nahid_beat.is_terminal()
+        if !self.story_connection_is_blocked(StoryId::Nahid)
+            && !self.nahid_beat.is_terminal()
             && !self
                 .calls
                 .iter()
@@ -2552,6 +2910,15 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                     let service_turn = backend.lock().ok().is_some_and(|state| {
                         state.voice_turn_controls.police || state.voice_turn_controls.ems
                     });
+                    let service_kind = backend.lock().ok().and_then(|state| {
+                        if state.voice_turn_controls.police {
+                            Some(exchange_protocol::ServiceKind::Police)
+                        } else if state.voice_turn_controls.ems {
+                            Some(exchange_protocol::ServiceKind::Ems)
+                        } else {
+                            None
+                        }
+                    });
                     let conversation_id = if let Ok(mut state) = backend.lock() {
                         let id = state.next_voice_conversation_id;
                         state.next_voice_conversation_id =
@@ -2590,21 +2957,23 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                             VOICE_INPUT_SAMPLE_RATE,
                             &samples,
                         ) {
-                            Ok(path) => println!(
-                                "[VOICE] capture_saved conversation={} path={}",
-                                conversation_id,
-                                path.display()
-                            ),
-                            Err(error) => eprintln!(
-                                "[VOICE] capture_save_failed conversation={} error={error}",
-                                conversation_id
-                            ),
+                            Ok(_) => {}
+                            Err(error) => {
+                                if let Ok(state) = backend.lock() {
+                                    state.log(
+                                        "VOICE ERROR",
+                                        format_args!(
+                                            "capture save failed conversation={} error={error}",
+                                            conversation_id
+                                        ),
+                                    );
+                                }
+                            }
                         }
                     }
                     if let Ok(mut state) = backend.lock() {
                         state.voice_status = Some(VoiceStatus::Transcribing);
                     }
-                    let turn_id = input.turn_id;
                     thread::spawn(move || {
                         let transcript_backend = Arc::clone(&worker_backend);
                         let mut packet_index = 0_usize;
@@ -2623,16 +2992,8 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                     };
                                     state.voice_transcript = Some(transcript.to_string());
                                     state.log(
-                                        "VOICE",
-                                        format_args!(
-                                            "transcript caller={} turn={} service_turn={} police={} ems={} text={:?}",
-                                            caller,
-                                            turn_id,
-                                            service_turn,
-                                            state.voice_turn_controls.police,
-                                            state.voice_turn_controls.ems,
-                                            transcript
-                                        ),
+                                        "CALL",
+                                        format_args!("Operator says: {:?}", transcript,),
                                     );
                                     if service_turn
                                         && state.is_directory_line(
@@ -2640,7 +3001,9 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                             stories::nahid::NAHID_DIRECTORY,
                                         )
                                     {
-                                        if state.voice_turn_controls.police {
+                                        if service_kind
+                                            == Some(exchange_protocol::ServiceKind::Police)
+                                        {
                                             match classify_nahid_report(transcript) {
                                                 Ok(success) => {
                                                     state.voice_response_text = Some(
@@ -2671,10 +3034,8 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                             stories::fallen_mother::CALLER_DIRECTORY,
                                         )
                                     {
-                                        let service = if state.voice_turn_controls.police {
-                                            exchange_protocol::ServiceKind::Police
-                                        } else {
-                                            exchange_protocol::ServiceKind::Ems
+                                        let Some(service) = service_kind else {
+                                            return;
                                         };
                                         match classify_story(transcript, service) {
                                             Ok(classification) => {
@@ -2731,6 +3092,10 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                             },
                             &|response| {
                                 if let Ok(mut state) = transcript_backend.lock() {
+                                    state.log(
+                                        "CALL",
+                                        format_args!("Subscriber says: {:?}", response),
+                                    );
                                     state.voice_llm_response = Some(response.to_string());
                                     if let Some(id) = conversation_id
                                         && let Some(conversation) = state
@@ -2779,6 +3144,13 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                             Ok(value) => value,
                             Err(error) => {
                                 if let Ok(mut state) = worker_backend.lock() {
+                                    state.log(
+                                        "CALL ERROR",
+                                        format_args!(
+                                            "voice turn failed code={} message={}",
+                                            error.code, error.message
+                                        ),
+                                    );
                                     state.voice_status = Some(VoiceStatus::Failed);
                                     state.voice_speaker_active = false;
                                     let finished_elapsed_seconds = state.elapsed_seconds();
@@ -2865,15 +3237,18 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                 VOICE_AUDIO_SAMPLE_RATE,
                                 &audio,
                             ) {
-                                Ok(path) => println!(
-                                    "[VOICE] tts_saved conversation={} path={}",
-                                    conversation_id,
-                                    path.display()
-                                ),
-                                Err(error) => eprintln!(
-                                    "[VOICE] tts_save_failed conversation={} error={error}",
-                                    conversation_id
-                                ),
+                                Ok(_) => {}
+                                Err(error) => {
+                                    if let Ok(state) = worker_backend.lock() {
+                                        state.log(
+                                            "VOICE ERROR",
+                                            format_args!(
+                                                "tts save failed conversation={} error={error}",
+                                                conversation_id
+                                            ),
+                                        );
+                                    }
+                                }
                             }
                         }
                         let status = VoiceStatusMessage {
@@ -2893,10 +3268,18 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         if let Ok(mut state) = worker_backend.lock() {
                             if has_response {
                                 if !service_turn {
-                                    state.record_story_turn("player", &transcript_for_history);
-                                    state.record_story_turn("caller", &response_for_history);
+                                    state.record_story_turn(
+                                        caller,
+                                        "player",
+                                        &transcript_for_history,
+                                    );
+                                    state.record_story_turn(
+                                        caller,
+                                        "caller",
+                                        &response_for_history,
+                                    );
                                 }
-                                state.complete_story_followup();
+                                state.complete_story_followup(caller);
                             }
                             state.voice_status = Some(VoiceStatus::Playing);
                             state.voice_speaker_active = true;
@@ -2960,7 +3343,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                 .map_err(|error| io::Error::other(error.to_string()))?;
             socket.send_to(&datagram, address)?;
         }
-        let (packets, audio_peer) = backend
+        let (packet, audio_peer) = backend
             .lock()
             .ok()
             .map(|mut state| {
@@ -2995,22 +3378,24 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                     }
                     state.audio_tap_was_active = true;
                 }
-                let packets = if peer.is_some() {
-                    state.audio_queue.drain(..).collect::<Vec<_>>()
+                let packet = if peer.is_some()
+                    && !state.audio_queue.is_empty()
+                    && (!state.audio_queue_tap_only || state.state.tap_bridge_audio_active)
+                    && state
+                        .audio_next_send_at
+                        .is_none_or(|ready_at| Instant::now() >= ready_at)
+                {
+                    let packet = state.audio_queue.pop_front();
+                    state.audio_next_send_at = Some(Instant::now() + Duration::from_millis(20));
+                    packet
                 } else {
-                    Vec::new()
+                    None
                 };
-                (packets, peer)
+                (packet, peer)
             })
             .unwrap_or_default();
         if let Some(address) = audio_peer {
-            if !packets.is_empty() {
-                println!(
-                    "[VOICE] sending {} queued RTP packets to {address}",
-                    packets.len()
-                );
-            }
-            for packet in packets {
+            if let Some(packet) = packet {
                 socket.send_to(&packet, address)?;
             }
         }
@@ -3253,7 +3638,8 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
                 }
             } else if state.voice_subscriber_line.is_some_and(|line| {
                 state.is_directory_line(line, stories::fallen_mother::CALLER_DIRECTORY)
-            }) {
+            }) && service_turn
+            {
                 let service = if request.held_controls.police {
                     exchange_protocol::ServiceKind::Police
                 } else {
@@ -3307,12 +3693,13 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
             match generated {
                 Ok(response_text) => {
                     if let Ok(mut state) = backend.lock() {
+                        let caller = state.voice_subscriber_line.unwrap_or(0);
                         if !service_turn {
-                            state.record_story_turn("player", &request.text);
-                            state.record_story_turn("caller", &response_text);
+                            state.record_story_turn(caller, "player", &request.text);
+                            state.record_story_turn(caller, "caller", &response_text);
                         }
                         if !response_text.is_empty() {
-                            state.complete_story_followup();
+                            state.complete_story_followup(caller);
                         }
                         state.voice_status = Some(VoiceStatus::Completed);
                         state.voice_transcript = Some(request.text.clone());
@@ -3395,16 +3782,13 @@ pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) ->
             (response, state.take_pending_tts(), state.config.clone())
         };
         for (caller, callee, tap_audio) in pending_tts {
-            println!(
-                "[VOICE] dispatching opening audio caller={caller} callee={callee} tap_audio={tap_audio}"
-            );
             let worker_backend = Arc::clone(&backend);
             let call_config = config.clone();
             thread::spawn(move || {
                 match Backend::generate_call_audio(call_config, caller, callee, tap_audio) {
                     Ok(samples) => {
                         if let Ok(mut state) = worker_backend.lock() {
-                            state.install_generated_audio(caller, callee, samples);
+                            state.install_generated_audio(caller, callee, tap_audio, samples);
                         }
                     }
                     Err(error) => {
@@ -3476,5 +3860,25 @@ mod story_knowledge_tests {
                 .call_guidance
                 .contains("If the operator asks for the location")
         );
+    }
+
+    #[test]
+    fn non_shapla_voice_response_cannot_complete_shapla_followup() {
+        let mut backend = Backend::new_exchange();
+        backend.story_beat = crate::stories::fallen_mother::Beat::HappyFollowup;
+
+        let professor = backend.line_for_directory(crate::stories::bela_bose::NEEL_DIRECTORY);
+        backend.complete_story_followup(professor);
+
+        assert!(!backend.shapla_story_completed);
+        assert!(!backend.story_reward_paid);
+        assert_eq!(backend.money, 0);
+
+        let shapla = backend.line_for_directory(crate::stories::fallen_mother::CALLER_DIRECTORY);
+        backend.complete_story_followup(shapla);
+
+        assert!(backend.shapla_story_completed);
+        assert!(backend.story_reward_paid);
+        assert_eq!(backend.money, 100);
     }
 }

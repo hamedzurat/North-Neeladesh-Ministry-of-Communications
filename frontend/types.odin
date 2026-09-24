@@ -103,6 +103,7 @@ State_Output :: struct {
 	calls:                         [dynamic]Call,
 	service_call:                  Maybe(Service_Call),
 	tap_bridge_monitoring:         int,
+	tap_audio_clip:                string,
 	tap_bridge_audio_active:       bool,
 	shift:                         Shift,
 	speaker_active:                bool,

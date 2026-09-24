@@ -141,6 +141,64 @@ fn professor_must_wait_for_delayed_ring_activation_before_direct_connection() {
 }
 
 #[test]
+fn next_bela_call_waits_for_the_previous_direct_circuit_to_be_removed() {
+    let mut backend = Backend::new_exchange();
+    backend.apply_debug_command(DebugRequest {
+        protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
+        command: DebugCommand::ResetRun,
+    });
+
+    let operator = vec![cord(PortId::Subscriber(2), PortId::Operator)];
+    backend.apply_input_message(input(&backend, 1, vec![], [0, 0, 0, 1]));
+    backend.apply_input_message(input(&backend, 2, operator, [0, 0, 0, 1]));
+
+    let ringing = vec![
+        cord(PortId::Subscriber(2), PortId::Operator),
+        cord(PortId::Subscriber(3), PortId::RingGenerator),
+    ];
+    backend.apply_input_message(input_with_ring(
+        &backend,
+        3,
+        ringing.clone(),
+        [1, 0, 2, 4],
+        3,
+    ));
+    backend.apply_debug_command(DebugRequest {
+        protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
+        command: DebugCommand::AdvanceTime { seconds: 3 },
+    });
+    backend.apply_input_message(input_with_ring(&backend, 4, ringing, [1, 0, 2, 4], 3));
+
+    let direct = vec![cord(PortId::Subscriber(2), PortId::Subscriber(3))];
+    backend.apply_input_message(input(&backend, 5, direct.clone(), [1, 0, 2, 4]));
+    backend.apply_debug_command(DebugRequest {
+        protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
+        command: DebugCommand::AdvanceTime { seconds: 30 },
+    });
+    let finished = backend.apply_input_message(input(&backend, 6, direct, [1, 0, 2, 4]));
+
+    assert_eq!(finished.output.neel_story_beat, "ArnabDirectory");
+    assert!(!finished.output.line_lamps[3]);
+    assert!(
+        !finished
+            .output
+            .calls
+            .iter()
+            .any(|call| call.caller_line == 3)
+    );
+
+    let disconnected = backend.apply_input_message(input(&backend, 7, vec![], [1, 0, 2, 4]));
+    assert!(disconnected.output.line_lamps[3]);
+    assert!(
+        disconnected
+            .output
+            .calls
+            .iter()
+            .any(|call| call.caller_line == 3)
+    );
+}
+
+#[test]
 fn reset_starts_all_four_story_callers_together() {
     let mut backend = Backend::new_exchange();
     let reset = backend.apply_debug_command(DebugRequest {

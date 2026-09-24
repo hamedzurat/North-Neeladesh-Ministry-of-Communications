@@ -277,6 +277,7 @@ pub struct TapBridgeMonitoring {
     pub callee_line: u8,
     pub caller_tap_port: u8,
     pub callee_tap_port: u8,
+    pub audio_clip: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

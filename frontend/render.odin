@@ -235,8 +235,13 @@ ref_draw_directory :: proc(app: ^Input_State) {
 	y := right.y + 18
 	for page, page_index in app.backend_output.directory_pages {
 		ref_text(fmt.tprintf("PAGE %d // %s", page.page_number, page.heading), right.x + 14, y, 12, PAPER_INK)
-		y += 28
-        if page_index + 1 < len(app.backend_output.directory_pages) do y += 7
+		y += 22
+		for line in page.lines {
+			if y > right.y + 202 do break
+			ref_text(line, right.x + 14, y, 10, PAPER_INK)
+			y += 15
+		}
+		if page_index + 1 < len(app.backend_output.directory_pages) do y += 7
 	}
 }
 

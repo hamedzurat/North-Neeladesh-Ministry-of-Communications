@@ -459,15 +459,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?
     };
     let response_text = text_response.response_text.clone().unwrap_or_default();
-    println!("PLAYER LLM    // {utterance}");
-    println!(
-        "CLASSIFIER    // {}",
-        text_response
-            .classification
-            .as_deref()
-            .unwrap_or("not returned")
-    );
-    println!("SUBSCRIBER    // {response_text}");
     if text_response.status == TextStatus::Completed {
         turns.push(Turn {
             speaker: "subscriber".into(),
@@ -2641,8 +2632,10 @@ fn run_neel_story(
     } else {
         [1, 0, 3, 2]
     };
+    let (_, next_revision) = ring_destination(backend, debug, &mut sequence, revision, 3, digits)?;
+    revision = next_revision;
     let direct = vec![cord(PortId::Subscriber(3), PortId::Subscriber(destination))];
-    state = exchange(
+    let mut state = exchange(
         backend,
         input(&mut sequence, revision, direct.clone(), false, digits),
     )?;
@@ -2848,6 +2841,83 @@ fn input_with_ring(
     let mut message = input(sequence, revision, cords, ptt, digits);
     message.input.ring_line = ring_line;
     message
+}
+
+fn ring_destination(
+    backend: &mut TcpStream,
+    debug: &mut TcpStream,
+    sequence: &mut u64,
+    revision: u64,
+    caller: u8,
+    digits: [u8; 4],
+) -> io::Result<(StateMessage, u64)> {
+    let mut state = exchange(
+        backend,
+        input(
+            sequence,
+            revision,
+            vec![cord(PortId::Subscriber(caller), PortId::Operator)],
+            false,
+            digits,
+        ),
+    )?;
+    let next_revision = state.state_revision;
+    let ring_line = state
+        .output
+        .calls
+        .iter()
+        .find(|call| call.caller_line == caller)
+        .map(|call| call.requested_callee_line)
+        .ok_or_else(|| io::Error::other("ring request has no active caller"))?;
+    let ringing = vec![
+        cord(PortId::Subscriber(caller), PortId::Operator),
+        cord(PortId::Subscriber(ring_line), PortId::RingGenerator),
+    ];
+    state = exchange(
+        backend,
+        input_with_ring(
+            sequence,
+            next_revision,
+            ringing.clone(),
+            false,
+            digits,
+            ring_line as i16,
+        ),
+    )?;
+    if !state.accepted {
+        return Err(io::Error::other(format!(
+            "ring request rejected: {:?}",
+            state.error
+        )));
+    }
+    // The backend deliberately randomizes the crank delay between one and
+    // three seconds. Advance past the maximum rather than relying on a draw.
+    let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 5 })?;
+    let next_revision = state.state_revision;
+    state = exchange(
+        backend,
+        input_with_ring(
+            sequence,
+            next_revision,
+            ringing,
+            false,
+            digits,
+            ring_line as i16,
+        ),
+    )?;
+    if !state.accepted {
+        return Err(io::Error::other(format!(
+            "ring activation rejected: {:?}",
+            state.error
+        )));
+    }
+    if !state.output.line_lamps[ring_line as usize] {
+        return Err(io::Error::other(format!(
+            "ringed destination LINE {ring_line} LED did not activate: calls={:?} lamps={:?}",
+            state.output.calls, state.output.line_lamps
+        )));
+    }
+    Ok((state.clone(), state.state_revision))
 }
 
 fn tap_input(

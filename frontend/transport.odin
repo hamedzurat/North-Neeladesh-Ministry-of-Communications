@@ -229,7 +229,15 @@ apply_state_message :: proc(app: ^Input_State, value: cbor.Value) -> bool {
 	service_value := map_get_or(output_value, "service_call")
 	if is_nil(service_value) { state.service_call = nil } else { state.service_call = decode_service_call(service_value) }
 	tap_monitoring := map_get_or(output_value, "tap_bridge_monitoring")
-	if is_nil(tap_monitoring) { state.tap_bridge_monitoring = -1 } else { state.tap_bridge_monitoring = int(u8_value(tap_monitoring)) }
+	if is_nil(tap_monitoring) {
+		state.tap_bridge_monitoring = -1
+		if state.tap_audio_clip != "" do delete(state.tap_audio_clip)
+		state.tap_audio_clip = ""
+	} else {
+		state.tap_bridge_monitoring = int(u8_value(map_get_or(tap_monitoring, "caller_line")))
+		if state.tap_audio_clip != "" do delete(state.tap_audio_clip)
+		state.tap_audio_clip = owned_string(map_get_or(tap_monitoring, "audio_clip"))
+	}
 	state.shift = decode_shift(map_get_or(output_value, "shift"))
 	state.backend_messages = decode_backend_messages(map_get_or(map_get_or(output_value, "debug"), "messages"))
 	state.shapla_story_beat = owned_string(map_get_or(output_value, "shapla_story_beat"))

@@ -22,7 +22,9 @@ VOICE_AUDIO_SAMPLE_RATE :: 24000
 VOICE_AUDIO_PACKET_SAMPLES :: 480
 // Keep a short startup buffer so streamed TTS begins promptly. RTP packet
 // loss is tolerated below; a lost packet creates a small gap, not a dead turn.
-VOICE_PLAYBACK_BUFFER_PACKETS :: 4
+// PulseAudio reports a roughly 150 ms device period on the target machine.
+// Keep enough RTP queued to span that period and tolerate one late poll.
+VOICE_PLAYBACK_BUFFER_PACKETS :: 12
 VOICE_PLAYBACK_BUFFER_SAMPLES :: VOICE_AUDIO_PACKET_SAMPLES * VOICE_PLAYBACK_BUFFER_PACKETS
 VOICE_AUDIO_PAYLOAD_TYPE :: u8(96)
 VOICE_AUDIO_SSRC :: u32(0x4e45_5554)
@@ -288,6 +290,7 @@ voice_handle_rtp :: proc(voice: ^Voice_State, packet: []byte) {
 	marker := packet[1] & 0x80 != 0
 	if !voice.accept_audio {
 		voice.accept_audio = true
+		voice.playback_finishing = false
 		voice.rtp_packets_received = 0
 		voice.rtp_samples_received = 0
 		fmt.println(fmt.tprintf(
@@ -305,9 +308,22 @@ voice_handle_rtp :: proc(voice: ^Voice_State, packet: []byte) {
 	}
 	voice.last_audio_sequence = sequence
 	voice.has_audio_sequence = true
+	first_packet := voice.rtp_packets_received == 0
+	minimum: i32 = 32767
+	maximum: i32 = -32768
 	for index in 0 ..< len(payload) / 2 {
 		sample := i16(u16(payload[index * 2]) << 8 | u16(payload[index * 2 + 1]))
 		append(&voice.playback_queue, sample)
+		if i32(sample) < minimum do minimum = i32(sample)
+		if i32(sample) > maximum do maximum = i32(sample)
+	}
+	if first_packet {
+		fmt.println(fmt.tprintf(
+			"[VOICE-DEBUG] RTP decoded samples=%d min=%d max=%d",
+			len(payload) / 2,
+			minimum,
+			maximum,
+		))
 	}
 	voice.rtp_packets_received += 1
 	voice.rtp_samples_received += u64(len(payload) / 2)
@@ -325,6 +341,10 @@ voice_update_playback :: proc(app: ^Input_State) {
 		pad := make([dynamic]i16, VOICE_PLAYBACK_BUFFER_SAMPLES)
 		copy(pad[:], voice.playback_queue[:])
 		rl.UpdateAudioStream(voice.playback_stream, rawptr(&pad[0]), VOICE_PLAYBACK_BUFFER_SAMPLES)
+		fmt.println(fmt.tprintf(
+			"[VOICE-DEBUG] playback write samples=%d padded=true",
+			VOICE_PLAYBACK_BUFFER_SAMPLES,
+		))
 		delete(pad)
 		resize(&voice.playback_queue, 0)
 		voice.playback_finishing = false
@@ -333,6 +353,10 @@ voice_update_playback :: proc(app: ^Input_State) {
 	if !rl.IsAudioStreamProcessed(voice.playback_stream) do return
 	chunk := voice.playback_queue[:VOICE_PLAYBACK_BUFFER_SAMPLES]
 	rl.UpdateAudioStream(voice.playback_stream, rawptr(&chunk[0]), VOICE_PLAYBACK_BUFFER_SAMPLES)
+	fmt.println(fmt.tprintf(
+		"[VOICE-DEBUG] playback write samples=%d padded=false",
+		VOICE_PLAYBACK_BUFFER_SAMPLES,
+	))
 	copy(voice.playback_queue[:], voice.playback_queue[VOICE_PLAYBACK_BUFFER_SAMPLES:])
 	resize(&voice.playback_queue, len(voice.playback_queue) - VOICE_PLAYBACK_BUFFER_SAMPLES)
 }

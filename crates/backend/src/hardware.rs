@@ -311,6 +311,7 @@ pub(crate) fn tap_monitor(input: &InputState, state: &StateOutput) -> Option<Tap
                 callee_line: call.requested_callee_line,
                 caller_tap_port,
                 callee_tap_port: if caller_tap_port == 1 { 2 } else { 1 },
+                audio_clip: None,
             },
         )
     })

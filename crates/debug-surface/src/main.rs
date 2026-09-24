@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
@@ -74,32 +75,36 @@ fn handle_http(mut stream: TcpStream, backend: &str) -> io::Result<()> {
     stream.flush()
 }
 
-fn voice_audio_response(backend: &str, path: &str) -> Vec<u8> {
+fn voice_audio_response(_backend: &str, path: &str) -> Vec<u8> {
     let Some((conversation_id, kind)) = parse_voice_audio_path(path) else {
         return http_error(
             404,
             "voice audio path must be /api/voice/{id}/capture.wav or /api/voice/{id}/tts.wav",
         );
     };
-    match debug_command(
-        backend,
-        DebugCommand::GetVoiceAudio {
-            conversation_id,
-            kind,
-        },
-    ) {
-        Ok(response) if response.accepted => response
-            .audio
-            .map(|audio| http_audio_response("audio/wav", &wav_bytes(&audio)))
-            .unwrap_or_else(|| http_error(404, "voice audio is unavailable")),
-        Ok(response) => http_error(
-            404,
-            &response.error.map_or_else(
-                || "voice audio is unavailable".to_string(),
-                |error| error.message,
-            ),
-        ),
-        Err(error) => http_error(502, &error.to_string()),
+    let directory = env::var_os("NN_VOICE_DEBUG_AUDIO_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp/north-neeladesh-voice"));
+    let prefix = match kind {
+        DebugAudioKind::Capture => "capture",
+        DebugAudioKind::Tts => "tts",
+    };
+    let pattern = format!("{prefix}-{conversation_id}-session-");
+    let Some(path) = fs::read_dir(&directory).ok().and_then(|entries| {
+        entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(&pattern) && name.ends_with(".wav"))
+            })
+    }) else {
+        return http_error(404, "voice audio is unavailable");
+    };
+    match fs::read(path) {
+        Ok(audio) => http_audio_response("audio/wav", &audio),
+        Err(error) => http_error(404, &format!("voice audio is unavailable: {error}")),
     }
 }
 
@@ -112,29 +117,6 @@ fn parse_voice_audio_path(path: &str) -> Option<(u64, DebugAudioKind)> {
         _ => return None,
     };
     (parts.next().is_none()).then_some((conversation_id, kind))
-}
-
-fn wav_bytes(audio: &exchange_protocol::DebugAudio) -> Vec<u8> {
-    let data_length = (audio.samples.len() * std::mem::size_of::<i16>()) as u32;
-    let block_align = audio.channels * 2;
-    let byte_rate = audio.sample_rate * u32::from(block_align);
-    let mut bytes = Vec::with_capacity(44 + data_length as usize);
-    bytes.extend_from_slice(b"RIFF");
-    bytes.extend_from_slice(&(36 + data_length).to_le_bytes());
-    bytes.extend_from_slice(b"WAVEfmt ");
-    bytes.extend_from_slice(&16_u32.to_le_bytes());
-    bytes.extend_from_slice(&1_u16.to_le_bytes());
-    bytes.extend_from_slice(&u16::from(audio.channels).to_le_bytes());
-    bytes.extend_from_slice(&audio.sample_rate.to_le_bytes());
-    bytes.extend_from_slice(&byte_rate.to_le_bytes());
-    bytes.extend_from_slice(&u16::from(block_align).to_le_bytes());
-    bytes.extend_from_slice(&16_u16.to_le_bytes());
-    bytes.extend_from_slice(b"data");
-    bytes.extend_from_slice(&data_length.to_le_bytes());
-    for sample in &audio.samples {
-        bytes.extend_from_slice(&sample.to_le_bytes());
-    }
-    bytes
 }
 
 fn debug_command(backend: &str, command: DebugCommand) -> io::Result<DebugResponse> {
@@ -317,19 +299,5 @@ mod tests {
     fn debug_ui_rejects_non_loopback_addresses() {
         assert!(bind_loopback_listener("0.0.0.0:0").is_err());
         assert!(bind_loopback_listener("127.0.0.1:0").is_ok());
-    }
-
-    #[test]
-    fn wav_output_has_pcm_header_and_samples() {
-        let bytes = wav_bytes(&exchange_protocol::DebugAudio {
-            sample_rate: 24_000,
-            channels: 1,
-            samples: vec![1, -2],
-        });
-
-        assert_eq!(&bytes[..4], b"RIFF");
-        assert_eq!(&bytes[8..16], b"WAVEfmt ");
-        assert_eq!(&bytes[36..40], b"data");
-        assert_eq!(&bytes[44..], &[1, 0, 254, 255]);
     }
 }
