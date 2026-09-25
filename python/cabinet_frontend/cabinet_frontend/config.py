@@ -72,6 +72,7 @@ class HardwareConfig:
     input_status_interval: float = 5.0
     pair_scan_interval: float = 0.5
     pair_line_interval: float = 0.02
+    empty_topology_confirmation_scans: int = 3
     epaper_page_interval: float = 8.0
     epaper_update_delay: float = 0.75
     local_clock_display: bool = True
@@ -101,6 +102,8 @@ class HardwareConfig:
             raise ValueError("epaper_page_interval must be positive")
         if self.epaper_update_delay < 0:
             raise ValueError("epaper_update_delay must be non-negative")
+        if self.empty_topology_confirmation_scans <= 0:
+            raise ValueError("empty_topology_confirmation_scans must be positive")
         if len(self.mcp_patch_panel_pins) != 16 or len(set(self.mcp_patch_panel_pins)) != 16:
             raise ValueError("mcp_patch_panel_pins must contain sixteen unique pins")
         if len(self.toggle_switch_pins) != 4 or len(set(self.toggle_switch_pins)) != 4:

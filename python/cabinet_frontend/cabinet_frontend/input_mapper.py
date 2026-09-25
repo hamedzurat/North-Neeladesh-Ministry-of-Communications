@@ -47,6 +47,7 @@ class PhysicalInputSource:
         background_scanning: bool = False,
         control_poll_interval: float = 0.01,
         pair_line_interval: float = 0.02,
+        empty_topology_confirmation_scans: int = 3,
     ) -> None:
         self.rotary = rotary
         self.scanner = scanner
@@ -54,6 +55,9 @@ class PhysicalInputSource:
         self.directory_digits = list(directory_digits)
         self.pair_scan_interval = pair_scan_interval
         self.pair_line_interval = pair_line_interval
+        if empty_topology_confirmation_scans <= 0:
+            raise ValueError("empty_topology_confirmation_scans must be positive")
+        self.empty_topology_confirmation_scans = empty_topology_confirmation_scans
         self.controls = controls
         if status_interval <= 0:
             raise ValueError("status_interval must be positive")
@@ -80,6 +84,7 @@ class PhysicalInputSource:
         self._line_pairs: dict[int, list[tuple[int, int]]] = {}
         self._line_candidate: list[dict[str, str]] | None = None
         self._line_candidate_count = 0
+        self._empty_topology_scan_count = 0
         self._scan_line = 0
         self._control_thread: threading.Thread | None = None
         self._rotary_thread: threading.Thread | None = None
@@ -220,6 +225,15 @@ class PhysicalInputSource:
         self._topology_rejections = first_faults
         if first_faults:
             return list(self.topology)
+        if not second_topology and self.topology:
+            self._empty_topology_scan_count += 1
+            if self._empty_topology_scan_count < self.empty_topology_confirmation_scans:
+                self._topology_rejections = [
+                    "pair_detector: empty scan; retaining last valid topology"
+                ]
+                return list(self.topology)
+        else:
+            self._empty_topology_scan_count = 0
         return second_topology
 
     def _scan_loop(self) -> None:
