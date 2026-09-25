@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import queue
 import threading
 import time
 from collections.abc import Callable
@@ -28,7 +27,6 @@ class HardwareFrontend:
         firmware_version: str = "north-neeladesh-pi/0.1.0",
         extra_closers: list[object] | None = None,
         status_sink: Callable[[str], None] | None = print,
-        background_outputs: bool = False,
     ) -> None:
         self.client = client
         self.input_source = input_source
@@ -38,16 +36,6 @@ class HardwareFrontend:
         self.input_sequence = 0
         self.state_revision = 0
         self.diagnostics = ChangeLogger(status_sink)
-        self._output_queue: queue.Queue[dict[str, Any] | None] | None = None
-        self._output_thread: threading.Thread | None = None
-        if background_outputs:
-            self._output_queue = queue.Queue(maxsize=1)
-            self._output_thread = threading.Thread(
-                target=self._output_loop,
-                name="cabinet-output-worker",
-                daemon=True,
-            )
-            self._output_thread.start()
 
     def step(self, now: float | None = None) -> dict[str, Any]:
         self.input_sequence += 1
@@ -69,37 +57,10 @@ class HardwareFrontend:
             (response.get("accepted"), response.get("error")),
             _backend_result_message(response),
         )
-        output = dict(response.get("output", {}))
-        if self._output_queue is None:
-            self.output_mapper.apply(output)
-        else:
-            try:
-                self._output_queue.get_nowait()
-            except queue.Empty:
-                pass
-            self._output_queue.put_nowait(output)
+        self.output_mapper.apply(dict(response.get("output", {})))
         return response
 
-    def _output_loop(self) -> None:
-        assert self._output_queue is not None
-        while True:
-            output = self._output_queue.get()
-            if output is None:
-                return
-            try:
-                self.output_mapper.apply(output)
-            except Exception as error:  # noqa: BLE001 - report hardware failures
-                self.diagnostics.emit(
-                    "output_failure",
-                    (type(error).__name__, str(error)),
-                    f"FRONTEND // output failed error={type(error).__name__}: {error}",
-                )
-
     def close(self) -> None:
-        if self._output_queue is not None:
-            self._output_queue.put(None)
-        if self._output_thread is not None:
-            self._output_thread.join(timeout=2.0)
         resources = [self.input_source, self.output_mapper, *self.extra_closers, self.client]
         for resource in resources:
             try:
@@ -137,9 +98,7 @@ def create_frontend(
         crank_detents_per_rotation=config.crank_detents_per_rotation,
         status_interval=config.input_status_interval,
         tuning=(config.tuning_coarse, config.tuning_fine),
-        background_scanning=True,
-        control_poll_interval=config.control_poll_interval,
-        pair_line_interval=config.pair_line_interval,
+        background_scan=config.background_pair_scan,
     )
     mapper = OutputMapper(
         components.line_lamps,
@@ -149,13 +108,7 @@ def create_frontend(
         line_lamp_count=config.line_lamp_count,
         epaper_page_interval=config.epaper_page_interval,
     )
-    frontend = HardwareFrontend(
-        client,
-        input_source,
-        mapper,
-        extra_closers=components.extra_closers,
-        background_outputs=True,
-    )
+    frontend = HardwareFrontend(client, input_source, mapper, extra_closers=components.extra_closers)
     frontend.input_sequence = input_sequence
     frontend.state_revision = state_revision
     return frontend
