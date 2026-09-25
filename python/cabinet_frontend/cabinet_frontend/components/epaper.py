@@ -123,6 +123,13 @@ class EpaperDirectoryDisplay:
                 header, value = display_line.split(separator, 1)
                 header_text = header + separator
                 header_width = self._text_width(draw, header_text, header_font)
+                if (
+                    isinstance(directory_id, int)
+                    and y < self.AVATAR_SIZE
+                    and header_width >= available_width
+                ):
+                    y = self.AVATAR_SIZE + self.FIELD_SPACING
+                    available_width = self.WIDTH - self.MARGIN * 2
                 if header_width >= available_width:
                     if y < self.HEIGHT - self.LINE_HEIGHT:
                         draw.text((self.MARGIN, y), header_text, font=header_font, fill=0)
