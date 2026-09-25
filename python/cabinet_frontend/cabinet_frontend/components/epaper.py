@@ -118,33 +118,53 @@ class EpaperDirectoryDisplay:
                 else self.WIDTH - self.MARGIN * 2
             )
             measure = lambda value: self._text_width(draw, value, font)
-            for line in wrap_text(display_line, available_width, measure):
-                if y >= self.HEIGHT - self.LINE_HEIGHT:
-                    break
-                self._draw_directory_line(draw, line, y, font, header_font)
-                y += self.LINE_HEIGHT
+            separator = " // "
+            if separator in display_line:
+                header, value = display_line.split(separator, 1)
+                header_text = header + separator
+                header_width = self._text_width(draw, header_text, header_font)
+                if header_width >= available_width:
+                    if y < self.HEIGHT - self.LINE_HEIGHT:
+                        draw.text((self.MARGIN, y), header_text, font=header_font, fill=0)
+                        y += self.LINE_HEIGHT
+                    value_width = self.WIDTH - self.MARGIN * 2
+                    value_lines = wrap_text(value, value_width, measure)
+                    for line in value_lines:
+                        if y >= self.HEIGHT - self.LINE_HEIGHT:
+                            break
+                        draw.text((self.MARGIN, y), line, font=font, fill=0)
+                        y += self.LINE_HEIGHT
+                else:
+                    value_lines = wrap_text(
+                        value,
+                        max(1, available_width - header_width),
+                        measure,
+                    ) or [""]
+                    first_line = value_lines.pop(0)
+                    if y < self.HEIGHT - self.LINE_HEIGHT:
+                        draw.text((self.MARGIN, y), header_text, font=header_font, fill=0)
+                        draw.text(
+                            (self.MARGIN + header_width, y),
+                            first_line,
+                            font=font,
+                            fill=0,
+                        )
+                        y += self.LINE_HEIGHT
+                    for line in value_lines:
+                        if y >= self.HEIGHT - self.LINE_HEIGHT:
+                            break
+                        draw.text((self.MARGIN, y), line, font=font, fill=0)
+                        y += self.LINE_HEIGHT
+            else:
+                for line in wrap_text(display_line, available_width, measure):
+                    if y >= self.HEIGHT - self.LINE_HEIGHT:
+                        break
+                    draw.text((self.MARGIN, y), line, font=font, fill=0)
+                    y += self.LINE_HEIGHT
             y += self.FIELD_SPACING
             if y >= self.HEIGHT - self.LINE_HEIGHT:
                 break
         self._show_image(image)
-
-    def _draw_directory_line(
-        self,
-        draw: object,
-        line: str,
-        y: int,
-        font: object,
-        header_font: object,
-    ) -> None:
-        separator = " // "
-        if separator not in line:
-            draw.text((self.MARGIN, y), line, font=font, fill=0)
-            return
-        header, value = line.split(separator, 1)
-        header_text = header + separator
-        draw.text((self.MARGIN, y), header_text, font=header_font, fill=0)
-        header_width = self._text_width(draw, header_text, header_font)
-        draw.text((self.MARGIN + header_width, y), value, font=font, fill=0)
 
     @staticmethod
     def _default_avatar_dir() -> Path:
