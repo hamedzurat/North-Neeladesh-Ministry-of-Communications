@@ -2969,8 +2969,13 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                     let Some((context, caller)) = context else {
                         continue;
                     };
-                    let worker_socket = socket.try_clone()?;
-                    let worker_backend = Arc::clone(&backend);
+                     let worker_socket = socket.try_clone()?;
+                     let worker_backend = Arc::clone(&backend);
+                     let output_address = backend
+                         .lock()
+                         .ok()
+                         .and_then(|state| state.voice_peer)
+                         .unwrap_or(address);
                     let service_turn = backend.lock().ok().is_some_and(|state| {
                         state.voice_turn_controls.police || state.voice_turn_controls.ems
                     });
@@ -3190,7 +3195,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                         ssrc: 0x4e45_5554,
                                         samples: chunk.to_vec(),
                                     };
-                                    worker_socket.send_to(&packet.encode(), address).map_err(
+                                     worker_socket.send_to(&packet.encode(), output_address).map_err(
                                         |error| {
                                             VoiceError::new(
                                                 "voice_audio_send_failed",
