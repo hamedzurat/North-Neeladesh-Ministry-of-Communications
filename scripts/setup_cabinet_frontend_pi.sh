@@ -34,11 +34,6 @@ if [[ -z "${NN_VOICE_CAPTURE_COMMAND:-}" ]] && ! command -v pw-record >/dev/null
     printf 'pw-record is required for the default PipeWire voice capture path.\n' >&2
     exit 1
 fi
-if [[ -z "${NN_VOICE_PLAYBACK_COMMAND:-}" ]] && ! command -v aplay >/dev/null 2>&1; then
-    printf 'aplay is required for the default voice playback path.\n' >&2
-    exit 1
-fi
-
 if command -v apt-get >/dev/null 2>&1 && ! ldconfig -p 2>/dev/null | grep -q 'libportaudio'; then
     printf 'Installing PortAudio runtime for callback-based capture.\n'
     sudo apt-get install -y libportaudio2 libasound2-plugins

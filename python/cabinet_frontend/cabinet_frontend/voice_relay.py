@@ -360,6 +360,50 @@ class AlsaPlayback:
             raise RuntimeError(f"aplay exited with {return_code}")
 
 
+class SoundDevicePlayback:
+    """Play PCM through the same PortAudio device layer as microphone capture."""
+
+    def __init__(self, status_sink: Any = print) -> None:
+        try:
+            import sounddevice
+        except ImportError as error:
+            raise RuntimeError("sounddevice is not installed") from error
+
+        self.sounddevice = sounddevice
+        self.stream: Any = None
+        self.diagnostics = ChangeLogger(status_sink)
+        try:
+            self.stream = sounddevice.RawOutputStream(
+                samplerate=VOICE_AUDIO_SAMPLE_RATE,
+                channels=1,
+                dtype="int16",
+                blocksize=VOICE_AUDIO_PACKET_SAMPLES,
+            )
+            self.stream.start()
+        except Exception as error:
+            self.stream = None
+            raise RuntimeError(f"PortAudio playback setup failed: {error}") from error
+
+    def write(self, samples: Sequence[int]) -> None:
+        if self.stream is None or not self.stream.active:
+            raise RuntimeError("PortAudio speaker stream is not running")
+        try:
+            self.stream.write(struct.pack(f"<{len(samples)}h", *samples))
+        except Exception as error:
+            raise RuntimeError("speaker playback failed") from error
+
+    def finish(self) -> None:
+        stream = self.stream
+        self.stream = None
+        if stream is None:
+            return
+        try:
+            stream.stop()
+        finally:
+            stream.close()
+        self.diagnostics.emit("stream", "closed", "VOICE PLAYBACK // library stream stopped")
+
+
 def _tagged(codec: CborCodec, tag: int, value: dict[str, Any]) -> bytes:
     return bytes([tag]) + codec.encode(value)
 
@@ -587,7 +631,6 @@ def run_embedded(stop: threading.Event) -> None:
     default_host = backend_host or (backend_address.rsplit(":", 1)[0] if backend_address else "127.0.0.1")
     address = os.environ.get("NN_VOICE_BACKEND_ADDRESS", f"{default_host}:7879")
     host, port_text = address.rsplit(":", 1)
-    playback = os.environ.get("NN_VOICE_PLAYBACK_COMMAND")
     diagnostics = ChangeLogger(print)
     while not stop.is_set():
         connection: socket.socket | None = None
@@ -599,7 +642,7 @@ def run_embedded(stop: threading.Event) -> None:
             relay = VoiceRelay(
                 connection,
                 _capture(),
-                AlsaPlayback(playback),
+                SoundDevicePlayback(status_sink=print),
                 status_sink=print,
             )
             relay.run(stop)
