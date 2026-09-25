@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from functools import partial
@@ -19,6 +20,7 @@ class OutputMapper:
         printer: Any,
         line_lamp_count: int = 12,
         epaper_page_interval: float = 8.0,
+        epaper_update_delay: float = 0.0,
         clock: Any = time.monotonic,
         status_sink: Callable[[str], None] = print,
     ) -> None:
@@ -28,6 +30,7 @@ class OutputMapper:
         self.printer = printer
         self.line_lamp_count = line_lamp_count
         self.epaper_page_interval = epaper_page_interval
+        self.epaper_update_delay = epaper_update_delay
         self.clock = clock
         self._last_lines: list[bool] | None = None
         self._last_seven_segment: str | None = None
@@ -41,6 +44,18 @@ class OutputMapper:
         self.status_sink = status_sink or (lambda _message: None)
         self.diagnostics = ChangeLogger(self.status_sink)
         self.faults: list[str] = []
+        self._epaper_condition = threading.Condition()
+        self._epaper_pending: tuple[list[dict[str, object]], int] | None = None
+        self._epaper_deadline: float | None = None
+        self._epaper_closed = False
+        self._epaper_thread: threading.Thread | None = None
+        if self.epaper_update_delay > 0:
+            self._epaper_thread = threading.Thread(
+                target=self._epaper_loop,
+                name="cabinet-epaper-worker",
+                daemon=True,
+            )
+            self._epaper_thread.start()
 
     def apply(self, output: dict[str, Any], now: float | None = None) -> None:
         self.faults.clear()
@@ -62,7 +77,7 @@ class OutputMapper:
         pages = [dict(page) for page in output.get("directory_pages", [])]
         if pages != self._last_pages:
             self._page_index = 0
-            if self._try("epaper", lambda: self.epaper.show_directory(pages, self._page_index)):
+            if self._request_epaper(pages, self._page_index):
                 self._last_pages = pages
             self._next_page_at = (self.clock() if now is None else now) + self.epaper_page_interval
         elif (
@@ -71,7 +86,7 @@ class OutputMapper:
             and (self.clock() if now is None else now) >= self._next_page_at
         ):
             self._page_index = (self._page_index + 1) % len(pages)
-            self._try("epaper", lambda: self.epaper.show_directory(pages, self._page_index))
+            self._request_epaper(pages, self._page_index)
             self._next_page_at = (self.clock() if now is None else now) + self.epaper_page_interval
 
         run_generation = int(output.get("run_generation", 0))
@@ -110,6 +125,7 @@ class OutputMapper:
                         f"LINE {caller} -> LINE {callee} ({phase})"
                         for caller, callee, phase in calls
                     )
+
                     self.diagnostics.emit("calls", calls, f"CALLS // {rendered}")
                 else:
                     self.diagnostics.emit("calls", calls, "CALLS // none")
@@ -221,6 +237,40 @@ class OutputMapper:
                     ),
                 )
 
+    def _request_epaper(self, pages: list[dict[str, object]], page_index: int) -> bool:
+        if self._epaper_thread is None:
+            return self._try("epaper", lambda: self.epaper.show_directory(pages, page_index))
+        with self._epaper_condition:
+            if self._epaper_closed:
+                return False
+            self._epaper_pending = ([dict(page) for page in pages], page_index)
+            self._epaper_deadline = time.monotonic() + self.epaper_update_delay
+            self._epaper_condition.notify()
+        return True
+
+    def _epaper_loop(self) -> None:
+        while True:
+            with self._epaper_condition:
+                while self._epaper_pending is None and not self._epaper_closed:
+                    self._epaper_condition.wait()
+                if self._epaper_closed:
+                    return
+                assert self._epaper_deadline is not None
+                remaining = self._epaper_deadline - time.monotonic()
+                if remaining > 0:
+                    self._epaper_condition.wait(timeout=remaining)
+                    continue
+                pending = self._epaper_pending
+                self._epaper_pending = None
+            assert pending is not None
+            pages, page_index = pending
+            self._try(
+                "epaper",
+                lambda pages=pages, page_index=page_index: self.epaper.show_directory(
+                    pages, page_index
+                ),
+            )
+
     def _try(self, name: str, operation: Any) -> bool:
         try:
             operation()
@@ -230,6 +280,11 @@ class OutputMapper:
         return True
 
     def close(self) -> None:
+        with self._epaper_condition:
+            self._epaper_closed = True
+            self._epaper_condition.notify_all()
+        if self._epaper_thread is not None:
+            self._epaper_thread.join(timeout=2.0)
         errors: list[Exception] = []
         for component in (
             self.line_lamps,

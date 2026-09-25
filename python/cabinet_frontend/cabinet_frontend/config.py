@@ -73,6 +73,7 @@ class HardwareConfig:
     pair_scan_interval: float = 0.5
     pair_line_interval: float = 0.02
     epaper_page_interval: float = 8.0
+    epaper_update_delay: float = 0.75
     crank_detents_per_rotation: int = 2
     epaper_rotation: int = 90
     tuning_coarse: int = 0
@@ -96,6 +97,8 @@ class HardwareConfig:
             raise ValueError("input logging and pair scan intervals must be positive")
         if self.epaper_page_interval <= 0:
             raise ValueError("epaper_page_interval must be positive")
+        if self.epaper_update_delay < 0:
+            raise ValueError("epaper_update_delay must be non-negative")
         if len(self.mcp_patch_panel_pins) != 16 or len(set(self.mcp_patch_panel_pins)) != 16:
             raise ValueError("mcp_patch_panel_pins must contain sixteen unique pins")
         if len(self.toggle_switch_pins) != 4 or len(set(self.toggle_switch_pins)) != 4:
@@ -119,4 +122,5 @@ class HardwareConfig:
             voice_upload_address=(host, 7883),
             pair_scan_interval=float(os.environ.get("NN_PAIR_SCAN_INTERVAL", "0.5")),
             epaper_rotation=int(os.environ.get("NN_EPAPER_ROTATION", "90")),
+            epaper_update_delay=float(os.environ.get("NN_EPAPER_UPDATE_DELAY", "0.75")),
         )

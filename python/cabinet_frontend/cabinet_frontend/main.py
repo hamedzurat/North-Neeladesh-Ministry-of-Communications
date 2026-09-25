@@ -218,6 +218,7 @@ def create_frontend(
         components.printer,
         line_lamp_count=config.line_lamp_count,
         epaper_page_interval=config.epaper_page_interval,
+        epaper_update_delay=config.epaper_update_delay,
     )
     frontend = HardwareFrontend(
         client,
