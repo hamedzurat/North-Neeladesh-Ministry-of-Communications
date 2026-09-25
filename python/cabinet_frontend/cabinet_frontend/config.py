@@ -70,6 +70,7 @@ class HardwareConfig:
     poll_interval: float = 0.1
     input_status_interval: float = 5.0
     pair_scan_interval: float = 0.5
+    pair_line_interval: float = 0.02
     epaper_page_interval: float = 8.0
     crank_detents_per_rotation: int = 2
     epaper_rotation: int = 90
@@ -86,6 +87,7 @@ class HardwareConfig:
         if (
             self.input_status_interval <= 0
             or self.pair_scan_interval <= 0
+            or self.pair_line_interval <= 0
             or self.control_poll_interval <= 0
         ):
             raise ValueError("input logging and pair scan intervals must be positive")

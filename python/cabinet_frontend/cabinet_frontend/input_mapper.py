@@ -46,12 +46,14 @@ class PhysicalInputSource:
         tuning: tuple[int, int] = (0, 0),
         background_scanning: bool = False,
         control_poll_interval: float = 0.01,
+        pair_line_interval: float = 0.02,
     ) -> None:
         self.rotary = rotary
         self.scanner = scanner
         self.pin_to_port = pin_to_port
         self.directory_digits = list(directory_digits)
         self.pair_scan_interval = pair_scan_interval
+        self.pair_line_interval = pair_line_interval
         self.controls = controls
         if status_interval <= 0:
             raise ValueError("status_interval must be positive")
@@ -251,7 +253,12 @@ class PhysicalInputSource:
                     self._scan_faults = [
                         f"pair_detector: {type(error).__name__}: {error}"
                     ]
-            self._scan_stop.wait(self.pair_scan_interval)
+            interval = (
+                self.pair_line_interval
+                if hasattr(self.scanner, "find_pairs_for_line")
+                else self.pair_scan_interval
+            )
+            self._scan_stop.wait(interval)
 
     def _control_loop(self) -> None:
         while not self._scan_stop.is_set():
