@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def wrap_text(text: str, max_width: int, measure: Callable[[str], int]) -> list[str]:
-    """Wrap words to a pixel width, hard-wrapping words wider than the screen."""
+    """Wrap text at word boundaries without splitting words into letters."""
     if not text:
         return [""]
     result: list[str] = []
@@ -23,13 +23,7 @@ def wrap_text(text: str, max_width: int, measure: Callable[[str], int]) -> list[
                 continue
             if not current and measure(candidate) > max_width:
                 word = words.pop(0)
-                chunk = ""
-                for character in word:
-                    if chunk and measure(chunk + character) > max_width:
-                        result.append(chunk)
-                        chunk = ""
-                    chunk += character
-                current = chunk
+                result.append(word)
                 continue
             current = candidate
             words.pop(0)

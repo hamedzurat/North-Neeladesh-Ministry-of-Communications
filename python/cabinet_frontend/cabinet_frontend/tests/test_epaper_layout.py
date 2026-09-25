@@ -8,12 +8,12 @@ from cabinet_frontend.components.epaper import wrap_text
 
 
 class EpaperLayoutTests(unittest.TestCase):
-    def test_wraps_words_and_long_unbroken_text_to_screen_width(self) -> None:
+    def test_wraps_only_at_word_boundaries(self) -> None:
         lines = wrap_text("A long directory entry", 10, len)
         long_word_lines = wrap_text("ABCDEFGHIJK", 5, len)
 
         self.assertEqual(lines, ["A long", "directory", "entry"])
-        self.assertEqual(long_word_lines, ["ABCDE", "FGHIJ", "K"])
+        self.assertEqual(long_word_lines, ["ABCDEFGHIJK"])
 
     def test_epaper_uses_numeric_spi_configuration(self) -> None:
         from cabinet_frontend.components.epaper import EpaperDirectoryDisplay
