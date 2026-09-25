@@ -658,6 +658,8 @@ class VoiceRelay:
                 )
 
     def _play_local_file(self, relative_path: str, offset_samples: int) -> None:
+        if not relative_path:
+            return
         root = Path(__file__).resolve().parents[1]
         path = Path(relative_path)
         if not path.is_absolute():
@@ -671,6 +673,13 @@ class VoiceRelay:
                     raise ValueError("authored audio must be 24 kHz")
                 source.setpos(min(offset_samples, source.getnframes()))
                 while True:
+                    command = self._take_local_command()
+                    if command is not None:
+                        next_path, next_offset = command
+                        if not next_path:
+                            break
+                        relative_path, offset_samples = next_path, next_offset
+                        return self._play_local_file(relative_path, offset_samples)
                     payload = source.readframes(VOICE_AUDIO_PACKET_SAMPLES)
                     if not payload:
                         break
@@ -680,6 +689,17 @@ class VoiceRelay:
         finally:
             self._local_playback_active = False
             self.last_sequence = None
+
+    def _take_local_command(self) -> tuple[str, int] | None:
+        if self._playback_queue is None:
+            return None
+        while True:
+            try:
+                item = self._playback_queue.get_nowait()
+            except queue.Empty:
+                return None
+            if isinstance(item, tuple):
+                return item
 
     def run(self, stop: threading.Event | None = None) -> None:
         self.send_status("ready")

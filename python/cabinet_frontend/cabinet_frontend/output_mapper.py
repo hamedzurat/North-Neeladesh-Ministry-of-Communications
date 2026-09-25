@@ -238,6 +238,10 @@ class OutputMapper:
                             (audio_clip, offset_samples)
                         )
                     self._last_local_audio = audio_clip
+                elif not isinstance(audio_clip, str) and self._last_local_audio is not None:
+                    if self.local_audio_queue is not None:
+                        self.local_audio_queue.put(("", 0))
+                    self._last_local_audio = None
                 self.diagnostics.emit(
                     "tap_bridge_monitoring",
                     value,
@@ -246,6 +250,8 @@ class OutputMapper:
                     f"ports={value[2]},{value[3]}",
                 )
             else:
+                if self._last_local_audio is not None and self.local_audio_queue is not None:
+                    self.local_audio_queue.put(("", 0))
                 self._last_local_audio = None
                 self.diagnostics.emit("tap_bridge_monitoring", None, "TAP BRIDGE // monitoring stopped")
 
