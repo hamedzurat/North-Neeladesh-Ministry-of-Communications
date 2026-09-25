@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import shlex
 import socket
 import struct
@@ -446,11 +447,22 @@ class VoiceRelay:
         codec: CborCodec | None = None,
         status_sink: Any = None,
         upload_connection: Any | None = None,
+        background_upload: bool = False,
     ) -> None:
         self.connection = connection
         self.capture = capture
         self.playback = playback
         self.upload_connection = upload_connection
+        self._upload_queue: queue.Queue[tuple[list[int], int, int, int] | None] | None = None
+        self._upload_thread: threading.Thread | None = None
+        if background_upload and upload_connection is not None:
+            self._upload_queue = queue.Queue()
+            self._upload_thread = threading.Thread(
+                target=self._upload_loop,
+                name="cabinet-voice-upload",
+                daemon=True,
+            )
+            self._upload_thread.start()
         self.codec = codec or CborCodec()
         self.session_id = 1
         self.turn_id = 1
@@ -491,6 +503,15 @@ class VoiceRelay:
         )
 
     def send_input_audio(self, samples: Sequence[int]) -> None:
+        self._send_input_audio(samples, self.session_id, self.turn_id, self.state_revision)
+
+    def _send_input_audio(
+        self,
+        samples: Sequence[int],
+        session_id: int,
+        turn_id: int,
+        state_revision: int,
+    ) -> None:
         chunks = [samples[index : index + VOICE_INPUT_PACKET_SAMPLES] for index in range(0, len(samples), VOICE_INPUT_PACKET_SAMPLES)]
         if not chunks:
             chunks = [[]]
@@ -500,9 +521,9 @@ class VoiceRelay:
                 VOICE_INPUT_AUDIO_TAG,
                 {
                     "protocol_version": VOICE_PROTOCOL_VERSION,
-                    "session_id": self.session_id,
-                    "turn_id": self.turn_id,
-                    "state_revision": self.state_revision,
+                        "session_id": session_id,
+                        "turn_id": turn_id,
+                        "state_revision": state_revision,
                     "chunk_index": index,
                     "complete": index == len(chunks) - 1,
                     "samples": list(chunk),
@@ -517,6 +538,21 @@ class VoiceRelay:
                     raise ConnectionError("voice upload was not acknowledged")
             if index + 1 < len(chunks):
                 time.sleep(0.001)
+
+    def _upload_loop(self) -> None:
+        assert self._upload_queue is not None
+        while True:
+            item = self._upload_queue.get()
+            if item is None:
+                return
+            samples, session_id, turn_id, state_revision = item
+            try:
+                self._send_input_audio(samples, session_id, turn_id, state_revision)
+            except Exception as error:  # noqa: BLE001 - surface upload failure to backend
+                self.send_status(
+                    "failed",
+                    error={"code": "voice_upload_failed", "message": str(error)},
+                )
 
     def handle_control(self, message: dict[str, Any]) -> None:
         if message.get("protocol_version") != VOICE_PROTOCOL_VERSION or message.get("session_id") != self.session_id:
@@ -542,7 +578,12 @@ class VoiceRelay:
                     if "not started" not in str(error).lower():
                         raise
                     samples = []
-                self.send_input_audio(samples)
+                if self._upload_queue is None:
+                    self.send_input_audio(samples)
+                else:
+                    self._upload_queue.put(
+                        (samples, self.session_id, self.turn_id, self.state_revision)
+                    )
             elif control == "cancel":
                 self.capture.cancel()
                 self.send_status("cancelled")
@@ -621,6 +662,10 @@ class VoiceRelay:
         self.playback.finish()
         self.connection.close()
         if self.upload_connection is not None:
+            if self._upload_queue is not None:
+                self._upload_queue.put(None)
+            if self._upload_thread is not None:
+                self._upload_thread.join(timeout=2.0)
             self.upload_connection.close()
 
 
@@ -663,6 +708,7 @@ def run_embedded(
                 _capture(),
                 SoundDevicePlayback(status_sink=print),
                 upload_connection=upload_connection,
+                background_upload=True,
                 status_sink=print,
             )
             relay.run(stop)
