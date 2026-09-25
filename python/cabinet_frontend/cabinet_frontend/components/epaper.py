@@ -97,6 +97,7 @@ class EpaperDirectoryDisplay:
             draw.text((self.MARGIN, 25), "ID NOT FOUND", font=large_font, fill=0)
             requested_id = str(lines[0]) if lines else "UNKNOWN ID"
             draw.text((self.MARGIN, 58), requested_id, font=font, fill=0)
+            lines = []
             y = 75
         measure = lambda value: self._text_width(draw, value, font)
         if lines and str(lines[0]).upper().startswith("SUBSCRIBER ID "):
