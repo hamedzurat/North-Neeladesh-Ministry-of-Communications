@@ -128,7 +128,6 @@ class HardwareConfig:
         return cls(
             backend_address=(host, port),
             voice_upload_address=(host, 7883),
-            pair_scan_interval=float(os.environ.get("NN_PAIR_SCAN_INTERVAL", "0.1")),
             epaper_rotation=int(os.environ.get("NN_EPAPER_ROTATION", "90")),
             epaper_update_delay=float(os.environ.get("NN_EPAPER_UPDATE_DELAY", "0.75")),
         )

@@ -38,6 +38,5 @@ exec env \
     PYTHONPATH="$APP_ROOT:/home/$APP_USER/Desktop" \
     XDG_RUNTIME_DIR="/run/user/$APP_UID" \
     NN_BACKEND_HOST="${NN_BACKEND_HOST:?set NN_BACKEND_HOST first}" \
-    NN_PAIR_SCAN_INTERVAL="${NN_PAIR_SCAN_INTERVAL:-0.5}" \
     NN_EPAPER_ROTATION="${NN_EPAPER_ROTATION:-90}" \
     "$VENV/bin/python" -m cabinet_frontend "$@"
