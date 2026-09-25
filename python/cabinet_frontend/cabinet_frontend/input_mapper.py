@@ -47,6 +47,7 @@ class PhysicalInputSource:
         background_scanning: bool = False,
         control_poll_interval: float = 0.01,
         pair_line_interval: float = 0.02,
+        topology_confirmation_scans: int = 1,
         empty_topology_confirmation_scans: int = 3,
     ) -> None:
         self.rotary = rotary
@@ -55,6 +56,9 @@ class PhysicalInputSource:
         self.directory_digits = list(directory_digits)
         self.pair_scan_interval = pair_scan_interval
         self.pair_line_interval = pair_line_interval
+        if topology_confirmation_scans <= 0:
+            raise ValueError("topology_confirmation_scans must be positive")
+        self.topology_confirmation_scans = topology_confirmation_scans
         if empty_topology_confirmation_scans <= 0:
             raise ValueError("empty_topology_confirmation_scans must be positive")
         self.empty_topology_confirmation_scans = empty_topology_confirmation_scans
@@ -85,6 +89,8 @@ class PhysicalInputSource:
         self._line_candidate: list[dict[str, str]] | None = None
         self._line_candidate_count = 0
         self._empty_topology_scan_count = 0
+        self._topology_candidate: list[dict[str, str]] | None = None
+        self._topology_candidate_count = 0
         self._scan_line = 0
         self._control_thread: threading.Thread | None = None
         self._rotary_thread: threading.Thread | None = None
@@ -227,44 +233,28 @@ class PhysicalInputSource:
             return list(self.topology)
         if not second_topology and self.topology:
             self._empty_topology_scan_count += 1
-            if self._empty_topology_scan_count < self.empty_topology_confirmation_scans:
-                self._topology_rejections = [
-                    "pair_detector: empty scan; retaining last valid topology"
-                ]
-                return list(self.topology)
         else:
             self._empty_topology_scan_count = 0
+        required_scans = self.topology_confirmation_scans
+        if not second_topology and self.topology:
+            required_scans = max(required_scans, self.empty_topology_confirmation_scans)
+        if second_topology == self._topology_candidate:
+            self._topology_candidate_count += 1
+        else:
+            self._topology_candidate = second_topology
+            self._topology_candidate_count = 1
+        if self._topology_candidate_count < required_scans:
+            self._topology_rejections = [
+                "pair_detector: topology not yet stable; retaining last valid topology"
+            ]
+            return list(self.topology)
         return second_topology
 
     def _scan_loop(self) -> None:
         while not self._scan_stop.is_set():
             try:
-                scan_line = getattr(self.scanner, "find_pairs_for_line", None)
-                if scan_line is None:
-                    topology = self._scan_topology()
-                    scan_faults = list(self._topology_rejections)
-                else:
-                    current_line = self._scan_line
-                    self._line_pairs[current_line] = scan_line(current_line)
-                    self._scan_line = (current_line + 1) % 16
-                    topology, scan_faults = self._topology_from_pairs(
-                        [pair for pairs in self._line_pairs.values() for pair in pairs]
-                    )
-                    if scan_faults:
-                        self._scan_line = current_line
-                        topology = list(self.topology)
-                        self._line_candidate = None
-                        self._line_candidate_count = 0
-                    elif current_line != 15:
-                        topology = list(self.topology)
-                    elif topology == self._line_candidate:
-                        self._line_candidate_count += 1
-                        if self._line_candidate_count < 2:
-                            topology = list(self.topology)
-                    else:
-                        self._line_candidate = topology
-                        self._line_candidate_count = 1
-                        topology = list(self.topology)
+                topology = self._scan_topology()
+                scan_faults = list(self._topology_rejections)
                 with self._topology_lock:
                     self.topology = topology
                     self._scan_faults = scan_faults
@@ -273,12 +263,7 @@ class PhysicalInputSource:
                     self._scan_faults = [
                         f"pair_detector: {type(error).__name__}: {error}"
                     ]
-            interval = (
-                self.pair_line_interval
-                if hasattr(self.scanner, "find_pairs_for_line")
-                else self.pair_scan_interval
-            )
-            self._scan_stop.wait(interval)
+            self._scan_stop.wait(self.pair_scan_interval)
 
     def _control_loop(self) -> None:
         while not self._scan_stop.is_set():

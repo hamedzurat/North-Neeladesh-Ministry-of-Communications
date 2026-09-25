@@ -211,6 +211,7 @@ def create_frontend(
         background_scanning=True,
         control_poll_interval=config.control_poll_interval,
         pair_line_interval=config.pair_line_interval,
+        topology_confirmation_scans=config.topology_confirmation_scans,
         empty_topology_confirmation_scans=config.empty_topology_confirmation_scans,
     )
     mapper = OutputMapper(
