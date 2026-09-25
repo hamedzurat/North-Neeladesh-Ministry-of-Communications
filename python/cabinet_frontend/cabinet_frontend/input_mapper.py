@@ -228,12 +228,14 @@ class PhysicalInputSource:
                     topology = self._scan_topology()
                     scan_faults = list(self._topology_rejections)
                 else:
-                    self._line_pairs[self._scan_line] = scan_line(self._scan_line)
-                    self._scan_line = (self._scan_line + 1) % 16
+                    current_line = self._scan_line
+                    self._line_pairs[current_line] = scan_line(current_line)
+                    self._scan_line = (current_line + 1) % 16
                     topology, scan_faults = self._topology_from_pairs(
                         [pair for pairs in self._line_pairs.values() for pair in pairs]
                     )
                     if scan_faults:
+                        self._scan_line = current_line
                         topology = list(self.topology)
                         self._line_candidate = None
                         self._line_candidate_count = 0
