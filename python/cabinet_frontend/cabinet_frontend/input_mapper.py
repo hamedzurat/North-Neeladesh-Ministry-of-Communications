@@ -191,7 +191,9 @@ class PhysicalInputSource:
             physical.ring_line,
             tuple(self.faults),
         )
-        if status == self._last_status and not self.faults:
+        if status == self._last_status and (
+            not self.faults or now < self._next_status_log
+        ):
             return
         message = (
             "INPUT // "
