@@ -103,10 +103,10 @@ pub(crate) fn directory_pages(
             heading: simple_place(config, line),
             lines: vec![
                 format!("SUBSCRIBER ID {id:04}"),
-                format!("SUBSCRIBER // {name}"),
-                format!("ROLE // {role}"),
+                format!("NAME // {name}"),
+                format!("OCCUPATION // {role}"),
                 format!("NOTE // {note}"),
-                format!("DESTINATION // {}", simple_place(config, line)),
+                format!("LOCATION // {}", simple_place(config, line)),
             ],
             directory_id: Some(
                 config
@@ -350,7 +350,7 @@ mod tests {
         assert!(
             page.lines
                 .iter()
-                .any(|line| line == "DESTINATION // Shapla Apartments")
+                .any(|line| line == "LOCATION // Shapla Apartments")
         );
     }
 }

@@ -108,7 +108,7 @@ class EpaperDirectoryDisplay:
         if lines and str(lines[0]).upper().startswith("SUBSCRIBER ID "):
             lines = lines[1:]
         for raw_line in lines:
-            display_line = self._display_line(str(raw_line))
+            display_line = str(raw_line)
             available_width = (
                 self.WIDTH - self.MARGIN * 2 - self.AVATAR_SIZE - 4
                 if isinstance(directory_id, int) and y < self.AVATAR_SIZE
@@ -123,17 +123,6 @@ class EpaperDirectoryDisplay:
             if y >= self.HEIGHT - self.LINE_HEIGHT:
                 break
         self._show_image(image)
-
-    @staticmethod
-    def _display_line(line: str) -> str:
-        for source, replacement in (
-            ("SUBSCRIBER // ", "NAME // "),
-            ("ROLE // ", "OCCUPATION // "),
-            ("DESTINATION // ", "LOCATION // "),
-        ):
-            if line.upper().startswith(source):
-                return replacement + line[len(source) :]
-        return line
 
     @staticmethod
     def _default_avatar_dir() -> Path:

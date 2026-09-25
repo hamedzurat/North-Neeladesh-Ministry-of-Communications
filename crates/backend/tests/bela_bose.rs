@@ -62,7 +62,7 @@ fn registered_stories_start_with_professor_routing_and_authored_directory_record
     assert_eq!(response.output.directory_pages[0].heading, "Meghna Abashon");
     assert_eq!(response.output.directory_pages[0].directory_id, Some(1031));
     assert_eq!(response.output.directory_pages[0].line, Some(4));
-    assert!(dog.iter().any(|line| *line == "SUBSCRIBER // Bela Bose"));
+    assert!(dog.iter().any(|line| *line == "NAME // Bela Bose"));
     assert!(
         dog.iter()
             .any(|line| *line == "NOTE // has a dog named Momo")
