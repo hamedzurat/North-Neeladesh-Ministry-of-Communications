@@ -42,8 +42,9 @@ class EpaperDirectoryDisplay:
     WIDTH = 200
     HEIGHT = 200
     MARGIN = 6
-    FONT_SIZE = 10
+    FONT_SIZE = 13
     LINE_HEIGHT = 13
+    AVATAR_SIZE = 96
 
     def __init__(
         self,
@@ -63,7 +64,7 @@ class EpaperDirectoryDisplay:
         self.device = epaper.EPaper(bus=spi_bus, device=spi_device, speed=spi_speed_hz)
         self.device.init()
         self.rotation = rotation % 360
-        self.font_path = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+        self.font_path = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
         self.avatar_dir = Path(avatar_dir) if avatar_dir else self._default_avatar_dir()
         self._avatars: dict[int, object | None] = {}
 
@@ -82,7 +83,7 @@ class EpaperDirectoryDisplay:
         directory_id = page.get("directory_id")
         lines = page.get("lines", [])
         if isinstance(directory_id, int):
-            id_font = self._load_font(14)
+            id_font = self._load_font(16)
             draw.text(
                 (self.MARGIN, self.MARGIN),
                 f"ID // {directory_id:04}",
@@ -91,20 +92,30 @@ class EpaperDirectoryDisplay:
             )
             avatar = self._load_avatar(directory_id)
             if avatar is not None:
-                image.paste(avatar, (self.WIDTH - self.MARGIN - 96, 0), avatar)
-            y = 102
+                image.paste(
+                    avatar,
+                    (self.WIDTH - self.MARGIN - self.AVATAR_SIZE, 0),
+                    avatar,
+                )
+            y = 32
         else:
-            large_font = self._load_font(20)
+            large_font = self._load_font(22)
             draw.text((self.MARGIN, 25), "ID NOT FOUND", font=large_font, fill=0)
             requested_id = str(lines[0]) if lines else "UNKNOWN ID"
-            draw.text((self.MARGIN, 58), requested_id, font=font, fill=0)
+            draw.text((self.MARGIN, 58), requested_id, font=self._load_font(16), fill=0)
             lines = []
             y = 75
-        measure = lambda value: self._text_width(draw, value, font)
         if lines and str(lines[0]).upper().startswith("SUBSCRIBER ID "):
             lines = lines[1:]
         for raw_line in lines:
-            for line in wrap_text(str(raw_line), self.WIDTH - self.MARGIN * 2, measure):
+            display_line = self._display_line(str(raw_line))
+            available_width = (
+                self.WIDTH - self.MARGIN * 2 - self.AVATAR_SIZE - 4
+                if isinstance(directory_id, int) and y < self.AVATAR_SIZE
+                else self.WIDTH - self.MARGIN * 2
+            )
+            measure = lambda value: self._text_width(draw, value, font)
+            for line in wrap_text(display_line, available_width, measure):
                 if y >= self.HEIGHT - self.LINE_HEIGHT:
                     break
                 draw.text((self.MARGIN, y), line, font=font, fill=0)
@@ -112,6 +123,17 @@ class EpaperDirectoryDisplay:
             if y >= self.HEIGHT - self.LINE_HEIGHT:
                 break
         self._show_image(image)
+
+    @staticmethod
+    def _display_line(line: str) -> str:
+        for source, replacement in (
+            ("SUBSCRIBER // ", "NAME // "),
+            ("ROLE // ", "OCCUPATION // "),
+            ("DESTINATION // ", "LOCATION // "),
+        ):
+            if line.upper().startswith(source):
+                return replacement + line[len(source) :]
+        return line
 
     @staticmethod
     def _default_avatar_dir() -> Path:
@@ -127,7 +149,7 @@ class EpaperDirectoryDisplay:
             path = self.avatar_dir / f"{directory_id:04}.png"
             try:
                 avatar = self._image_module.open(path).convert("RGBA")
-                avatar.thumbnail((96, 96))
+                avatar.thumbnail((self.AVATAR_SIZE, self.AVATAR_SIZE))
                 self._avatars[directory_id] = avatar
             except (OSError, ValueError):
                 self._avatars[directory_id] = None
