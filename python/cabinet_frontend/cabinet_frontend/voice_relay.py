@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import queue
 import shlex
@@ -364,13 +365,16 @@ class AlsaPlayback:
 class SoundDevicePlayback:
     """Play PCM through the same PortAudio device layer as microphone capture."""
 
-    def __init__(self, status_sink: Any = print) -> None:
+    def __init__(self, status_sink: Any = print, gain: float = 1.0) -> None:
+        if not math.isfinite(gain) or gain <= 0:
+            raise ValueError("playback gain must be a positive finite number")
         try:
             import sounddevice
         except ImportError as error:
             raise RuntimeError("sounddevice is not installed") from error
 
         self.sounddevice = sounddevice
+        self.gain = gain
         self.stream: Any = None
         self.diagnostics = ChangeLogger(status_sink)
         try:
@@ -389,7 +393,10 @@ class SoundDevicePlayback:
         if self.stream is None or not self.stream.active:
             raise RuntimeError("PortAudio speaker stream is not running")
         try:
-            self.stream.write(struct.pack(f"<{len(samples)}h", *samples))
+            amplified = [
+                max(-32768, min(32767, round(sample * self.gain))) for sample in samples
+            ]
+            self.stream.write(struct.pack(f"<{len(amplified)}h", *amplified))
         except Exception as error:
             raise RuntimeError("speaker playback failed") from error
 
@@ -673,6 +680,7 @@ def _capture() -> Capture:
 def run_embedded(
     stop: threading.Event,
     voice_upload_address: tuple[str, int] | None = None,
+    playback_gain: float = 1.0,
 ) -> None:
     """Run the audio edge inside the Cabinet Frontend process.
 
@@ -703,7 +711,7 @@ def run_embedded(
             relay = VoiceRelay(
                 connection,
                 _capture(),
-                SoundDevicePlayback(status_sink=print),
+                SoundDevicePlayback(status_sink=print, gain=playback_gain),
                 upload_connection=upload_connection,
                 background_playback=True,
                 status_sink=print,
