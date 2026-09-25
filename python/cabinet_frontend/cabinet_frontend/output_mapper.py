@@ -21,6 +21,7 @@ class OutputMapper:
         line_lamp_count: int = 12,
         epaper_page_interval: float = 8.0,
         epaper_update_delay: float = 0.0,
+        local_clock_display: bool = False,
         clock: Any = time.monotonic,
         status_sink: Callable[[str], None] = print,
     ) -> None:
@@ -31,9 +32,15 @@ class OutputMapper:
         self.line_lamp_count = line_lamp_count
         self.epaper_page_interval = epaper_page_interval
         self.epaper_update_delay = epaper_update_delay
+        self.local_clock_display = local_clock_display
         self.clock = clock
         self._last_lines: list[bool] | None = None
         self._last_seven_segment: str | None = None
+        self._clock_start_monotonic: float | None = None
+        self._clock_run_generation: int | None = None
+        self._clock_lock = threading.Lock()
+        self._clock_closed = False
+        self._clock_thread: threading.Thread | None = None
         self._last_pages: list[dict[str, object]] | None = None
         self._page_index = 0
         self._next_page_at = 0.0
@@ -56,6 +63,13 @@ class OutputMapper:
                 daemon=True,
             )
             self._epaper_thread.start()
+        if self.local_clock_display:
+            self._clock_thread = threading.Thread(
+                target=self._clock_loop,
+                name="cabinet-local-clock",
+                daemon=True,
+            )
+            self._clock_thread.start()
 
     def apply(self, output: dict[str, Any], now: float | None = None) -> None:
         self.faults.clear()
@@ -68,11 +82,14 @@ class OutputMapper:
 
         clock = output.get("clock", {})
         elapsed = max(0, int(clock.get("elapsed_seconds", 0)))
-        display = f"{(elapsed // 3600) % 100:02d}{(elapsed // 60) % 60:02d}"
-        if display != self._last_seven_segment and self._try(
-            "seven_segment", lambda: self.seven_segment.show(display)
-        ):
-            self._last_seven_segment = display
+        run_generation = int(output.get("run_generation", 0))
+        if self.local_clock_display:
+            if run_generation != self._clock_run_generation:
+                self._clock_run_generation = run_generation
+                self._clock_start_monotonic = time.monotonic() - elapsed
+            self._update_local_clock()
+        else:
+            self._show_elapsed(elapsed)
 
         pages = [dict(page) for page in output.get("directory_pages", [])]
         if pages != self._last_pages:
@@ -248,6 +265,27 @@ class OutputMapper:
             self._epaper_condition.notify()
         return True
 
+    def _show_elapsed(self, elapsed: int) -> None:
+        display = f"{(elapsed // 3600) % 100:02d}{(elapsed // 60) % 60:02d}"
+        with self._clock_lock:
+            if display != self._last_seven_segment and self._try(
+                "seven_segment", lambda: self.seven_segment.show(display)
+            ):
+                self._last_seven_segment = display
+
+    def _update_local_clock(self) -> None:
+        if self._clock_start_monotonic is not None:
+            elapsed = max(0, int(time.monotonic() - self._clock_start_monotonic))
+            self._show_elapsed(elapsed)
+
+    def _clock_loop(self) -> None:
+        while True:
+            with self._epaper_condition:
+                if self._clock_closed:
+                    return
+            self._update_local_clock()
+            time.sleep(0.25)
+
     def _epaper_loop(self) -> None:
         while True:
             with self._epaper_condition:
@@ -280,6 +318,11 @@ class OutputMapper:
         return True
 
     def close(self) -> None:
+        with self._epaper_condition:
+            self._clock_closed = True
+            self._epaper_condition.notify_all()
+        if self._clock_thread is not None:
+            self._clock_thread.join(timeout=2.0)
         with self._epaper_condition:
             self._epaper_closed = True
             self._epaper_condition.notify_all()

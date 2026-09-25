@@ -74,6 +74,7 @@ class HardwareConfig:
     pair_line_interval: float = 0.02
     epaper_page_interval: float = 8.0
     epaper_update_delay: float = 0.75
+    local_clock_display: bool = True
     crank_detents_per_rotation: int = 2
     epaper_rotation: int = 90
     avatar_dir: str | None = None

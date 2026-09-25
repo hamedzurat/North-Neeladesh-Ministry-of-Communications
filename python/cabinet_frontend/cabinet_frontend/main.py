@@ -219,6 +219,7 @@ def create_frontend(
         line_lamp_count=config.line_lamp_count,
         epaper_page_interval=config.epaper_page_interval,
         epaper_update_delay=config.epaper_update_delay,
+        local_clock_display=config.local_clock_display,
     )
     frontend = HardwareFrontend(
         client,
