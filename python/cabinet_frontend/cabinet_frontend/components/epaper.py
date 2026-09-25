@@ -80,6 +80,7 @@ class EpaperDirectoryDisplay:
         selected_index = max(0, min(page_index, page_count - 1))
         page = pages[selected_index]
         directory_id = page.get("directory_id")
+        lines = page.get("lines", [])
         if isinstance(directory_id, int):
             draw.text(
                 (self.MARGIN, self.MARGIN),
@@ -89,10 +90,15 @@ class EpaperDirectoryDisplay:
             )
             avatar = self._load_avatar(directory_id)
             if avatar is not None:
-                image.paste(avatar, (self.WIDTH - self.MARGIN - 48, 0), avatar)
-        y = 54 if isinstance(directory_id, int) else self.MARGIN + self.LINE_HEIGHT + 3
+                image.paste(avatar, (self.WIDTH - self.MARGIN - 96, 0), avatar)
+            y = 102
+        else:
+            large_font = self._load_font(20)
+            draw.text((self.MARGIN, 25), "ID NOT FOUND", font=large_font, fill=0)
+            requested_id = str(lines[0]) if lines else "UNKNOWN ID"
+            draw.text((self.MARGIN, 58), requested_id, font=font, fill=0)
+            y = 75
         measure = lambda value: self._text_width(draw, value, font)
-        lines = page.get("lines", [])
         if lines and str(lines[0]).upper().startswith("SUBSCRIBER ID "):
             lines = lines[1:]
         for raw_line in lines:
@@ -119,15 +125,15 @@ class EpaperDirectoryDisplay:
             path = self.avatar_dir / f"{directory_id:04}.png"
             try:
                 avatar = self._image_module.open(path).convert("RGBA")
-                avatar.thumbnail((48, 48))
+                avatar.thumbnail((96, 96))
                 self._avatars[directory_id] = avatar
             except (OSError, ValueError):
                 self._avatars[directory_id] = None
         return self._avatars[directory_id]
 
-    def _load_font(self) -> object:
+    def _load_font(self, size: int = FONT_SIZE) -> object:
         try:
-            return self._font_module.truetype(self.font_path, self.FONT_SIZE)
+            return self._font_module.truetype(self.font_path, size)
         except OSError:
             return self._font_module.load_default()
 
