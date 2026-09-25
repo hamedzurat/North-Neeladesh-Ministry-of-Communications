@@ -12,6 +12,7 @@ from .diagnostics import ChangeLogger
 
 
 class OutputMapper:
+    AUDIO_SAMPLE_RATE = 24_000
     GAME_START_MINUTES = 8 * 60
 
     def __init__(
@@ -24,6 +25,7 @@ class OutputMapper:
         epaper_page_interval: float = 8.0,
         epaper_update_delay: float = 0.0,
         local_clock_display: bool = False,
+        local_audio_queue: Any | None = None,
         clock: Any = time.monotonic,
         status_sink: Callable[[str], None] = print,
     ) -> None:
@@ -35,6 +37,7 @@ class OutputMapper:
         self.epaper_page_interval = epaper_page_interval
         self.epaper_update_delay = epaper_update_delay
         self.local_clock_display = local_clock_display
+        self.local_audio_queue = local_audio_queue
         self.clock = clock
         self._last_lines: list[bool] | None = None
         self._last_seven_segment: str | None = None
@@ -50,6 +53,9 @@ class OutputMapper:
         self._last_run_generation: int | None = None
         self._last_calls: tuple[tuple[int, int, str], ...] | None = None
         self._last_service: tuple[str, str] | None = None
+        self._last_local_audio: str | None = None
+        self._connected_call_starts: dict[tuple[int, int], float] = {}
+        self._connected_call_generation: int | None = None
         self.status_sink = status_sink or (lambda _message: None)
         self.diagnostics = ChangeLogger(self.status_sink)
         self.faults: list[str] = []
@@ -85,6 +91,22 @@ class OutputMapper:
         clock = output.get("clock", {})
         elapsed = max(0, int(clock.get("elapsed_seconds", 0)))
         run_generation = int(output.get("run_generation", 0))
+        connected_calls = {
+            (int(call.get("caller_line", -1)), int(call.get("requested_callee_line", -1)))
+            for call in output.get("calls", [])
+            if isinstance(call, dict) and call.get("phase") == "connected"
+        }
+        now_monotonic = time.monotonic()
+        if run_generation != self._connected_call_generation:
+            self._connected_call_generation = run_generation
+            self._connected_call_starts.clear()
+        self._connected_call_starts = {
+            key: started
+            for key, started in self._connected_call_starts.items()
+            if key in connected_calls
+        }
+        for key in connected_calls:
+            self._connected_call_starts.setdefault(key, now_monotonic)
         if self.local_clock_display:
             if run_generation != self._clock_run_generation:
                 self._clock_run_generation = run_generation
@@ -127,6 +149,7 @@ class OutputMapper:
                 self._seen_printer_entries.add(entry_id)
 
     def _log_authoritative_activity(self, output: dict[str, Any]) -> None:
+        now_monotonic = time.monotonic()
         if "calls" in output or "service_call" in output:
             calls = tuple(
                 (
@@ -199,6 +222,22 @@ class OutputMapper:
                     int(monitoring.get("caller_tap_port", -1)),
                     int(monitoring.get("callee_tap_port", -1)),
                 )
+                audio_clip = monitoring.get("audio_clip")
+                if isinstance(audio_clip, str) and audio_clip != self._last_local_audio:
+                    if self.local_audio_queue is not None:
+                        call_key = (
+                            int(monitoring.get("caller_line", -1)),
+                            int(monitoring.get("callee_line", -1)),
+                        )
+                        connected_at = self._connected_call_starts.get(call_key, now_monotonic)
+                        offset_samples = max(
+                            0,
+                            int((now_monotonic - connected_at) * self.AUDIO_SAMPLE_RATE),
+                        )
+                        self.local_audio_queue.put(
+                            (audio_clip, offset_samples)
+                        )
+                    self._last_local_audio = audio_clip
                 self.diagnostics.emit(
                     "tap_bridge_monitoring",
                     value,
@@ -207,6 +246,7 @@ class OutputMapper:
                     f"ports={value[2]},{value[3]}",
                 )
             else:
+                self._last_local_audio = None
                 self.diagnostics.emit("tap_bridge_monitoring", None, "TAP BRIDGE // monitoring stopped")
 
         if "speaker_active" in output or "tap_bridge_audio_active" in output:

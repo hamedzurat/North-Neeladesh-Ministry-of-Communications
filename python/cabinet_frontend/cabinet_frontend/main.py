@@ -194,6 +194,7 @@ def create_frontend(
     client: Any,
     input_sequence: int = 0,
     state_revision: int = 0,
+    local_audio_queue: queue.Queue[tuple[str, int]] | None = None,
 ) -> HardwareFrontend:
     components: ComponentBundle
     components = build_real_components(config)
@@ -220,6 +221,7 @@ def create_frontend(
         epaper_page_interval=config.epaper_page_interval,
         epaper_update_delay=config.epaper_update_delay,
         local_clock_display=config.local_clock_display,
+        local_audio_queue=local_audio_queue,
     )
     frontend = HardwareFrontend(
         client,
@@ -245,6 +247,7 @@ def run_forever(
     input_sequence = 0
     state_revision = 0
     voice_stop = threading.Event()
+    local_audio_queue: queue.Queue[tuple[str, int]] = queue.Queue()
     voice_thread: threading.Thread | None = None
     while True:
         client = None
@@ -259,12 +262,23 @@ def run_forever(
             if voice_thread is None:
                 voice_thread = threading.Thread(
                     target=run_embedded,
-                    args=(voice_stop, config.voice_upload_address, config.voice_playback_gain),
+                    args=(
+                        voice_stop,
+                        config.voice_upload_address,
+                        config.voice_playback_gain,
+                        local_audio_queue,
+                    ),
                     name="cabinet-voice-relay",
                     daemon=True,
                 )
                 voice_thread.start()
-            frontend = create_frontend(config, client, input_sequence, state_revision)
+            frontend = create_frontend(
+                config,
+                client,
+                input_sequence,
+                state_revision,
+                local_audio_queue,
+            )
             while True:
                 frontend.step()
                 # Sample physical controls faster than the normal backend cadence.

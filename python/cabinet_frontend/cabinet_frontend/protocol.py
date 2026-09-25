@@ -219,11 +219,22 @@ def validate_state_message(message: dict[str, Any]) -> None:
     monitoring = output["tap_bridge_monitoring"]
     if monitoring is not None:
         monitoring_map = _map(monitoring, "output.tap_bridge_monitoring")
-        _require_keys(monitoring_map, "caller_line", "callee_line", "caller_tap_port", "callee_tap_port")
+        _require_keys(
+            monitoring_map,
+            "caller_line",
+            "callee_line",
+            "caller_tap_port",
+            "callee_tap_port",
+            "audio_clip",
+        )
         for key in ("caller_line", "callee_line"):
             _require_int_range(monitoring_map[key], f"tap_bridge_monitoring.{key}", 0, 11)
         for key in ("caller_tap_port", "callee_tap_port"):
             _require_int_range(monitoring_map[key], f"tap_bridge_monitoring.{key}", 1, 2)
+        if monitoring_map["audio_clip"] is not None and not isinstance(
+            monitoring_map["audio_clip"], str
+        ):
+            raise ProtocolValidationError("tap_bridge_monitoring.audio_clip must be a string or null")
     printer_output = output["printer_output"]
     if not isinstance(printer_output, list):
         raise ProtocolValidationError("output.printer_output must be a list")

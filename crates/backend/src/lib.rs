@@ -153,6 +153,7 @@ pub struct Backend {
     audio_replay_call: Option<(u8, u8)>,
     audio_next_send_at: Option<Instant>,
     audio_queue_tap_only: bool,
+    tap_bridge_audio_local: bool,
     audio_sequence: u16,
     audio_timestamp: u32,
     audio_tap_was_active: bool,
@@ -389,6 +390,7 @@ impl Backend {
             audio_replay_call: None,
             audio_next_send_at: None,
             audio_queue_tap_only: false,
+            tap_bridge_audio_local: false,
             audio_sequence: 0,
             audio_timestamp: 0,
             audio_tap_was_active: false,
@@ -643,6 +645,7 @@ impl Backend {
         self.audio_replay_call = None;
         self.audio_next_send_at = None;
         self.audio_queue_tap_only = false;
+        self.tap_bridge_audio_local = false;
         self.audio_sequence = 0;
         self.audio_timestamp = 0;
         self.audio_tap_was_active = false;
@@ -1077,6 +1080,7 @@ impl Backend {
         self.story_controls = input.held_controls.clone();
         self.state.shift.active_call_count = self.calls.len() as u8;
         let tap_was_active = self.state.tap_bridge_monitoring.is_some();
+        let tap_was_local = self.tap_bridge_audio_local;
         self.state.tap_bridge_monitoring = tap_monitor(input, &self.state).map(|mut monitoring| {
             monitoring.audio_clip =
                 authored_audio_path(&self.config, monitoring.caller_line, monitoring.callee_line)
@@ -1100,6 +1104,15 @@ impl Backend {
                 .push((monitoring.caller_line, monitoring.callee_line, true));
         }
         self.state.tap_bridge_audio_active = self.state.tap_bridge_monitoring.is_some();
+        self.tap_bridge_audio_local = self
+            .state
+            .tap_bridge_monitoring
+            .as_ref()
+            .is_some_and(|monitoring| monitoring.audio_clip.is_some());
+        if self.tap_bridge_audio_local && !tap_was_local {
+            self.audio_queue.clear();
+            self.audio_next_send_at = None;
+        }
         self.sync_story_output();
         self.update_voice_control(input, self.revision);
         self.cancel_voice_if_operator_disconnected(input);
@@ -3459,6 +3472,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                 let packet = if peer.is_some()
                     && !state.audio_queue.is_empty()
                     && (!state.audio_queue_tap_only || state.state.tap_bridge_audio_active)
+                    && !state.tap_bridge_audio_local
                     && state
                         .audio_next_send_at
                         .is_none_or(|ready_at| Instant::now() >= ready_at)

@@ -11,8 +11,10 @@ import struct
 import subprocess
 import threading
 import time
+import wave
 from collections import deque
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, Protocol
 
 from .diagnostics import ChangeLogger
@@ -455,15 +457,16 @@ class VoiceRelay:
         status_sink: Any = None,
         upload_connection: Any | None = None,
         background_playback: bool = False,
+        local_audio_queue: queue.Queue[tuple[str, int]] | None = None,
     ) -> None:
         self.connection = connection
         self.capture = capture
         self.playback = playback
         self.upload_connection = upload_connection
-        self._playback_queue: queue.Queue[list[int] | None] | None = None
+        self._playback_queue: queue.Queue[list[int] | tuple[str, int] | None] | None = None
         self._playback_thread: threading.Thread | None = None
         if background_playback:
-            self._playback_queue = queue.Queue()
+            self._playback_queue = local_audio_queue or queue.Queue()
             self._playback_thread = threading.Thread(
                 target=self._playback_loop,
                 name="cabinet-voice-playback",
@@ -476,6 +479,7 @@ class VoiceRelay:
         self.state_revision = 0
         self.last_sequence: int | None = None
         self.last_ssrc: int | None = None
+        self._local_playback_active = False
         self.closed = False
         self.diagnostics = ChangeLogger(status_sink)
 
@@ -616,6 +620,8 @@ class VoiceRelay:
                 + (f" response={status['response_text']}" if status.get("response_text") else ""),
             )
         else:
+            if self._local_playback_active:
+                return
             sequence, _timestamp, ssrc, _marker, samples = _decode_rtp(datagram)
             if self.last_ssrc != ssrc:
                 self.diagnostics.emit("rtp_ssrc", ssrc, f"VOICE RTP // stream={ssrc}")
@@ -640,13 +646,40 @@ class VoiceRelay:
             if samples is None:
                 return
             try:
-                self.playback.write(samples)
+                if isinstance(samples, tuple):
+                    self._play_local_file(*samples)
+                else:
+                    self.playback.write(samples)
             except Exception as error:  # noqa: BLE001 - keep network receive alive
                 self.diagnostics.emit(
                     "playback_failure",
                     (type(error).__name__, str(error)),
                     f"VOICE PLAYBACK FAILED // {type(error).__name__}: {error}",
                 )
+
+    def _play_local_file(self, relative_path: str, offset_samples: int) -> None:
+        root = Path(__file__).resolve().parents[1]
+        path = Path(relative_path)
+        if not path.is_absolute():
+            path = root / path
+        self._local_playback_active = True
+        try:
+            with wave.open(str(path), "rb") as source:
+                if source.getnchannels() != 1 or source.getsampwidth() != 2:
+                    raise ValueError("authored audio must be mono 16-bit PCM")
+                if source.getframerate() != VOICE_AUDIO_SAMPLE_RATE:
+                    raise ValueError("authored audio must be 24 kHz")
+                source.setpos(min(offset_samples, source.getnframes()))
+                while True:
+                    payload = source.readframes(VOICE_AUDIO_PACKET_SAMPLES)
+                    if not payload:
+                        break
+                    self.playback.write(
+                        struct.unpack(f"<{len(payload) // 2}h", payload)
+                    )
+        finally:
+            self._local_playback_active = False
+            self.last_sequence = None
 
     def run(self, stop: threading.Event | None = None) -> None:
         self.send_status("ready")
@@ -681,6 +714,7 @@ def run_embedded(
     stop: threading.Event,
     voice_upload_address: tuple[str, int] | None = None,
     playback_gain: float = 1.0,
+    local_audio_queue: queue.Queue[tuple[str, int]] | None = None,
 ) -> None:
     """Run the audio edge inside the Cabinet Frontend process.
 
@@ -714,6 +748,7 @@ def run_embedded(
                 SoundDevicePlayback(status_sink=print, gain=playback_gain),
                 upload_connection=upload_connection,
                 background_playback=True,
+                local_audio_queue=local_audio_queue,
                 status_sink=print,
             )
             relay.run(stop)
