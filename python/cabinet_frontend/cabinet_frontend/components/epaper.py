@@ -74,6 +74,7 @@ class EpaperDirectoryDisplay:
         image = self._image_module.new("1", (self.WIDTH, self.HEIGHT), 255)
         draw = self._draw_module.Draw(image)
         font = self._load_font(weight=400)
+        header_font = self._load_font(weight=600)
         page_count = len(pages)
         if not page_count:
             draw.text((self.MARGIN, self.MARGIN), "NO DIRECTORY DATA", font=font, fill=0)
@@ -120,12 +121,30 @@ class EpaperDirectoryDisplay:
             for line in wrap_text(display_line, available_width, measure):
                 if y >= self.HEIGHT - self.LINE_HEIGHT:
                     break
-                draw.text((self.MARGIN, y), line, font=font, fill=0)
+                self._draw_directory_line(draw, line, y, font, header_font)
                 y += self.LINE_HEIGHT
             y += self.FIELD_SPACING
             if y >= self.HEIGHT - self.LINE_HEIGHT:
                 break
         self._show_image(image)
+
+    def _draw_directory_line(
+        self,
+        draw: object,
+        line: str,
+        y: int,
+        font: object,
+        header_font: object,
+    ) -> None:
+        separator = " // "
+        if separator not in line:
+            draw.text((self.MARGIN, y), line, font=font, fill=0)
+            return
+        header, value = line.split(separator, 1)
+        header_text = header + separator
+        draw.text((self.MARGIN, y), header_text, font=header_font, fill=0)
+        header_width = self._text_width(draw, header_text, header_font)
+        draw.text((self.MARGIN + header_width, y), value, font=font, fill=0)
 
     @staticmethod
     def _default_avatar_dir() -> Path:
