@@ -157,7 +157,6 @@ pub struct Backend {
     audio_timestamp: u32,
     audio_tap_was_active: bool,
     pending_tts: Vec<(u8, u8, bool)>,
-    tap_replay_offsets: HashMap<(u8, u8), usize>,
     tts_prepared: bool,
     last_ptt: bool,
     voice_peer: Option<SocketAddr>,
@@ -394,7 +393,6 @@ impl Backend {
             audio_timestamp: 0,
             audio_tap_was_active: false,
             pending_tts: Vec::new(),
-            tap_replay_offsets: HashMap::new(),
             tts_prepared: false,
             last_ptt: false,
             voice_peer: None,
@@ -649,7 +647,6 @@ impl Backend {
         self.audio_timestamp = 0;
         self.audio_tap_was_active = false;
         self.pending_tts.clear();
-        self.tap_replay_offsets.clear();
         self.last_ptt = false;
         self.pending_voice_control = None;
         self.voice_turn_id = 0;
@@ -1092,28 +1089,12 @@ impl Backend {
             && authored_audio_path(&self.config, monitoring.caller_line, monitoring.callee_line)
                 .is_some()
         {
-            let replay_offset_samples = self
-                .calls
-                .iter()
-                .find(|call| {
-                    call.caller == monitoring.caller_line && call.callee == monitoring.callee_line
-                })
-                .and_then(|call| call.connected_at)
-                .map(|connected_at| {
-                    (connected_at.elapsed().as_secs_f64() * f64::from(VOICE_AUDIO_SAMPLE_RATE))
-                        as usize
-                })
-                .unwrap_or(0);
             self.log(
                 "VOICE",
                 format_args!(
-                    "tap audio requested call={}->{} offset_samples={replay_offset_samples}",
+                    "tap audio requested call={}->{}",
                     monitoring.caller_line, monitoring.callee_line
                 ),
-            );
-            self.tap_replay_offsets.insert(
-                (monitoring.caller_line, monitoring.callee_line),
-                replay_offset_samples,
             );
             self.pending_tts
                 .push((monitoring.caller_line, monitoring.callee_line, true));
@@ -1871,8 +1852,14 @@ impl Backend {
     ) {
         let connected_elapsed_seconds = self.elapsed_seconds() as u64;
         let replay_offset_samples = if tap_audio {
-            self.tap_replay_offsets
-                .remove(&(caller, callee))
+            self.calls
+                .iter()
+                .find(|call| call.caller == caller && call.callee == callee)
+                .and_then(|call| call.connected_at)
+                .map(|connected_at| {
+                    (connected_at.elapsed().as_secs_f64() * f64::from(VOICE_AUDIO_SAMPLE_RATE))
+                        as usize
+                })
                 .unwrap_or(0)
         } else {
             0
@@ -1951,6 +1938,22 @@ impl Backend {
         self.audio_sequence =
             sequence.wrapping_add(samples.len().div_ceil(VOICE_AUDIO_PACKET_SAMPLES) as u16);
         self.audio_timestamp = timestamp.wrapping_add(samples.len() as u32);
+    }
+
+    fn audio_replay_offset_packets(&self) -> usize {
+        self.audio_call
+            .and_then(|(caller, callee)| {
+                self.calls
+                    .iter()
+                    .find(|call| call.caller == caller && call.callee == callee)
+                    .and_then(|call| call.connected_at)
+            })
+            .map(|connected_at| {
+                (connected_at.elapsed().as_secs_f64()
+                    * f64::from(VOICE_AUDIO_SAMPLE_RATE)
+                    / VOICE_AUDIO_PACKET_SAMPLES as f64) as usize
+            })
+            .unwrap_or(0)
     }
 
     fn take_pending_tts(&mut self) -> Vec<(u8, u8, bool)> {
@@ -3427,12 +3430,18 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         state.log(
                             "VOICE",
                             format_args!(
-                                "tap replay call={:?} packets={}",
+                                "tap replay call={:?} connection_offset_packets={}",
                                 state.audio_call,
-                                state.audio_replay.len()
+                                state.audio_replay_offset_packets()
                             ),
                         );
-                        let replay = state.audio_replay.clone();
+                        let replay_offset_packets = state.audio_replay_offset_packets();
+                        let replay = state
+                            .audio_replay
+                            .iter()
+                            .skip(replay_offset_packets)
+                            .cloned()
+                            .collect::<Vec<_>>();
                         state.audio_queue.extend(replay);
                     } else {
                         state.log(
