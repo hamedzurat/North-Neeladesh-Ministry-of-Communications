@@ -12,6 +12,8 @@ from .diagnostics import ChangeLogger
 
 
 class OutputMapper:
+    GAME_START_MINUTES = 8 * 60
+
     def __init__(
         self,
         line_lamps: Any,
@@ -276,7 +278,13 @@ class OutputMapper:
     def _update_local_clock(self) -> None:
         if self._clock_start_monotonic is not None:
             elapsed = max(0, int(time.monotonic() - self._clock_start_monotonic))
-            self._show_elapsed(elapsed)
+            virtual_minutes = self.GAME_START_MINUTES + elapsed
+            display = f"{(virtual_minutes // 60) % 100:02d}{virtual_minutes % 60:02d}"
+            with self._clock_lock:
+                if display != self._last_seven_segment and self._try(
+                    "seven_segment", lambda: self.seven_segment.show(display)
+                ):
+                    self._last_seven_segment = display
 
     def _clock_loop(self) -> None:
         while True:
