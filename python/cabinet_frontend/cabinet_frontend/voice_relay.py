@@ -503,6 +503,11 @@ class VoiceRelay:
         )
 
     def send_input_audio(self, samples: Sequence[int]) -> None:
+        self.diagnostics.emit(
+            "upload_started",
+            (self.session_id, self.turn_id, len(samples)),
+            f"VOICE // upload started turn={self.turn_id} samples={len(samples)}",
+        )
         chunks = [samples[index : index + VOICE_INPUT_PACKET_SAMPLES] for index in range(0, len(samples), VOICE_INPUT_PACKET_SAMPLES)]
         if not chunks:
             chunks = [[]]
@@ -541,6 +546,11 @@ class VoiceRelay:
         self.turn_id = int(message["turn_id"])
         self.state_revision = int(message["state_revision"])
         control = message.get("control")
+        self.diagnostics.emit(
+            "control_received",
+            (self.turn_id, self.state_revision, control),
+            f"VOICE // control={control} turn={self.turn_id} state_revision={self.state_revision}",
+        )
         try:
             if control == "start_ptt":
                 self.capture.start()
