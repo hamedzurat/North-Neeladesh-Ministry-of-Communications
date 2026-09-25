@@ -198,6 +198,8 @@ pub struct Backend {
     story_connections_pending_disconnect: HashMap<StoryId, (u8, u8)>,
     story_conversations: HashMap<u8, Vec<ConversationTurn>>,
     tap_topology_log: Option<(u8, u8, bool, bool)>,
+    last_logged_topology: Option<Vec<exchange_protocol::CordConnection>>,
+    last_logged_ring_line: Option<i16>,
     ring_active_line: i16,
     godmode: bool,
     bypass_restrictions: bool,
@@ -433,6 +435,8 @@ impl Backend {
             story_connections_pending_disconnect: HashMap::new(),
             story_conversations: HashMap::new(),
             tap_topology_log: None,
+            last_logged_topology: None,
+            last_logged_ring_line: None,
             ring_active_line: -1,
             godmode: false,
             bypass_restrictions: false,
@@ -924,6 +928,7 @@ impl Backend {
         }
         self.sequence = Some(message.input_sequence);
         let input = &message.input;
+        self.log_input_topology(input);
         let talk_buttons = u8::from(input.held_controls.ptt)
             + u8::from(input.held_controls.police)
             + u8::from(input.held_controls.ems);
@@ -1319,6 +1324,31 @@ impl Backend {
                 self.log("CALL", format_args!("connect tap -> {callee}"));
             }
             (false, false) => {}
+        }
+    }
+
+    fn log_input_topology(&mut self, input: &InputState) {
+        if self.last_logged_topology.as_ref() != Some(&input.cord_topology) {
+            let rendered = input
+                .cord_topology
+                .iter()
+                .map(|cord| format!("{:?}>{:?}", cord.first, cord.second))
+                .collect::<Vec<_>>()
+                .join(",");
+            let rendered = if rendered.is_empty() {
+                "-".to_string()
+            } else {
+                rendered
+            };
+            self.log(
+                "WIRE",
+                format_args!("topology={rendered}"),
+            );
+            self.last_logged_topology = Some(input.cord_topology.clone());
+        }
+        if self.last_logged_ring_line != Some(input.ring_line) {
+            self.log("WIRE", format_args!("ring_line={}", input.ring_line));
+            self.last_logged_ring_line = Some(input.ring_line);
         }
     }
 
