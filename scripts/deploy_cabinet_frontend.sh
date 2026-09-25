@@ -25,6 +25,7 @@ ssh "$PI_HOST" "mkdir -p '$REMOTE_ROOT'"
 ssh "$PI_HOST" "mkdir -p '$REMOTE_ROOT/scripts'"
 ssh "$PI_HOST" "mkdir -p '$REMOTE_ROOT/assets/stories'"
 ssh "$PI_HOST" "mkdir -p '$REMOTE_ROOT/assets/avatars'"
+ssh "$PI_HOST" "mkdir -p '$REMOTE_ROOT/assets/fonts'"
 rsync --archive --compress \
     --exclude='__pycache__' \
     --exclude='.venv' \
@@ -48,6 +49,10 @@ rsync --archive --compress \
     --delete \
     "$AVATAR_ROOT/" \
     "$PI_HOST:$REMOTE_ROOT/assets/avatars/"
+rsync --archive --compress \
+    --delete \
+    "$ROOT_DIR/assets/fonts/" \
+    "$PI_HOST:$REMOTE_ROOT/assets/fonts/"
 
 git -C "$ROOT_DIR" rev-parse HEAD > "$METADATA_DIR/.deployment-version"
 (

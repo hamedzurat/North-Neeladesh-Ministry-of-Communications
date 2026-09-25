@@ -65,13 +65,14 @@ class EpaperDirectoryDisplay:
         self.device.init()
         self.rotation = rotation % 360
         self.font_path = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        self.font_dir = self._default_font_dir()
         self.avatar_dir = Path(avatar_dir) if avatar_dir else self._default_avatar_dir()
         self._avatars: dict[int, object | None] = {}
 
     def show_directory(self, pages: Sequence[dict[str, object]], page_index: int = 0) -> None:
         image = self._image_module.new("1", (self.WIDTH, self.HEIGHT), 255)
         draw = self._draw_module.Draw(image)
-        font = self._load_font()
+        font = self._load_font(weight=400)
         page_count = len(pages)
         if not page_count:
             draw.text((self.MARGIN, self.MARGIN), "NO DIRECTORY DATA", font=font, fill=0)
@@ -83,7 +84,7 @@ class EpaperDirectoryDisplay:
         directory_id = page.get("directory_id")
         lines = page.get("lines", [])
         if isinstance(directory_id, int):
-            id_font = self._load_font(16)
+            id_font = self._load_font(16, weight=600)
             draw.text(
                 (self.MARGIN, self.MARGIN),
                 f"ID // {directory_id:04}",
@@ -99,10 +100,10 @@ class EpaperDirectoryDisplay:
                 )
             y = 32
         else:
-            large_font = self._load_font(22)
+            large_font = self._load_font(22, weight=700)
             draw.text((self.MARGIN, 25), "ID NOT FOUND", font=large_font, fill=0)
             requested_id = str(lines[0]) if lines else "UNKNOWN ID"
-            draw.text((self.MARGIN, 58), requested_id, font=self._load_font(16), fill=0)
+            draw.text((self.MARGIN, 58), requested_id, font=self._load_font(16, weight=600), fill=0)
             lines = []
             y = 75
         if lines and str(lines[0]).upper().startswith("SUBSCRIBER ID "):
@@ -133,6 +134,15 @@ class EpaperDirectoryDisplay:
                 return candidate
         return roots[2] / "assets" / "avatars"
 
+    @staticmethod
+    def _default_font_dir() -> Path:
+        roots = Path(__file__).resolve().parents
+        for root in (roots[2], roots[3]):
+            candidate = root / "assets" / "fonts"
+            if candidate.is_dir():
+                return candidate
+        return roots[2] / "assets" / "fonts"
+
     def _load_avatar(self, directory_id: int) -> object | None:
         if directory_id not in self._avatars:
             path = self.avatar_dir / f"{directory_id:04}.png"
@@ -144,9 +154,13 @@ class EpaperDirectoryDisplay:
                 self._avatars[directory_id] = None
         return self._avatars[directory_id]
 
-    def _load_font(self, size: int = FONT_SIZE) -> object:
+    def _load_font(self, size: int = FONT_SIZE, weight: int = 400) -> object:
         try:
-            return self._font_module.truetype(self.font_path, size)
+            weight_name = {400: "Regular", 600: "SemiBold", 700: "Bold"}[weight]
+            font_path = self.font_dir / f"Inter-{weight_name}.ttf"
+            if not font_path.is_file():
+                font_path = Path(self.font_path)
+            return self._font_module.truetype(font_path, size)
         except OSError:
             return self._font_module.load_default()
 
