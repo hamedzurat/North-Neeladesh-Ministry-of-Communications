@@ -686,7 +686,7 @@ def run_embedded(
             connection.connect((host, int(port_text)))
             connection.settimeout(5.0)
             if voice_upload_address is None:
-                upload_host, upload_port = default_host, 7881
+                upload_host, upload_port = default_host, 7883
             else:
                 upload_host, upload_port = voice_upload_address
             upload_connection = socket.create_connection((upload_host, upload_port), timeout=5.0)

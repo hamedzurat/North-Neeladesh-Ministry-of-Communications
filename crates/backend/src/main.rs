@@ -5,7 +5,7 @@ use std::net::{SocketAddr, TcpListener, UdpSocket};
 fn main() -> io::Result<()> {
     let bind = argument_value("--bind").unwrap_or_else(|| "0.0.0.0:7878".to_string());
     let voice_bind = argument_value("--voice-bind").unwrap_or_else(|| "0.0.0.0:7879".to_string());
-    let voice_upload_bind = argument_value("--voice-upload-bind").unwrap_or_else(|| "0.0.0.0:7881".to_string());
+    let voice_upload_bind = argument_value("--voice-upload-bind").unwrap_or_else(|| "0.0.0.0:7883".to_string());
     let debug_bind = argument_value("--debug-bind");
     let text_bind = argument_value("--text-bind");
     let listener = TcpListener::bind(&bind)?;
