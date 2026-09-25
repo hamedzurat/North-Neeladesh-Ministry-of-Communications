@@ -44,6 +44,7 @@ class EpaperDirectoryDisplay:
     MARGIN = 6
     FONT_SIZE = 13
     LINE_HEIGHT = 13
+    FIELD_SPACING = 4
     AVATAR_SIZE = 96
 
     def __init__(
@@ -121,6 +122,7 @@ class EpaperDirectoryDisplay:
                     break
                 draw.text((self.MARGIN, y), line, font=font, fill=0)
                 y += self.LINE_HEIGHT
+            y += self.FIELD_SPACING
             if y >= self.HEIGHT - self.LINE_HEIGHT:
                 break
         self._show_image(image)
