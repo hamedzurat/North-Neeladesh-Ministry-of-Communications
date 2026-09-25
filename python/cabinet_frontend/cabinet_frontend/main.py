@@ -80,10 +80,6 @@ class HardwareFrontend:
                 *getattr(self.output_mapper, "faults", []),
             ],
         )
-        self._sent_at[self.input_sequence] = time.monotonic()
-        if len(self._sent_at) > 256:
-            oldest = min(self._sent_at)
-            del self._sent_at[oldest]
         if self._transport_queue is not None:
             try:
                 self._transport_queue.get_nowait()
@@ -139,6 +135,7 @@ class HardwareFrontend:
                 # the optimistic-concurrency token immediately before send.
                 with self._transport_lock:
                     message["expected_state_revision"] = self.state_revision
+                self._sent_at[int(message["input_sequence"])] = time.monotonic()
                 response = self.client.exchange(message)
                 self._handle_response(response)
             except Exception as error:  # noqa: BLE001 - main loop remains responsive

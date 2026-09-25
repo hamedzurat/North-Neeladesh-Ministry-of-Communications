@@ -309,6 +309,7 @@ class BackendClient:
     def connect(cls, address: tuple[str, int], timeout: float = 5.0) -> BackendClient:
         connection = socket.create_connection(address, timeout=timeout)
         try:
+            connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             codec = CborCodec()
         except Exception:
             connection.close()
