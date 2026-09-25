@@ -9,7 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fmt::Display;
 use std::fs;
-use std::io::{self, ErrorKind, Write};
+use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::PathBuf;
 use std::process::Command;
@@ -26,7 +26,8 @@ use exchange_protocol::{
     TextInputMessage, TextResponseMessage, TextStatus, VOICE_AUDIO_PACKET_SAMPLES,
     VOICE_AUDIO_SAMPLE_RATE, VOICE_INPUT_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl,
     VoiceControlMessage, VoiceStatus, VoiceStatusMessage, decode_voice_input_audio,
-    decode_voice_status, encode_voice_control, encode_voice_status, read_frame, write_frame,
+    decode_voice_status, encode_voice_control, encode_voice_status,
+    read_frame, write_frame,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -2808,12 +2809,14 @@ pub fn serve_with_voice_and_debug_engine(
     voice_socket: Option<UdpSocket>,
     debug_listener: Option<TcpListener>,
 ) -> io::Result<()> {
-    serve_with_voice_debug_and_text(listener, voice_socket, debug_listener, None)
+    serve_with_voice_debug_and_text(listener, voice_socket, None, "127.0.0.1:7879".parse().unwrap(), debug_listener, None)
 }
 
 pub fn serve_with_voice_debug_and_text(
     listener: TcpListener,
     voice_socket: Option<UdpSocket>,
+    voice_upload_listener: Option<TcpListener>,
+    voice_upload_target: SocketAddr,
     debug_listener: Option<TcpListener>,
     text_listener: Option<TcpListener>,
 ) -> io::Result<()> {
@@ -2826,6 +2829,11 @@ pub fn serve_with_voice_debug_and_text(
         let voice_backend = Arc::clone(&backend);
         thread::spawn(move || {
             let _ = serve_voice(socket, voice_backend);
+        });
+    }
+    if let Some(listener) = voice_upload_listener {
+        thread::spawn(move || {
+            let _ = serve_voice_upload(listener, voice_upload_target);
         });
     }
     if let Some(listener) = debug_listener {
@@ -3426,6 +3434,38 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
             }
         }
     }
+}
+
+/// Accept reliable microphone uploads and bridge their protocol frames into
+/// the existing voice worker. TCP provides ordering and delivery guarantees;
+/// the UDP socket remains dedicated to control/status and RTP playback.
+pub fn serve_voice_upload(
+    listener: TcpListener,
+    voice_target: SocketAddr,
+) -> io::Result<()> {
+    for stream in listener.incoming() {
+        let mut stream = stream?;
+        let socket = UdpSocket::bind("127.0.0.1:0")?;
+        socket.connect(voice_target)?;
+        loop {
+            let mut length = [0_u8; 4];
+            if stream.read_exact(&mut length).is_err() {
+                break;
+            }
+            let length = u32::from_be_bytes(length) as usize;
+            if length == 0 || length > 65_535 {
+                break;
+            }
+            let mut payload = vec![0_u8; length];
+            stream.read_exact(&mut payload)?;
+            if decode_voice_input_audio(&payload).is_err() {
+                break;
+            }
+            socket.send(&payload)?;
+            stream.write_all(&[1])?;
+        }
+    }
+    Ok(())
 }
 
 fn generate_operator_response(

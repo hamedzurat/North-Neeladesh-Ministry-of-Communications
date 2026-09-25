@@ -5,10 +5,16 @@ use std::net::{SocketAddr, TcpListener, UdpSocket};
 fn main() -> io::Result<()> {
     let bind = argument_value("--bind").unwrap_or_else(|| "127.0.0.1:7878".to_string());
     let voice_bind = argument_value("--voice-bind").unwrap_or_else(|| "127.0.0.1:7879".to_string());
+    let voice_upload_bind = argument_value("--voice-upload-bind").unwrap_or_else(|| "127.0.0.1:7881".to_string());
     let debug_bind = argument_value("--debug-bind");
     let text_bind = argument_value("--text-bind");
     let listener = TcpListener::bind(&bind)?;
     let voice_socket = UdpSocket::bind(&voice_bind)?;
+    let voice_upload_listener = TcpListener::bind(&voice_upload_bind)?;
+    let voice_port = voice_bind
+        .parse::<SocketAddr>()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?
+        .port();
     let debug_listener = debug_bind
         .as_deref()
         .map(bind_loopback_listener)
@@ -18,12 +24,14 @@ fn main() -> io::Result<()> {
         .map(bind_loopback_listener)
         .transpose()?;
     println!(
-        "[BACKEND] game={bind} voice={voice_bind} debug={:?} text={:?}",
+        "[BACKEND] game={bind} voice={voice_bind} voice_upload={voice_upload_bind} debug={:?} text={:?}",
         debug_bind, text_bind
     );
     exchange_backend::serve_with_voice_debug_and_text(
         listener,
         Some(voice_socket),
+        Some(voice_upload_listener),
+        SocketAddr::from(([127, 0, 0, 1], voice_port)),
         debug_listener,
         text_listener,
     )

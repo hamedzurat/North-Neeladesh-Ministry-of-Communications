@@ -138,7 +138,7 @@ def run_forever(
             if voice_thread is None:
                 voice_thread = threading.Thread(
                     target=run_embedded,
-                    args=(voice_stop,),
+                    args=(voice_stop, config.voice_upload_address),
                     name="cabinet-voice-relay",
                     daemon=True,
                 )

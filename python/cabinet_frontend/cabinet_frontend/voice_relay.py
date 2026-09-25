@@ -445,10 +445,12 @@ class VoiceRelay:
         playback: Playback,
         codec: CborCodec | None = None,
         status_sink: Any = None,
+        upload_connection: Any | None = None,
     ) -> None:
         self.connection = connection
         self.capture = capture
         self.playback = playback
+        self.upload_connection = upload_connection
         self.codec = codec or CborCodec()
         self.session_id = 1
         self.turn_id = 1
@@ -492,21 +494,26 @@ class VoiceRelay:
         if not chunks:
             chunks = [[]]
         for index, chunk in enumerate(chunks):
-            self.connection.send(
-                _tagged(
-                    self.codec,
-                    VOICE_INPUT_AUDIO_TAG,
-                    {
-                        "protocol_version": VOICE_PROTOCOL_VERSION,
-                        "session_id": self.session_id,
-                        "turn_id": self.turn_id,
-                        "state_revision": self.state_revision,
-                        "chunk_index": index,
-                        "complete": index == len(chunks) - 1,
-                        "samples": list(chunk),
-                    },
+            datagram = _tagged(
+                self.codec,
+                VOICE_INPUT_AUDIO_TAG,
+                {
+                    "protocol_version": VOICE_PROTOCOL_VERSION,
+                    "session_id": self.session_id,
+                    "turn_id": self.turn_id,
+                    "state_revision": self.state_revision,
+                    "chunk_index": index,
+                    "complete": index == len(chunks) - 1,
+                    "samples": list(chunk),
+                },
                 )
-            )
+            if self.upload_connection is None:
+                self.connection.send(datagram)
+            else:
+                frame = struct.pack(">I", len(datagram)) + datagram
+                self.upload_connection.sendall(frame)
+                if self.upload_connection.recv(1) != b"\x01":
+                    raise ConnectionError("voice upload was not acknowledged")
             if index + 1 < len(chunks):
                 time.sleep(0.001)
 
@@ -612,13 +619,18 @@ class VoiceRelay:
             close_capture()
         self.playback.finish()
         self.connection.close()
+        if self.upload_connection is not None:
+            self.upload_connection.close()
 
 
 def _capture() -> Capture:
     return SoundDeviceCapture(status_sink=print)
 
 
-def run_embedded(stop: threading.Event) -> None:
+def run_embedded(
+    stop: threading.Event,
+    voice_upload_address: tuple[str, int] | None = None,
+) -> None:
     """Run the audio edge inside the Cabinet Frontend process.
 
     The game input loop remains the source of truth for PTT, Police, and EMS.
@@ -634,15 +646,22 @@ def run_embedded(stop: threading.Event) -> None:
     diagnostics = ChangeLogger(print)
     while not stop.is_set():
         connection: socket.socket | None = None
+        upload_connection: socket.socket | None = None
         relay: VoiceRelay | None = None
         try:
             connection = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             connection.connect((host, int(port_text)))
             connection.settimeout(5.0)
+            if voice_upload_address is None:
+                upload_host, upload_port = default_host, 7881
+            else:
+                upload_host, upload_port = voice_upload_address
+            upload_connection = socket.create_connection((upload_host, upload_port), timeout=5.0)
             relay = VoiceRelay(
                 connection,
                 _capture(),
                 SoundDevicePlayback(status_sink=print),
+                upload_connection=upload_connection,
                 status_sink=print,
             )
             relay.run(stop)
@@ -658,6 +677,8 @@ def run_embedded(stop: threading.Event) -> None:
                 relay.close()
             elif connection is not None:
                 connection.close()
+            if upload_connection is not None:
+                upload_connection.close()
         stop.wait(1.0)
 
 

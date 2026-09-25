@@ -30,6 +30,7 @@ def parse_backend_address(value: str) -> tuple[str, int]:
 @dataclass(frozen=True)
 class HardwareConfig:
     backend_address: tuple[str, int] = ("127.0.0.1", 7878)
+    voice_upload_address: tuple[str, int] = ("127.0.0.1", 7881)
     # Raspberry Pi BCM GPIO numbers. Keep every cabinet connection here so
     # hardware changes do not require edits across component implementations.
     mcp_sda: int = 2
@@ -105,6 +106,7 @@ class HardwareConfig:
         host, port = parse_backend_address(address)
         return cls(
             backend_address=(host, port),
+            voice_upload_address=(host, 7881),
             pair_scan_interval=float(os.environ.get("NN_PAIR_SCAN_INTERVAL", "0.5")),
             epaper_rotation=int(os.environ.get("NN_EPAPER_ROTATION", "90")),
         )
