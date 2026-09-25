@@ -108,11 +108,12 @@ class HardwareFrontend:
         with self._transport_lock:
             self.state_revision = int(response.get("state_revision", self.state_revision))
             self._last_response = dict(response)
-        self.diagnostics.emit(
-            "backend_acceptance",
-            (response.get("accepted"), response.get("error")),
-            _backend_result_message(response),
-        )
+        if response.get("accepted") is not True or response.get("error") is not None:
+            self.diagnostics.emit(
+                "backend_acceptance",
+                (response.get("accepted"), response.get("error")),
+                _backend_result_message(response),
+            )
         output = dict(response.get("output", {}))
         if self._output_queue is None:
             self.output_mapper.apply(output)
