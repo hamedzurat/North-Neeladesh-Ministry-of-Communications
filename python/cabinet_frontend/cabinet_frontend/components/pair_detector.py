@@ -33,24 +33,5 @@ class McpPairDetector:
             self._all_inputs()
         return pairs
 
-    def find_pairs_for_line(self, index: int) -> list[tuple[int, int]]:
-        """Scan one driven patch-panel line without sweeping the whole panel."""
-        if not 0 <= index < len(self.pins):
-            raise IndexError(index)
-        pairs: list[tuple[int, int]] = []
-        try:
-            self._all_inputs()
-            pin = self.pins[index]
-            pin.pull = None
-            pin.direction = self._direction.OUTPUT
-            pin.value = False
-            time.sleep(0.001)
-            for other in range(index + 1, len(self.pins)):
-                if not self.pins[other].value:
-                    pairs.append((self.pin_numbers[index], self.pin_numbers[other]))
-        finally:
-            self._all_inputs()
-        return pairs
-
     def close(self) -> None:
         self._all_inputs()

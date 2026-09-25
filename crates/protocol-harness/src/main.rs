@@ -238,7 +238,6 @@ fn message(sequence: u64, revision: u64, digits: [u8; 4]) -> InputMessage {
                 firmware_version: Some("harness".to_string()),
                 transport_connected: true,
                 device_faults: Vec::new(),
-                sent_at_unix_us: 0,
             },
         },
     }

@@ -3443,51 +3443,44 @@ pub fn serve_voice_upload(
     listener: TcpListener,
     voice_target: SocketAddr,
 ) -> io::Result<()> {
-    for stream in listener.incoming().flatten() {
-        thread::spawn(move || {
-            if let Err(error) = handle_voice_upload_connection(stream, voice_target) {
-                eprintln!("[VOICE ERROR] upload connection failed: {error}");
+    for stream in listener.incoming() {
+        let mut stream = stream?;
+        let socket = UdpSocket::bind("127.0.0.1:0")?;
+        socket.connect(voice_target)?;
+        loop {
+            let mut length = [0_u8; 4];
+            if stream.read_exact(&mut length).is_err() {
+                break;
             }
-        });
+            let length = u32::from_be_bytes(length) as usize;
+            if length == 0 || length > 65_535 {
+                break;
+            }
+            let mut payload = vec![0_u8; length];
+            stream.read_exact(&mut payload)?;
+            if decode_voice_input_audio(&payload).is_err() {
+                break;
+            }
+            if let Ok(input) = decode_voice_input_audio(&payload) {
+                let received_at_us = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|duration| duration.as_micros())
+                    .unwrap_or_default();
+                eprintln!(
+                    "[VOICE] upload turn={} chunk={} complete={} sent_at_us={} received_at_us={} age_us={}",
+                    input.turn_id,
+                    input.chunk_index,
+                    input.complete,
+                    input.sent_at_unix_us,
+                    received_at_us,
+                    received_at_us.saturating_sub(u128::from(input.sent_at_unix_us))
+                );
+            }
+            socket.send(&payload)?;
+            stream.write_all(&[1])?;
+        }
     }
     Ok(())
-}
-
-fn handle_voice_upload_connection(
-    mut stream: TcpStream,
-    voice_target: SocketAddr,
-) -> io::Result<()> {
-    let socket = UdpSocket::bind("127.0.0.1:0")?;
-    socket.connect(voice_target)?;
-    loop {
-        let mut length = [0_u8; 4];
-        if stream.read_exact(&mut length).is_err() {
-            return Ok(());
-        }
-        let length = u32::from_be_bytes(length) as usize;
-        if length == 0 || length > 65_535 {
-            return Err(io::Error::new(ErrorKind::InvalidData, "invalid voice upload frame"));
-        }
-        let mut payload = vec![0_u8; length];
-        stream.read_exact(&mut payload)?;
-        let input = decode_voice_input_audio(&payload)
-            .map_err(|error| io::Error::new(ErrorKind::InvalidData, error.to_string()))?;
-        let received_at_us = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_micros())
-            .unwrap_or_default();
-        eprintln!(
-            "[VOICE] upload turn={} chunk={} complete={} sent_at_us={} received_at_us={} age_us={}",
-            input.turn_id,
-            input.chunk_index,
-            input.complete,
-            input.sent_at_unix_us,
-            received_at_us,
-            received_at_us.saturating_sub(u128::from(input.sent_at_unix_us))
-        );
-        socket.send(&payload)?;
-        stream.write_all(&[1])?;
-    }
 }
 
 fn generate_operator_response(

@@ -153,7 +153,6 @@ pub struct InputDebug {
     pub firmware_version: Option<String>,
     pub transport_connected: bool,
     pub device_faults: Vec<String>,
-    pub sent_at_unix_us: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
