@@ -132,6 +132,11 @@ class HardwareFrontend:
             if message is None:
                 return
             try:
+                # The snapshot may have waited in the coalescing queue while
+                # an earlier request advanced the backend revision. Refresh
+                # the optimistic-concurrency token immediately before send.
+                with self._transport_lock:
+                    message["expected_state_revision"] = self.state_revision
                 response = self.client.exchange(message)
                 self._handle_response(response)
             except Exception as error:  # noqa: BLE001 - main loop remains responsive
