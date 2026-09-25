@@ -45,6 +45,7 @@ class PhysicalInputSource:
         status_interval: float = 5.0,
         tuning: tuple[int, int] = (0, 0),
         background_scanning: bool = False,
+        control_poll_interval: float = 0.01,
     ) -> None:
         self.rotary = rotary
         self.scanner = scanner
@@ -74,6 +75,8 @@ class PhysicalInputSource:
         self._topology_lock = threading.Lock()
         self._scan_stop = threading.Event()
         self._scan_thread: threading.Thread | None = None
+        self._control_thread: threading.Thread | None = None
+        self._control_poll_interval = control_poll_interval
         if background_scanning:
             self._scan_thread = threading.Thread(
                 target=self._scan_loop,
@@ -81,6 +84,13 @@ class PhysicalInputSource:
                 daemon=True,
             )
             self._scan_thread.start()
+            if self.controls is not None:
+                self._control_thread = threading.Thread(
+                    target=self._control_loop,
+                    name="cabinet-control-reader",
+                    daemon=True,
+                )
+                self._control_thread.start()
 
     def poll(self, now: float | None = None) -> PhysicalInput:
         now = time.monotonic() if now is None else now
@@ -120,6 +130,9 @@ class PhysicalInputSource:
             log_runtime(f"CRANK // ring_line={self.ring_line}")
         if self.controls is None:
             held_controls = HeldControls()
+        elif self._control_thread is not None:
+            with self._topology_lock:
+                held_controls = self.held_controls
         else:
             try:
                 held_controls = self.controls.poll()
@@ -202,6 +215,17 @@ class PhysicalInputSource:
                     ]
             self._scan_stop.wait(self.pair_scan_interval)
 
+    def _control_loop(self) -> None:
+        while not self._scan_stop.is_set():
+            try:
+                held_controls = self.controls.poll() if self.controls is not None else HeldControls()
+                with self._topology_lock:
+                    self.held_controls = held_controls
+            except Exception as error:  # noqa: BLE001 - hardware errors are reported by poll
+                with self._topology_lock:
+                    self._scan_faults = [f"controls: {type(error).__name__}: {error}"]
+            self._scan_stop.wait(self._control_poll_interval)
+
     def _scan_topology_once(
         self,
     ) -> tuple[list[dict[str, str]], list[str]]:
@@ -256,6 +280,8 @@ class PhysicalInputSource:
         self._scan_stop.set()
         if self._scan_thread is not None:
             self._scan_thread.join(timeout=1.0)
+        if self._control_thread is not None:
+            self._control_thread.join(timeout=1.0)
         for name, component in (("rotary", self.rotary), ("pair_detector", self.scanner)):
             try:
                 component.close()

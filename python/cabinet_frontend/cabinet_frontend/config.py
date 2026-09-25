@@ -60,6 +60,7 @@ class HardwareConfig:
     toggle_switch_pins: tuple[int, ...] = (5, 22, 9, 0)
     printer_device: str = "/dev/usb/lp0"
     control_debounce_ms: int = 50
+    control_poll_interval: float = 0.01
     directory_digits: tuple[int, int, int, int] = (0, 0, 0, 1)
     pin_to_port: dict[int, str] = field(
         default_factory=lambda: dict(DEFAULT_PATCH_PANEL_PIN_TO_PORT)
@@ -82,7 +83,11 @@ class HardwareConfig:
             raise ValueError("crank_detents_per_rotation must be positive")
         if self.control_debounce_ms < 0:
             raise ValueError("control_debounce_ms must be non-negative")
-        if self.input_status_interval <= 0 or self.pair_scan_interval <= 0:
+        if (
+            self.input_status_interval <= 0
+            or self.pair_scan_interval <= 0
+            or self.control_poll_interval <= 0
+        ):
             raise ValueError("input logging and pair scan intervals must be positive")
         if self.epaper_page_interval <= 0:
             raise ValueError("epaper_page_interval must be positive")

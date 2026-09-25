@@ -99,6 +99,7 @@ def create_frontend(
         status_interval=config.input_status_interval,
         tuning=(config.tuning_coarse, config.tuning_fine),
         background_scanning=True,
+        control_poll_interval=config.control_poll_interval,
     )
     mapper = OutputMapper(
         components.line_lamps,
