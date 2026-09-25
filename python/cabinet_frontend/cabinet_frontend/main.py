@@ -98,6 +98,7 @@ def create_frontend(
         crank_detents_per_rotation=config.crank_detents_per_rotation,
         status_interval=config.input_status_interval,
         tuning=(config.tuning_coarse, config.tuning_fine),
+        background_scanning=True,
     )
     mapper = OutputMapper(
         components.line_lamps,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Protocol
 
@@ -43,6 +44,7 @@ class PhysicalInputSource:
         crank_detents_per_rotation: int = 2,
         status_interval: float = 5.0,
         tuning: tuple[int, int] = (0, 0),
+        background_scanning: bool = False,
     ) -> None:
         self.rotary = rotary
         self.scanner = scanner
@@ -66,8 +68,19 @@ class PhysicalInputSource:
         self.next_scan_at = 0.0
         self.faults: list[str] = []
         self._topology_rejections: list[str] = []
+        self._scan_faults: list[str] = []
         self._last_status: tuple[object, ...] | None = None
         self._next_status_log = 0.0
+        self._topology_lock = threading.Lock()
+        self._scan_stop = threading.Event()
+        self._scan_thread: threading.Thread | None = None
+        if background_scanning:
+            self._scan_thread = threading.Thread(
+                target=self._scan_loop,
+                name="cabinet-cord-scanner",
+                daemon=True,
+            )
+            self._scan_thread.start()
 
     def poll(self, now: float | None = None) -> PhysicalInput:
         now = time.monotonic() if now is None else now
@@ -84,7 +97,7 @@ class PhysicalInputSource:
                     completed_rotation = True
         except Exception as error:  # noqa: BLE001 - hardware libraries vary their error types
             self.faults.append(f"rotary: {type(error).__name__}: {error}")
-        if now >= self.next_scan_at:
+        if now >= self.next_scan_at and self._scan_thread is None:
             try:
                 self.topology = self._scan_topology()
                 self.faults.extend(self._topology_rejections)
@@ -98,6 +111,10 @@ class PhysicalInputSource:
             except Exception as error:  # noqa: BLE001 - hardware libraries vary their error types
                 self.faults.append(f"pair_detector: {type(error).__name__}: {error}")
             self.next_scan_at = now + self.pair_scan_interval
+        elif self._scan_thread is not None:
+            with self._topology_lock:
+                self.topology = list(self.topology)
+                self.faults.extend(self._scan_faults)
         if completed_rotation and not rotation_armed:
             self.ring_line = self._ring_generator_line()
             log_runtime(f"CRANK // ring_line={self.ring_line}")
@@ -171,6 +188,20 @@ class PhysicalInputSource:
             return list(self.topology)
         return second_topology
 
+    def _scan_loop(self) -> None:
+        while not self._scan_stop.is_set():
+            try:
+                topology = self._scan_topology()
+                with self._topology_lock:
+                    self.topology = topology
+                    self._scan_faults = list(self._topology_rejections)
+            except Exception as error:  # noqa: BLE001 - hardware errors are reported by poll
+                with self._topology_lock:
+                    self._scan_faults = [
+                        f"pair_detector: {type(error).__name__}: {error}"
+                    ]
+            self._scan_stop.wait(self.pair_scan_interval)
+
     def _scan_topology_once(
         self,
     ) -> tuple[list[dict[str, str]], list[str]]:
@@ -222,6 +253,9 @@ class PhysicalInputSource:
         return -1
 
     def close(self) -> None:
+        self._scan_stop.set()
+        if self._scan_thread is not None:
+            self._scan_thread.join(timeout=1.0)
         for name, component in (("rotary", self.rotary), ("pair_detector", self.scanner)):
             try:
                 component.close()
