@@ -29,6 +29,7 @@ class HardwareFrontend:
         extra_closers: list[object] | None = None,
         status_sink: Callable[[str], None] | None = print,
         background_outputs: bool = False,
+        background_transport: bool = False,
     ) -> None:
         self.client = client
         self.input_source = input_source
@@ -40,6 +41,15 @@ class HardwareFrontend:
         self.diagnostics = ChangeLogger(status_sink)
         self._output_queue: queue.Queue[dict[str, Any] | None] | None = None
         self._output_thread: threading.Thread | None = None
+        self._transport_queue: queue.Queue[dict[str, Any] | None] | None = None
+        self._transport_thread: threading.Thread | None = None
+        self._transport_lock = threading.Lock()
+        self._sent_at: dict[int, float] = {}
+        self._last_response: dict[str, Any] = {
+            "accepted": True,
+            "state_revision": 0,
+            "output": {},
+        }
         if background_outputs:
             self._output_queue = queue.Queue(maxsize=1)
             self._output_thread = threading.Thread(
@@ -48,6 +58,14 @@ class HardwareFrontend:
                 daemon=True,
             )
             self._output_thread.start()
+        if background_transport:
+            self._transport_queue = queue.Queue(maxsize=1)
+            self._transport_thread = threading.Thread(
+                target=self._transport_loop,
+                name="cabinet-game-transport",
+                daemon=True,
+            )
+            self._transport_thread.start()
 
     def step(self, now: float | None = None) -> dict[str, Any]:
         self.input_sequence += 1
@@ -62,8 +80,36 @@ class HardwareFrontend:
                 *getattr(self.output_mapper, "faults", []),
             ],
         )
+        self._sent_at[self.input_sequence] = time.monotonic()
+        if len(self._sent_at) > 256:
+            oldest = min(self._sent_at)
+            del self._sent_at[oldest]
+        if self._transport_queue is not None:
+            try:
+                self._transport_queue.get_nowait()
+            except queue.Empty:
+                pass
+            self._transport_queue.put_nowait(message)
+            with self._transport_lock:
+                return dict(self._last_response)
         response = self.client.exchange(message)
-        self.state_revision = int(response.get("state_revision", self.state_revision))
+        self._handle_response(response)
+        return response
+
+    def _handle_response(self, response: dict[str, Any]) -> None:
+        input_sequence = response.get("input_sequence")
+        if isinstance(input_sequence, int):
+            sent_at = self._sent_at.pop(input_sequence, None)
+            if sent_at is not None:
+                latency_us = int((time.monotonic() - sent_at) * 1_000_000)
+                self.diagnostics.emit(
+                    "input_ack",
+                    (input_sequence, latency_us),
+                    f"BACKEND // input_ack sequence={input_sequence} latency_us={latency_us}",
+                )
+        with self._transport_lock:
+            self.state_revision = int(response.get("state_revision", self.state_revision))
+            self._last_response = dict(response)
         self.diagnostics.emit(
             "backend_acceptance",
             (response.get("accepted"), response.get("error")),
@@ -78,7 +124,22 @@ class HardwareFrontend:
             except queue.Empty:
                 pass
             self._output_queue.put_nowait(output)
-        return response
+
+    def _transport_loop(self) -> None:
+        assert self._transport_queue is not None
+        while True:
+            message = self._transport_queue.get()
+            if message is None:
+                return
+            try:
+                response = self.client.exchange(message)
+                self._handle_response(response)
+            except Exception as error:  # noqa: BLE001 - main loop remains responsive
+                self.diagnostics.emit(
+                    "transport_failure",
+                    (type(error).__name__, str(error)),
+                    f"FRONTEND // transport failed error={type(error).__name__}: {error}",
+                )
 
     def _output_loop(self) -> None:
         assert self._output_queue is not None
@@ -96,6 +157,10 @@ class HardwareFrontend:
                 )
 
     def close(self) -> None:
+        if self._transport_queue is not None:
+            self._transport_queue.put(None)
+        if self._transport_thread is not None:
+            self._transport_thread.join(timeout=2.0)
         if self._output_queue is not None:
             self._output_queue.put(None)
         if self._output_thread is not None:
@@ -155,6 +220,7 @@ def create_frontend(
         mapper,
         extra_closers=components.extra_closers,
         background_outputs=True,
+        background_transport=True,
     )
     frontend.input_sequence = input_sequence
     frontend.state_revision = state_revision

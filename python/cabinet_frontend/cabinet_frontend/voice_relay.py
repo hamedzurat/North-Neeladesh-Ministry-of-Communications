@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import shlex
 import socket
 import struct
@@ -446,11 +447,22 @@ class VoiceRelay:
         codec: CborCodec | None = None,
         status_sink: Any = None,
         upload_connection: Any | None = None,
+        background_playback: bool = False,
     ) -> None:
         self.connection = connection
         self.capture = capture
         self.playback = playback
         self.upload_connection = upload_connection
+        self._playback_queue: queue.Queue[list[int] | None] | None = None
+        self._playback_thread: threading.Thread | None = None
+        if background_playback:
+            self._playback_queue = queue.Queue()
+            self._playback_thread = threading.Thread(
+                target=self._playback_loop,
+                name="cabinet-voice-playback",
+                daemon=True,
+            )
+            self._playback_thread.start()
         self.codec = codec or CborCodec()
         self.session_id = 1
         self.turn_id = 1
@@ -586,8 +598,6 @@ class VoiceRelay:
                 + (f" transcript={status['transcript']}" if status.get("transcript") else "")
                 + (f" response={status['response_text']}" if status.get("response_text") else ""),
             )
-            if status.get("status") in {"completed", "failed", "cancelled"}:
-                self.playback.finish()
         else:
             sequence, _timestamp, ssrc, _marker, samples = _decode_rtp(datagram)
             if self.last_ssrc != ssrc:
@@ -601,7 +611,25 @@ class VoiceRelay:
                 )
             self.last_ssrc = ssrc
             self.last_sequence = sequence
-            self.playback.write(samples)
+            if self._playback_queue is None:
+                self.playback.write(samples)
+            else:
+                self._playback_queue.put(samples)
+
+    def _playback_loop(self) -> None:
+        assert self._playback_queue is not None
+        while True:
+            samples = self._playback_queue.get()
+            if samples is None:
+                return
+            try:
+                self.playback.write(samples)
+            except Exception as error:  # noqa: BLE001 - keep network receive alive
+                self.diagnostics.emit(
+                    "playback_failure",
+                    (type(error).__name__, str(error)),
+                    f"VOICE PLAYBACK FAILED // {type(error).__name__}: {error}",
+                )
 
     def run(self, stop: threading.Event | None = None) -> None:
         self.send_status("ready")
@@ -618,6 +646,10 @@ class VoiceRelay:
         close_capture = getattr(self.capture, "close", None)
         if close_capture is not None:
             close_capture()
+        if self._playback_queue is not None:
+            self._playback_queue.put(None)
+        if self._playback_thread is not None:
+            self._playback_thread.join(timeout=2.0)
         self.playback.finish()
         self.connection.close()
         if self.upload_connection is not None:
@@ -663,6 +695,7 @@ def run_embedded(
                 _capture(),
                 SoundDevicePlayback(status_sink=print),
                 upload_connection=upload_connection,
+                background_playback=True,
                 status_sink=print,
             )
             relay.run(stop)
