@@ -144,7 +144,6 @@ class PhysicalInputSource:
                 physical_ring_line = self._ring_generator_line()
                 if completed_rotation:
                     self.ring_line = physical_ring_line
-                    log_runtime(f"CRANK // ring_line={self.ring_line}")
                     rotation_armed = True
                 elif physical_ring_line != self.ring_line:
                     self.ring_line = -1
@@ -157,7 +156,6 @@ class PhysicalInputSource:
                 self.faults.extend(self._scan_faults)
         if completed_rotation and not rotation_armed:
             self.ring_line = self._ring_generator_line()
-            log_runtime(f"CRANK // ring_line={self.ring_line}")
         if self.controls is None:
             held_controls = HeldControls()
         elif self._control_thread is not None:
