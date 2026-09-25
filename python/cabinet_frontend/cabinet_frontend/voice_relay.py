@@ -703,8 +703,10 @@ def run_embedded(
             if not stop.is_set():
                 diagnostics.emit(
                     "relay_transport",
-                    (type(error).__name__, str(error)),
-                    f"CABINET VOICE OFFLINE // {type(error).__name__}: {error}",
+                    (type(error).__name__, str(error), address, voice_upload_address),
+                    "CABINET VOICE OFFLINE // "
+                    f"{type(error).__name__}: {error} udp={address} "
+                    f"upload={voice_upload_address or (default_host, 7883)}",
                 )
         finally:
             if relay is not None:
