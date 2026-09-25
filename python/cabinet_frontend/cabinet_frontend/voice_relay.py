@@ -491,9 +491,8 @@ class VoiceRelay:
                 {
                     "protocol_version": VOICE_PROTOCOL_VERSION,
                     "session_id": self.session_id,
-                        "turn_id": self.turn_id,
-                        "state_revision": self.state_revision,
-                        "sent_at_unix_us": time.time_ns() // 1_000,
+                    "turn_id": self.turn_id,
+                    "state_revision": self.state_revision,
                     "status": status,
                     "transcript": transcript,
                     "response_text": response_text,
