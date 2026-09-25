@@ -70,7 +70,7 @@ class HardwareConfig:
     line_lamp_count: int = 12
     poll_interval: float = 0.1
     input_status_interval: float = 5.0
-    pair_scan_interval: float = 0.5
+    pair_scan_interval: float = 0.1
     pair_line_interval: float = 0.02
     topology_confirmation_scans: int = 3
     empty_topology_confirmation_scans: int = 3
@@ -128,7 +128,7 @@ class HardwareConfig:
         return cls(
             backend_address=(host, port),
             voice_upload_address=(host, 7883),
-            pair_scan_interval=float(os.environ.get("NN_PAIR_SCAN_INTERVAL", "0.5")),
+            pair_scan_interval=float(os.environ.get("NN_PAIR_SCAN_INTERVAL", "0.1")),
             epaper_rotation=int(os.environ.get("NN_EPAPER_ROTATION", "90")),
             epaper_update_delay=float(os.environ.get("NN_EPAPER_UPDATE_DELAY", "0.75")),
         )

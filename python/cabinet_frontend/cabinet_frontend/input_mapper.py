@@ -199,7 +199,6 @@ class PhysicalInputSource:
             tuple(
                 (connection["first"], connection["second"]) for connection in physical.cord_topology
             ),
-            physical.ring_line,
             tuple(self.faults),
         )
         if status == self._last_status and (
@@ -211,8 +210,7 @@ class PhysicalInputSource:
             f"switches={active_controls} "
             f"digits={''.join(map(str, physical.directory_digits))} "
             f"patch={patch_panel} "
-            f"rotary={rotary_event:+d} "
-            f"ring_line={physical.ring_line}"
+            f"rotary={rotary_event:+d}"
         )
         if self.faults:
             message += f" faults={';'.join(self.faults)}"
