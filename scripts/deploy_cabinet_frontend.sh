@@ -6,6 +6,7 @@ PI_HOST="${PI_HOST:-taki@192.168.1.34}"
 REMOTE_ROOT="${REMOTE_ROOT:-/home/taki/Desktop/cabinet-frontend}"
 BACKEND_HOST="${BACKEND_HOST:-}"
 AUDIO_ROOT="$ROOT_DIR/assets/stories"
+AVATAR_ROOT="$ROOT_DIR/assets/avatars"
 METADATA_DIR="$(mktemp -d)"
 trap 'rm -rf "$METADATA_DIR"' EXIT
 
@@ -23,6 +24,7 @@ fi
 ssh "$PI_HOST" "mkdir -p '$REMOTE_ROOT'"
 ssh "$PI_HOST" "mkdir -p '$REMOTE_ROOT/scripts'"
 ssh "$PI_HOST" "mkdir -p '$REMOTE_ROOT/assets/stories'"
+ssh "$PI_HOST" "mkdir -p '$REMOTE_ROOT/assets/avatars'"
 rsync --archive --compress \
     --exclude='__pycache__' \
     --exclude='.venv' \
@@ -42,6 +44,10 @@ rsync --archive --compress \
     --delete \
     "$AUDIO_ROOT/" \
     "$PI_HOST:$REMOTE_ROOT/assets/stories/"
+rsync --archive --compress \
+    --delete \
+    "$AVATAR_ROOT/" \
+    "$PI_HOST:$REMOTE_ROOT/assets/avatars/"
 
 git -C "$ROOT_DIR" rev-parse HEAD > "$METADATA_DIR/.deployment-version"
 (
@@ -57,6 +63,7 @@ rsync --archive --compress \
 
 printf 'Copied cabinet frontend to %s:%s\n' "$PI_HOST" "$REMOTE_ROOT"
 printf 'Copied authored audio assets to %s:%s/assets/stories\n' "$PI_HOST" "$REMOTE_ROOT"
+printf 'Copied directory avatars to %s:%s/assets/avatars\n' "$PI_HOST" "$REMOTE_ROOT"
 if [[ -n "$BACKEND_HOST" ]]; then
     printf 'Next: ssh %s NN_BACKEND_HOST=%s %s/scripts/setup_cabinet_frontend_pi.sh\n' \
         "$PI_HOST" "$BACKEND_HOST" "$REMOTE_ROOT"

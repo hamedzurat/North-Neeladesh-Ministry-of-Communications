@@ -9,4 +9,5 @@ scripts/*.egg-info
 python/.models/
 assets/stories/*/*.wav
 assets/stories/*/*.m4a
+assets/avatars/*.png
 *.log

@@ -75,6 +75,7 @@ def build_real_components(config: HardwareConfig) -> ComponentBundle:
             spi_device=config.spi_device,
             spi_speed_hz=config.spi_speed_hz,
             rotation=config.epaper_rotation,
+            avatar_dir=config.avatar_dir,
         )
         initialized.append(epaper)
         rotary = GpioRotaryEncoder(config.rotary_s1, config.rotary_s2)

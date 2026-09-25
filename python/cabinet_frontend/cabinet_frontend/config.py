@@ -76,6 +76,7 @@ class HardwareConfig:
     epaper_update_delay: float = 0.75
     crank_detents_per_rotation: int = 2
     epaper_rotation: int = 90
+    avatar_dir: str | None = None
     tuning_coarse: int = 0
     tuning_fine: int = 0
 

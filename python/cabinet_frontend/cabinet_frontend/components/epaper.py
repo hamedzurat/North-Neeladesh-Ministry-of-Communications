@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from pathlib import Path
 
 
 def wrap_text(text: str, max_width: int, measure: Callable[[str], int]) -> list[str]:
@@ -51,6 +52,7 @@ class EpaperDirectoryDisplay:
         spi_speed_hz: int = 10_000_000,
         rotation: int = 0,
         font_path: str | None = None,
+        avatar_dir: str | None = None,
     ) -> None:
         import epaper
         from PIL import Image, ImageDraw, ImageFont
@@ -62,6 +64,8 @@ class EpaperDirectoryDisplay:
         self.device.init()
         self.rotation = rotation % 360
         self.font_path = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+        self.avatar_dir = Path(avatar_dir) if avatar_dir else self._default_avatar_dir()
+        self._avatars: dict[int, object | None] = {}
 
     def show_directory(self, pages: Sequence[dict[str, object]], page_index: int = 0) -> None:
         image = self._image_module.new("1", (self.WIDTH, self.HEIGHT), 255)
@@ -75,22 +79,23 @@ class EpaperDirectoryDisplay:
 
         selected_index = max(0, min(page_index, page_count - 1))
         page = pages[selected_index]
-        draw.text(
-            (self.MARGIN, self.MARGIN),
-            f"PAGE {selected_index + 1}/{page_count}",
-            font=font,
-            fill=0,
-        )
-        y = self.MARGIN + self.LINE_HEIGHT + 3
-        heading = str(page.get("heading", "")).upper()
+        directory_id = page.get("directory_id")
+        if isinstance(directory_id, int):
+            draw.text(
+                (self.MARGIN, self.MARGIN),
+                f"ID // {directory_id:04}",
+                font=font,
+                fill=0,
+            )
+            avatar = self._load_avatar(directory_id)
+            if avatar is not None:
+                image.paste(avatar, (self.WIDTH - self.MARGIN - 48, 0), avatar)
+        y = 54 if isinstance(directory_id, int) else self.MARGIN + self.LINE_HEIGHT + 3
         measure = lambda value: self._text_width(draw, value, font)
-        for line in wrap_text(heading, self.WIDTH - self.MARGIN * 2, measure):
-            if y >= self.HEIGHT - self.LINE_HEIGHT:
-                break
-            draw.text((self.MARGIN, y), line, font=font, fill=0)
-            y += self.LINE_HEIGHT
-        y += 3
-        for raw_line in page.get("lines", []):
+        lines = page.get("lines", [])
+        if lines and str(lines[0]).upper().startswith("SUBSCRIBER ID "):
+            lines = lines[1:]
+        for raw_line in lines:
             for line in wrap_text(str(raw_line), self.WIDTH - self.MARGIN * 2, measure):
                 if y >= self.HEIGHT - self.LINE_HEIGHT:
                     break
@@ -99,6 +104,26 @@ class EpaperDirectoryDisplay:
             if y >= self.HEIGHT - self.LINE_HEIGHT:
                 break
         self._show_image(image)
+
+    @staticmethod
+    def _default_avatar_dir() -> Path:
+        roots = Path(__file__).resolve().parents
+        for root in (roots[2], roots[3]):
+            candidate = root / "assets" / "avatars"
+            if candidate.is_dir():
+                return candidate
+        return roots[2] / "assets" / "avatars"
+
+    def _load_avatar(self, directory_id: int) -> object | None:
+        if directory_id not in self._avatars:
+            path = self.avatar_dir / f"{directory_id:04}.png"
+            try:
+                avatar = self._image_module.open(path).convert("RGBA")
+                avatar.thumbnail((48, 48))
+                self._avatars[directory_id] = avatar
+            except (OSError, ValueError):
+                self._avatars[directory_id] = None
+        return self._avatars[directory_id]
 
     def _load_font(self) -> object:
         try:
