@@ -82,10 +82,11 @@ class EpaperDirectoryDisplay:
         directory_id = page.get("directory_id")
         lines = page.get("lines", [])
         if isinstance(directory_id, int):
+            id_font = self._load_font(14)
             draw.text(
                 (self.MARGIN, self.MARGIN),
                 f"ID // {directory_id:04}",
-                font=font,
+                font=id_font,
                 fill=0,
             )
             avatar = self._load_avatar(directory_id)
