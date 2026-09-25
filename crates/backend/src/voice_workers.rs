@@ -1782,7 +1782,7 @@ impl CommandAudioPlayback {
                     )
                 })
             })
-            .unwrap_or(Ok(1.0))?;
+            .unwrap_or(Ok(1.5))?;
         if !gain.is_finite() || gain <= 0.0 {
             return Err(VoiceError::new(
                 "invalid_playback_gain",

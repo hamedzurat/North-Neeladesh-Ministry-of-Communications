@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use exchange_protocol::{
     BackendDiagnostic, CallPhase, CallStatus, DEBUG_PROTOCOL_VERSION, DebugActiveCall,
@@ -3490,21 +3490,6 @@ pub fn serve_voice_upload(
             stream.read_exact(&mut payload)?;
             if decode_voice_input_audio(&payload).is_err() {
                 break;
-            }
-            if let Ok(input) = decode_voice_input_audio(&payload) {
-                let received_at_us = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|duration| duration.as_micros())
-                    .unwrap_or_default();
-                eprintln!(
-                    "[VOICE] upload turn={} chunk={} complete={} sent_at_us={} received_at_us={} age_us={}",
-                    input.turn_id,
-                    input.chunk_index,
-                    input.complete,
-                    input.sent_at_unix_us,
-                    received_at_us,
-                    received_at_us.saturating_sub(u128::from(input.sent_at_unix_us))
-                );
             }
             socket.send(&payload)?;
             stream.write_all(&[1])?;
