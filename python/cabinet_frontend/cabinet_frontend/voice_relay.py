@@ -519,6 +519,7 @@ class VoiceRelay:
                     "session_id": self.session_id,
                     "turn_id": self.turn_id,
                     "state_revision": self.state_revision,
+                    "sent_at_unix_us": time.time_ns() // 1_000,
                     "chunk_index": index,
                     "complete": index == len(chunks) - 1,
                     "samples": list(chunk),
