@@ -174,9 +174,18 @@ class OutputMapper:
             else:
                 self.diagnostics.emit("tap_bridge_monitoring", None, "TAP BRIDGE // monitoring stopped")
 
+        if "speaker_active" in output or "tap_bridge_audio_active" in output:
+            audio_state = (
+                bool(output.get("speaker_active", False)),
+                bool(output.get("tap_bridge_audio_active", False)),
+            )
+            self.diagnostics.emit(
+                "audio_state",
+                audio_state,
+                f"AUDIO // speaker={audio_state[0]} tap_bridge={audio_state[1]}",
+            )
+
         for key, label in (
-            ("speaker_active", "SPEAKER"),
-            ("tap_bridge_audio_active", "TAP BRIDGE AUDIO"),
             ("game_phase", "GAME PHASE"),
             ("interference_level", "INTERFERENCE"),
         ):
