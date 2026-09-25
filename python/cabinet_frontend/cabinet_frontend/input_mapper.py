@@ -241,6 +241,8 @@ class PhysicalInputSource:
                         topology = list(self.topology)
                         self._line_candidate = None
                         self._line_candidate_count = 0
+                    elif current_line != 15:
+                        topology = list(self.topology)
                     elif topology == self._line_candidate:
                         self._line_candidate_count += 1
                         if self._line_candidate_count < 2:
