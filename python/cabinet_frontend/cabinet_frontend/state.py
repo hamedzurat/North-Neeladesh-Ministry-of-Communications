@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -52,6 +53,7 @@ def input_message(
                 "firmware_version": firmware_version,
                 "transport_connected": True,
                 "device_faults": device_faults,
+                "sent_at_unix_us": time.time_ns() // 1_000,
             },
         },
     }

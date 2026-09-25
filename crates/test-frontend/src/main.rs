@@ -2858,6 +2858,7 @@ fn input(
                 firmware_version: Some("text-test-frontend".into()),
                 transport_connected: true,
                 device_faults: vec![],
+                sent_at_unix_us: 0,
             },
         },
     }
