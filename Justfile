@@ -71,6 +71,9 @@ voice-setup:
 voice-preflight:
     uv run --project python --no-sync python -m voice_workers.preflight
 
+pocket-tts sentence mode_file:
+    uv run --project python --no-sync python scripts/test_pocket_tts.py "{{ sentence }}" "{{ mode_file }}"
+
 check: frontend-check
     cargo check --workspace
 
