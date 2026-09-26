@@ -80,7 +80,11 @@ def build_real_components(config: HardwareConfig) -> ComponentBundle:
         initialized.append(epaper)
         rotary = GpioRotaryEncoder(config.rotary_s1, config.rotary_s2)
         initialized.append(rotary)
-        scanner = McpPairDetector(mcp, config.mcp_patch_panel_pins)
+        scanner = McpPairDetector(
+            mcp,
+            config.mcp_patch_panel_pins,
+            probe_settle_time=config.probe_settle_time,
+        )
         initialized.append(scanner)
         controls = GpioControls(
             config.toggle_switch_pins,

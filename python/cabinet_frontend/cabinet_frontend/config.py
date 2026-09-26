@@ -71,9 +71,10 @@ class HardwareConfig:
     poll_interval: float = 0.1
     input_status_interval: float = 5.0
     pair_scan_interval: float = 0.1
-    pair_line_interval: float = 0.02
+    probe_settle_time: float = 0.001
     topology_confirmation_scans: int = 3
     empty_topology_confirmation_scans: int = 3
+    topology_stale_timeout: float = 1.0
     epaper_page_interval: float = 8.0
     epaper_update_delay: float = 0.75
     local_clock_display: bool = True
@@ -95,10 +96,11 @@ class HardwareConfig:
         if (
             self.input_status_interval <= 0
             or self.pair_scan_interval <= 0
-            or self.pair_line_interval <= 0
+            or self.probe_settle_time < 0
             or self.control_poll_interval <= 0
+            or self.topology_stale_timeout <= 0
         ):
-            raise ValueError("input logging and pair scan intervals must be positive")
+            raise ValueError("input logging and pair scan intervals must be valid")
         if self.epaper_page_interval <= 0:
             raise ValueError("epaper_page_interval must be positive")
         if self.epaper_update_delay < 0:

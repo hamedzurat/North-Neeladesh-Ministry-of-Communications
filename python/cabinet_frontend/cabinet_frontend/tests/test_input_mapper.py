@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
+from types import SimpleNamespace
 
 from cabinet_frontend.config import HardwareConfig
 from cabinet_frontend.input_mapper import PhysicalInputSource
@@ -38,6 +39,15 @@ class ChangingScanner(Scanner):
 
     def find_pairs(self) -> list[tuple[int, int]]:
         return next(self.scans)
+
+
+class StructuredScanner(Scanner):
+    def __init__(self, results: list[object]) -> None:
+        super().__init__([])
+        self.results = iter(results)
+
+    def scan(self) -> object:
+        return next(self.results)
 
 
 class FailingRotary:
@@ -77,6 +87,57 @@ class Controls:
 
 
 class InputMapperTests(unittest.TestCase):
+    def test_hardware_scan_failure_retains_committed_topology(self) -> None:
+        source = PhysicalInputSource(
+            Rotary([0, 0]),
+            StructuredScanner(
+                [
+                    SimpleNamespace(status="valid", pairs=[(0, 1)], fault=None),
+                    SimpleNamespace(status="valid", pairs=[(0, 1)], fault=None),
+                    SimpleNamespace(status="hardware_error", pairs=[], fault="MCP unavailable"),
+                    SimpleNamespace(status="hardware_error", pairs=[], fault="MCP unavailable"),
+                ]
+            ),
+            {0: "subscriber_0", 1: "subscriber_1"},
+            (0, 0, 0, 1),
+            pair_scan_interval=0,
+            topology_confirmation_scans=1,
+        )
+
+        self.assertEqual(
+            source.poll(now=0).cord_topology, [{"first": "subscriber_0", "second": "subscriber_1"}]
+        )
+        failed = source.poll(now=1)
+
+        self.assertEqual(
+            failed.cord_topology, [{"first": "subscriber_0", "second": "subscriber_1"}]
+        )
+        self.assertTrue(any("hardware_error" in fault for fault in source.faults))
+
+    def test_stale_topology_is_reported_after_scan_grace_period(self) -> None:
+        source = PhysicalInputSource(
+            Rotary([0]),
+            StructuredScanner(
+                [
+                    SimpleNamespace(status="valid", pairs=[(0, 1)], fault=None),
+                    SimpleNamespace(status="valid", pairs=[(0, 1)], fault=None),
+                    SimpleNamespace(status="hardware_error", pairs=[], fault="MCP unavailable"),
+                    SimpleNamespace(status="hardware_error", pairs=[], fault="MCP unavailable"),
+                ]
+            ),
+            {0: "subscriber_0", 1: "subscriber_1"},
+            (0, 0, 0, 1),
+            pair_scan_interval=0,
+            topology_stale_timeout=1,
+        )
+        source.poll(now=0)
+        source._last_valid_scan_at = 0
+
+        source.poll(now=2)
+
+        self.assertTrue(source.topology_stale)
+        self.assertTrue(any("topology stale" in fault for fault in source.faults))
+
     def test_discards_duplicate_endpoints_before_backend_submission(self) -> None:
         source = PhysicalInputSource(
             Rotary([0]),
@@ -97,12 +158,14 @@ class InputMapperTests(unittest.TestCase):
     def test_retains_last_topology_when_consecutive_scans_disagree(self) -> None:
         source = PhysicalInputSource(
             Rotary([0, 0, 0]),
-            ChangingScanner([
-                [(0, 1)],
-                [(0, 2)],
-                [(0, 2)],
-                [(0, 2)],
-            ]),
+            ChangingScanner(
+                [
+                    [(0, 1)],
+                    [(0, 2)],
+                    [(0, 2)],
+                    [(0, 2)],
+                ]
+            ),
             {0: "subscriber_0", 1: "subscriber_1", 2: "subscriber_2"},
             (0, 0, 0, 1),
             pair_scan_interval=0,
@@ -112,7 +175,9 @@ class InputMapperTests(unittest.TestCase):
         second = source.poll(now=1)
 
         self.assertEqual(first.cord_topology, [])
-        self.assertEqual(second.cord_topology, [{"first": "subscriber_0", "second": "subscriber_2"}])
+        self.assertEqual(
+            second.cord_topology, [{"first": "subscriber_0", "second": "subscriber_2"}]
+        )
 
     def test_default_mcp_ports_cover_patch_panel_and_tap_bridge(self) -> None:
         config = HardwareConfig()

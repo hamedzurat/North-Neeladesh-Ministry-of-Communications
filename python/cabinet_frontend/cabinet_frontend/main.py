@@ -210,9 +210,9 @@ def create_frontend(
         tuning=(config.tuning_coarse, config.tuning_fine),
         background_scanning=True,
         control_poll_interval=config.control_poll_interval,
-        pair_line_interval=config.pair_line_interval,
         topology_confirmation_scans=config.topology_confirmation_scans,
         empty_topology_confirmation_scans=config.empty_topology_confirmation_scans,
+        topology_stale_timeout=config.topology_stale_timeout,
     )
     mapper = OutputMapper(
         components.line_lamps,

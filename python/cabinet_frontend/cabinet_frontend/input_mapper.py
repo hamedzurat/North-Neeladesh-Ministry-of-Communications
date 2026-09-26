@@ -46,22 +46,24 @@ class PhysicalInputSource:
         tuning: tuple[int, int] = (0, 0),
         background_scanning: bool = False,
         control_poll_interval: float = 0.01,
-        pair_line_interval: float = 0.02,
         topology_confirmation_scans: int = 1,
         empty_topology_confirmation_scans: int = 3,
+        topology_stale_timeout: float = 1.0,
     ) -> None:
         self.rotary = rotary
         self.scanner = scanner
         self.pin_to_port = pin_to_port
         self.directory_digits = list(directory_digits)
         self.pair_scan_interval = pair_scan_interval
-        self.pair_line_interval = pair_line_interval
         if topology_confirmation_scans <= 0:
             raise ValueError("topology_confirmation_scans must be positive")
         self.topology_confirmation_scans = topology_confirmation_scans
         if empty_topology_confirmation_scans <= 0:
             raise ValueError("empty_topology_confirmation_scans must be positive")
         self.empty_topology_confirmation_scans = empty_topology_confirmation_scans
+        if topology_stale_timeout <= 0:
+            raise ValueError("topology_stale_timeout must be positive")
+        self.topology_stale_timeout = topology_stale_timeout
         self.controls = controls
         if status_interval <= 0:
             raise ValueError("status_interval must be positive")
@@ -91,6 +93,9 @@ class PhysicalInputSource:
         self._empty_topology_scan_count = 0
         self._topology_candidate: list[dict[str, str]] | None = None
         self._topology_candidate_count = 0
+        self.topology_revision = 0
+        self.topology_stale = False
+        self._last_valid_scan_at: float | None = None
         self._scan_line = 0
         self._control_thread: threading.Thread | None = None
         self._rotary_thread: threading.Thread | None = None
@@ -139,8 +144,9 @@ class PhysicalInputSource:
             self.faults.append(f"rotary: {type(error).__name__}: {error}")
         if now >= self.next_scan_at and self._scan_thread is None:
             try:
-                self.topology = self._scan_topology()
+                self._set_topology(self._scan_topology())
                 self.faults.extend(self._topology_rejections)
+                self._refresh_stale(now)
                 physical_ring_line = self._ring_generator_line()
                 if completed_rotation:
                     self.ring_line = physical_ring_line
@@ -154,6 +160,7 @@ class PhysicalInputSource:
             with self._topology_lock:
                 self.topology = list(self.topology)
                 self.faults.extend(self._scan_faults)
+                self._refresh_stale(now)
         if completed_rotation and not rotation_armed:
             self.ring_line = self._ring_generator_line()
         if self.controls is None:
@@ -199,9 +206,7 @@ class PhysicalInputSource:
             ),
             tuple(self.faults),
         )
-        if status == self._last_status and (
-            not self.faults or now < self._next_status_log
-        ):
+        if status == self._last_status and (not self.faults or now < self._next_status_log):
             return
         message = (
             "INPUT // "
@@ -244,6 +249,7 @@ class PhysicalInputSource:
                 "pair_detector: topology not yet stable; retaining last valid topology"
             ]
             return list(self.topology)
+        self._last_valid_scan_at = time.monotonic()
         return second_topology
 
     def _scan_loop(self) -> None:
@@ -252,19 +258,19 @@ class PhysicalInputSource:
                 topology = self._scan_topology()
                 scan_faults = list(self._topology_rejections)
                 with self._topology_lock:
-                    self.topology = topology
+                    self._set_topology(topology)
                     self._scan_faults = scan_faults
             except Exception as error:  # noqa: BLE001 - hardware errors are reported by poll
                 with self._topology_lock:
-                    self._scan_faults = [
-                        f"pair_detector: {type(error).__name__}: {error}"
-                    ]
+                    self._scan_faults = [f"pair_detector: {type(error).__name__}: {error}"]
             self._scan_stop.wait(self.pair_scan_interval)
 
     def _control_loop(self) -> None:
         while not self._scan_stop.is_set():
             try:
-                held_controls = self.controls.poll() if self.controls is not None else HeldControls()
+                held_controls = (
+                    self.controls.poll() if self.controls is not None else HeldControls()
+                )
                 with self._topology_lock:
                     self.held_controls = held_controls
             except Exception as error:  # noqa: BLE001 - hardware errors are reported by poll
@@ -287,7 +293,31 @@ class PhysicalInputSource:
     def _scan_topology_once(
         self,
     ) -> tuple[list[dict[str, str]], list[str]]:
-        return self._topology_from_pairs(self.scanner.find_pairs())
+        scan = getattr(self.scanner, "scan", None)
+        if callable(scan):
+            result = scan()
+            status = getattr(result, "status", "valid")
+            pairs = getattr(result, "pairs", [])
+            if status not in {"valid", "empty"}:
+                fault = getattr(result, "fault", None) or status
+                return [], [f"pair_detector: scan {status}: {fault}"]
+        else:
+            pairs = self.scanner.find_pairs()
+        return self._topology_from_pairs(pairs)
+
+    def _set_topology(self, topology: list[dict[str, str]]) -> None:
+        if topology != self.topology:
+            self.topology_revision += 1
+        self.topology = list(topology)
+
+    def _refresh_stale(self, now: float) -> None:
+        if self._last_valid_scan_at is None:
+            return
+        self.topology_stale = now - self._last_valid_scan_at > self.topology_stale_timeout
+        if self.topology_stale:
+            self.faults.append(
+                f"pair_detector: topology stale for {now - self._last_valid_scan_at:.2f}s"
+            )
 
     def _topology_from_pairs(
         self, pairs: list[tuple[int, int]]
