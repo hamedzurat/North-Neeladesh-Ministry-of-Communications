@@ -4,6 +4,7 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 
+from ..diagnostics import log_runtime
 from ..state import HeldControls
 
 
@@ -68,6 +69,9 @@ class GpioControls:
                     self._button_pressed[index] = pressed
                     self._button_triggered[index] = False
                     self._button_changed_at[index] = now
+                    log_runtime(
+                        f"BUTTON // index={index} edge={'press' if pressed else 'release'}"
+                    )
                 elif (
                     pressed
                     and not self._button_triggered[index]
@@ -75,6 +79,9 @@ class GpioControls:
                 ):
                     self.directory_digits[index] = (self.directory_digits[index] + 1) % 10
                     self._button_triggered[index] = True
+                    log_runtime(
+                        f"BUTTON // index={index} incremented digits={''.join(map(str, self.directory_digits))}"
+                    )
             return HeldControls(
                 ptt=self._stable_toggles[0],
                 police=self._stable_toggles[1],

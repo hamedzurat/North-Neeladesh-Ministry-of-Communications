@@ -26,7 +26,9 @@ class GpioControlsTests(unittest.TestCase):
             Pull=SimpleNamespace(UP=object()),
         )
         clock = iter((0.0, 0.0, 0.06, 0.07, 0.12))
-        with patch.dict(sys.modules, {"board": board, "digitalio": digitalio}):
+        with patch.dict(sys.modules, {"board": board, "digitalio": digitalio}), patch(
+            "cabinet_frontend.components.gpio_controls.log_runtime"
+        ) as log_runtime:
             from cabinet_frontend.components.gpio_controls import GpioControls
 
             controls = GpioControls((1, 2, 3, 4), (1, 2, 3, 4), clock=lambda: next(clock))
@@ -43,6 +45,9 @@ class GpioControlsTests(unittest.TestCase):
             snapshot[0] = 9
             self.assertEqual(controls.directory_digits_snapshot(), [1, 0, 0, 1])
             controls.close()
+            messages = [call.args[0] for call in log_runtime.call_args_list]
+            self.assertIn("BUTTON // index=0 edge=press", messages)
+            self.assertIn("BUTTON // index=0 incremented digits=1001", messages)
 
 
 if __name__ == "__main__":
