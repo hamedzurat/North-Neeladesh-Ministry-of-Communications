@@ -26,23 +26,19 @@ class McpPairDetector:
         pins: list[int] | tuple[int, ...] = tuple(range(16)),
         probe_settle_time: float = 0.001,
     ) -> None:
-        from digitalio import Direction, Pull
-
         if probe_settle_time < 0:
             raise ValueError("probe_settle_time must be non-negative")
-        self._direction = Direction
-        self._pull = Pull
         self._mcp = mcp
         self.pins = [mcp.get_pin(index) for index in pins]
         self.pin_numbers = list(pins)
+        self._pin_mask = sum(1 << pin for pin in self.pin_numbers)
         self.probe_settle_time = probe_settle_time
         self._scan_lock = Lock()
         self._scan_id = 0
 
     def _all_inputs(self) -> None:
-        for pin in self.pins:
-            pin.direction = self._direction.INPUT
-            pin.pull = self._pull.UP
+        self._mcp.iodir = self._pin_mask
+        self._mcp.gppu = self._pin_mask
 
     def scan(self) -> PairScanResult:
         with self._scan_lock:
@@ -54,9 +50,10 @@ class McpPairDetector:
                 samples: list[tuple[int, int]] = []
                 for index, pin in enumerate(self.pins):
                     self._all_inputs()
-                    pin.pull = None
-                    pin.direction = self._direction.OUTPUT
-                    pin.value = False
+                    probe_bit = 1 << self.pin_numbers[index]
+                    self._mcp.gpio = self._pin_mask & ~probe_bit
+                    self._mcp.gppu = self._pin_mask & ~probe_bit
+                    self._mcp.iodir = self._pin_mask & ~probe_bit
                     time.sleep(self.probe_settle_time)
                     samples.append((index, self._mcp.gpio))
                 for index, gpio in samples:

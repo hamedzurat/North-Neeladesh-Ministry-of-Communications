@@ -44,15 +44,42 @@ class Mcp:
     def __init__(self) -> None:
         self.pins: list[Pin] = []
         self.gpio_reads = 0
+        self._iodir = 0xFFFF
+        self._gppu = 0xFFFF
         self.pins.extend(Pin(index, self.pins) for index in range(4))
 
     def get_pin(self, index: int) -> Pin:
         return self.pins[index]
 
     @property
+    def iodir(self) -> int:
+        return self._iodir
+
+    @iodir.setter
+    def iodir(self, value: int) -> None:
+        self._iodir = value
+        for index, pin in enumerate(self.pins):
+            pin.direction = Direction.INPUT if value & (1 << index) else Direction.OUTPUT
+
+    @property
+    def gppu(self) -> int:
+        return self._gppu
+
+    @gppu.setter
+    def gppu(self, value: int) -> None:
+        self._gppu = value
+        for index, pin in enumerate(self.pins):
+            pin.pull = Pull.UP if value & (1 << index) else None
+
+    @property
     def gpio(self) -> int:
         self.gpio_reads += 1
         return sum(1 << index for index, pin in enumerate(self.pins) if pin.value)
+
+    @gpio.setter
+    def gpio(self, value: int) -> None:
+        for index, pin in enumerate(self.pins):
+            pin._value = bool(value & (1 << index))
 
 
 class FailingPin(Pin):
