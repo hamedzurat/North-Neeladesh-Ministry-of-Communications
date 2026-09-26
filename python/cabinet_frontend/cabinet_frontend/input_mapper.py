@@ -179,9 +179,11 @@ class PhysicalInputSource:
             except Exception as error:  # noqa: BLE001 - hardware libraries vary their errors
                 self.faults.append(f"controls: {type(error).__name__}: {error}")
                 held_controls = self.held_controls
-        directory_digits = list(
-            self.controls.directory_digits if self.controls is not None else self.directory_digits
-        )
+        if self.controls is None:
+            directory_digits = list(self.directory_digits)
+        else:
+            snapshot = getattr(self.controls, "directory_digits_snapshot", None)
+            directory_digits = list(snapshot() if callable(snapshot) else self.controls.directory_digits)
         physical = PhysicalInput(
             cord_topology=list(self.topology),
             topology_revision=self.topology_revision,
