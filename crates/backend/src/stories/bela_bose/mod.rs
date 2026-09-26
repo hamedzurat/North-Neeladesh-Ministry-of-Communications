@@ -8,7 +8,7 @@ pub const BELA_DOG_DIRECTORY: u16 = 1031;
 pub const BELA_CAT_DIRECTORY: u16 = 1032;
 pub const PROFESSOR_AUDIO: &str = "professor_arnab.wav";
 pub const WRONG_BELA_AUDIO: &str = "belabose_wrong.wav";
-pub const SUCCESS_BELA_AUDIO: &str = "belabose_success.m4a";
+pub const SUCCESS_BELA_AUDIO: &str = "belabose_success.wav";
 pub const MECHANICS: &[Mechanic] = &[
     Mechanic::OperatorConnection,
     Mechanic::DirectorySelection,

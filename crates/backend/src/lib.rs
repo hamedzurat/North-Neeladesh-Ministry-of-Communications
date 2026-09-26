@@ -3955,6 +3955,86 @@ mod story_knowledge_tests {
     use super::Backend;
 
     #[test]
+    fn every_authored_story_recording_is_a_playable_wav() {
+        let paths = [
+            crate::stories::bela_bose::audio_path(
+                crate::stories::bela_bose::NEEL_DIRECTORY,
+                crate::stories::bela_bose::SHADHIN_DIRECTORY,
+            ),
+            crate::stories::bela_bose::audio_path(
+                crate::stories::bela_bose::SHADHIN_DIRECTORY,
+                crate::stories::bela_bose::BELA_DOG_DIRECTORY,
+            ),
+            crate::stories::bela_bose::audio_path(
+                crate::stories::bela_bose::SHADHIN_DIRECTORY,
+                crate::stories::bela_bose::BELA_CAT_DIRECTORY,
+            ),
+            crate::stories::dirty_work::audio_path(
+                crate::stories::dirty_work::KAMAL_DIRECTORY,
+                crate::stories::dirty_work::FARHANA_DIRECTORY,
+            ),
+            crate::stories::dirty_work::audio_path(
+                crate::stories::dirty_work::TARIQ_DIRECTORY,
+                crate::stories::dirty_work::FARHANA_DIRECTORY,
+            ),
+            crate::stories::dirty_work::audio_path(
+                crate::stories::dirty_work::REHANA_DIRECTORY,
+                crate::stories::dirty_work::FARHANA_DIRECTORY,
+            ),
+            crate::stories::nahid::audio_path(crate::stories::nahid::NAHID_DIRECTORY, 1021),
+            crate::stories::nahid::audio_path(crate::stories::nahid::NAHID_DIRECTORY, 1022),
+            crate::stories::nahid::audio_path(crate::stories::nahid::NAHID_DIRECTORY, 1031),
+            crate::stories::nahid::audio_path(crate::stories::nahid::NAHID_DIRECTORY, 1032),
+            crate::stories::nahid::audio_path(crate::stories::nahid::NAHID_DIRECTORY, 1029),
+        ];
+
+        for path in paths {
+            let path = path.expect("story recording mapping should exist");
+            let workspace_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(&path);
+            let bytes = std::fs::read(&workspace_path).unwrap_or_else(|error| {
+                panic!("story recording {} is not readable: {error}", workspace_path.display())
+            });
+            assert!(
+                bytes.starts_with(b"RIFF"),
+                "{} is not RIFF/WAV",
+                workspace_path.display()
+            );
+            assert_eq!(
+                bytes.get(8..12),
+                Some(&b"WAVE"[..]),
+                "{} is not a WAVE file",
+                workspace_path.display()
+            );
+            assert_eq!(
+                bytes.get(20..22),
+                Some(&[1, 0][..]),
+                "{} is not PCM audio",
+                workspace_path.display()
+            );
+            assert_eq!(
+                bytes.get(22..24),
+                Some(&[1, 0][..]),
+                "{} is not mono audio",
+                workspace_path.display()
+            );
+            assert_eq!(
+                bytes.get(24..28),
+                Some(&24_000_u32.to_le_bytes()[..]),
+                "{} is not 24 kHz audio",
+                workspace_path.display()
+            );
+            assert_eq!(
+                bytes.get(34..36),
+                Some(&[16, 0][..]),
+                "{} is not 16-bit audio",
+                workspace_path.display()
+            );
+        }
+    }
+
+    #[test]
     fn private_facts_are_only_granted_to_arnab_for_the_neel_story() {
         let mut backend = Backend::new_exchange();
         assert!(backend.voice_context(2, 3).permitted_knowledge.is_empty());

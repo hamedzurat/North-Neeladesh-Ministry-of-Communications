@@ -87,15 +87,34 @@ def main() -> int:
         write_wav(output, samples)
         print(f"wrote {output}")
 
-    success = args.output / "bela_bose" / "belabose_success.m4a"
-    if success.exists():
+    supplied_success = args.output / "bela_bose" / "belabose_success.m4a"
+    success = args.output / "bela_bose" / "belabose_success.wav"
+    if supplied_success.exists():
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                str(supplied_success),
+                "-ar",
+                str(SAMPLE_RATE),
+                "-ac",
+                "1",
+                "-c:a",
+                "pcm_s16le",
+                str(success),
+            ],
+            check=True,
+        )
         duration = subprocess.check_output(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(success)],
             text=True,
         ).strip()
-        print(f"using supplied {success} ({duration}s)")
+        print(f"converted supplied {supplied_success} to {success} ({duration}s)")
     else:
-        print(f"place the supplied correct recording at {success}")
+        print(f"place the supplied correct recording at {supplied_success}")
 
     dirty_recordings = {
         "kamal_farhana.wav": [
