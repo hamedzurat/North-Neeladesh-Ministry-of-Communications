@@ -1,3 +1,5 @@
+set positional-arguments
+
 backend-debug address="0.0.0.0:7878" voice_address="0.0.0.0:7879":
     PYTHONPATH=python NN_STORY_CLASSIFIER_COMMAND="uv run --project python --no-sync python -m voice_workers.classifier" NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="uv run --project python --no-sync python -m voice_workers.dialogue" NN_VOICE_DIALOGUE_PERSISTENT=1 NN_OLLAMA_MODEL="qwen3.5:4b" NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.pocket_tts" NN_VOICE_TTS_PERSISTENT=1 cargo run --quiet -p exchange-backend --bin exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }} --voice-upload-bind 0.0.0.0:7883 --debug-bind 127.0.0.1:7880
 
@@ -71,8 +73,8 @@ voice-setup:
 voice-preflight:
     uv run --project python --no-sync python -m voice_workers.preflight
 
-pocket-tts sentence mode_file:
-    uv run --project python --no-sync python scripts/test_pocket_tts.py "{{ sentence }}" "{{ mode_file }}"
+pocket-tts *sentences:
+    uv run --project python --no-sync python scripts/test_pocket_tts.py --all "$@"
 
 check: frontend-check
     cargo check --workspace
