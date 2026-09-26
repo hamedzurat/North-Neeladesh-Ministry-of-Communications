@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from ..generated_directory import generated_directory_page, unknown_id
+
 
 def wrap_text(text: str, max_width: int, measure: Callable[[str], int]) -> list[str]:
     """Wrap text at word boundaries without splitting words into letters."""
@@ -79,6 +81,12 @@ class EpaperDirectoryDisplay:
         page = pages[selected_index]
         directory_id = page.get("directory_id")
         lines = page.get("lines", [])
+        if directory_id is None:
+            requested_id = unknown_id(lines)
+            generated = generated_directory_page(requested_id) if requested_id is not None else None
+            if generated is not None:
+                directory_id = generated["directory_id"]
+                lines = generated["lines"]
         if isinstance(directory_id, int):
             id_font = self._load_font(16, weight=600)
             draw.text(
@@ -201,6 +209,8 @@ class EpaperDirectoryDisplay:
     def _load_avatar(self, directory_id: int) -> object | None:
         if directory_id not in self._avatars:
             path = self.avatar_dir / f"{directory_id:04}.png"
+            if not path.is_file() and directory_id not in range(1021, 1033):
+                path = self.avatar_dir / f"{directory_id % 256:04}.png"
             try:
                 avatar = self._image_module.open(path).convert("RGBA")
                 avatar.thumbnail((self.AVATAR_SIZE, self.AVATAR_SIZE))
