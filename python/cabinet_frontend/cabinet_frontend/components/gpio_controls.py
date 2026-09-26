@@ -41,6 +41,7 @@ class GpioControls:
         self._button_pressed = [not pin.value for pin in self._buttons]
         self._button_triggered = [False] * 4
         self._button_changed_at = [0.0] * 4
+        self._button_last_increment_at = [float("-inf")] * 4
         self._debounce_seconds = debounce_ms / 1000
         self._clock = clock or time.monotonic
         self._lock = threading.Lock()
@@ -72,16 +73,29 @@ class GpioControls:
                     log_runtime(
                         f"BUTTON // index={index} edge={'press' if pressed else 'release'}"
                     )
-                elif (
-                    pressed
-                    and not self._button_triggered[index]
-                    and now - self._button_changed_at[index] >= self._debounce_seconds
-                ):
-                    self.directory_digits[index] = (self.directory_digits[index] + 1) % 10
-                    self._button_triggered[index] = True
-                    log_runtime(
-                        f"BUTTON // index={index} incremented digits={''.join(map(str, self.directory_digits))}"
-                    )
+                    if (
+                        pressed
+                        and now - self._button_last_increment_at[index] >= self._debounce_seconds
+                    ):
+                        self.directory_digits[index] = (self.directory_digits[index] + 1) % 10
+                        self._button_last_increment_at[index] = now
+                        log_runtime(
+                            f"BUTTON // index={index} incremented digits={''.join(map(str, self.directory_digits))}"
+                        )
+                    if pressed:
+                        # This edge has been handled, even when it falls
+                        # inside the debounce window after a prior press.
+                        self._button_triggered[index] = True
+                elif pressed and not self._button_triggered[index]:
+                    # A press edge may be followed by a delayed poll while the
+                    # e-paper worker holds the interpreter. Count it once the
+                    # debounce interval has elapsed, if it is still held.
+                    if now - self._button_changed_at[index] >= self._debounce_seconds:
+                        self.directory_digits[index] = (self.directory_digits[index] + 1) % 10
+                        self._button_triggered[index] = True
+                        log_runtime(
+                            f"BUTTON // index={index} incremented digits={''.join(map(str, self.directory_digits))}"
+                        )
             return HeldControls(
                 ptt=self._stable_toggles[0],
                 police=self._stable_toggles[1],
