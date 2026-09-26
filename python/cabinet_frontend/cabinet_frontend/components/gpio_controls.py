@@ -28,28 +28,40 @@ class GpioControls:
             raise ValueError("four directory digits between 0 and 9 are required")
         if debounce_ms < 0:
             raise ValueError("debounce_ms must be non-negative")
-        self._pins = [
-            *(DigitalInOut(getattr(board, f"D{pin}")) for pin in toggle_pins),
-            *(DigitalInOut(getattr(board, f"D{pin}")) for pin in button_pins),
-        ]
+        self._debounce_seconds = debounce_ms / 1000
+        self._clock = clock or time.monotonic
+        self._lock = threading.RLock()
+        self.directory_digits = list(directory_digits)
+        self._button_last_increment_at = [float("-inf")] * 4
+        self._pins = [DigitalInOut(getattr(board, f"D{pin}")) for pin in toggle_pins]
         for pin in self._pins:
             pin.switch_to_input(pull=Pull.UP)
         self._toggles = self._pins[:4]
         self._toggle_pressed = [not pin.value for pin in self._toggles]
         self._toggle_changed_at = [0.0] * 4
-        self._buttons = self._pins[4:]
+        self._buttons: list[object] = []
+        self._async_buttons: list[object] = []
+        try:
+            from gpiozero import Button
+
+            self._async_buttons = [
+                Button(pin, pull_up=True, bounce_time=self._debounce_seconds)
+                for pin in button_pins
+            ]
+            for index, button in enumerate(self._async_buttons):
+                button.when_pressed = lambda index=index: self._increment_button(index)
+        except Exception:  # noqa: BLE001 - fall back when gpiozero is unavailable
+            for pin in button_pins:
+                button = DigitalInOut(getattr(board, f"D{pin}"))
+                button.switch_to_input(pull=Pull.UP)
+                self._buttons.append(button)
         self._button_pressed = [not pin.value for pin in self._buttons]
         self._button_triggered = [False] * 4
         self._button_changed_at = [0.0] * 4
-        self._button_last_increment_at = [float("-inf")] * 4
-        self._debounce_seconds = debounce_ms / 1000
-        self._clock = clock or time.monotonic
-        self._lock = threading.Lock()
         now = self._clock()
         self._toggle_changed_at = [now] * 4
         self._button_changed_at = [now] * 4
         self._stable_toggles = list(self._toggle_pressed)
-        self.directory_digits = list(directory_digits)
 
     def poll(self) -> HeldControls:
         with self._lock:
@@ -64,38 +76,18 @@ class GpioControls:
                     and now - self._toggle_changed_at[index] >= self._debounce_seconds
                 ):
                     self._stable_toggles[index] = pressed
-            for index, pin in enumerate(self._buttons):
-                pressed = not pin.value
-                if pressed != self._button_pressed[index]:
-                    self._button_pressed[index] = pressed
-                    self._button_triggered[index] = False
-                    self._button_changed_at[index] = now
-                    log_runtime(
-                        f"BUTTON // index={index} edge={'press' if pressed else 'release'}"
-                    )
-                    if (
-                        pressed
-                        and now - self._button_last_increment_at[index] >= self._debounce_seconds
-                    ):
-                        self.directory_digits[index] = (self.directory_digits[index] + 1) % 10
-                        self._button_last_increment_at[index] = now
+            if not self._async_buttons:
+                for index, pin in enumerate(self._buttons):
+                    pressed = not pin.value
+                    if pressed != self._button_pressed[index]:
+                        self._button_pressed[index] = pressed
+                        self._button_triggered[index] = False
+                        self._button_changed_at[index] = now
                         log_runtime(
-                            f"BUTTON // index={index} incremented digits={''.join(map(str, self.directory_digits))}"
+                            f"BUTTON // index={index} edge={'press' if pressed else 'release'}"
                         )
-                    if pressed:
-                        # This edge has been handled, even when it falls
-                        # inside the debounce window after a prior press.
-                        self._button_triggered[index] = True
-                elif pressed and not self._button_triggered[index]:
-                    # A press edge may be followed by a delayed poll while the
-                    # e-paper worker holds the interpreter. Count it once the
-                    # debounce interval has elapsed, if it is still held.
-                    if now - self._button_changed_at[index] >= self._debounce_seconds:
-                        self.directory_digits[index] = (self.directory_digits[index] + 1) % 10
-                        self._button_triggered[index] = True
-                        log_runtime(
-                            f"BUTTON // index={index} incremented digits={''.join(map(str, self.directory_digits))}"
-                        )
+                        if pressed:
+                            self._increment_button(index)
             return HeldControls(
                 ptt=self._stable_toggles[0],
                 police=self._stable_toggles[1],
@@ -107,6 +99,19 @@ class GpioControls:
         with self._lock:
             return list(self.directory_digits)
 
+    def _increment_button(self, index: int) -> None:
+        with self._lock:
+            now = self._clock()
+            if now - self._button_last_increment_at[index] < self._debounce_seconds:
+                return
+            self.directory_digits[index] = (self.directory_digits[index] + 1) % 10
+            self._button_last_increment_at[index] = now
+            log_runtime(
+                f"BUTTON // index={index} incremented digits={''.join(map(str, self.directory_digits))}"
+            )
+
     def close(self) -> None:
+        for button in self._async_buttons:
+            button.close()
         for pin in self._pins:
             pin.deinit()
