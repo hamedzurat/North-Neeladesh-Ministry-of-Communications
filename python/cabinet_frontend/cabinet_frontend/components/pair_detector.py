@@ -60,7 +60,8 @@ class McpPairDetector:
                     probe_pin = self.pin_numbers[index]
                     for other in range(index + 1, len(self.pins)):
                         other_pin = self.pin_numbers[other]
-                        if not (gpio & (1 << other_pin)):
+                        other_gpio = samples[other][1]
+                        if not (gpio & (1 << other_pin)) and not (other_gpio & (1 << probe_pin)):
                             pairs.append((probe_pin, other_pin))
                 status = "valid" if pairs else "empty"
                 fault = None
