@@ -15,6 +15,7 @@ fn first_input(backend: &Backend) -> InputMessage {
             held_controls: HeldControls::default(),
             directory_digits: [0, 0, 0, 1],
             ring_line: -1,
+            crank_active: false,
             tuning: TuningState::default(),
             debug: InputDebug::default(),
         },

@@ -46,13 +46,23 @@ class HardwareFrontendIntegrationTests(unittest.TestCase):
         observed: dict[str, object] = {}
         codec = JsonCodec()
         response = {
-            "protocol_version": 3,
+            "protocol_version": 4,
             "input_sequence": 1,
             "accepted": True,
             "error": None,
             "state_revision": 4,
             "output": {
                 "line_lamps": [True] + [False] * 11,
+                "leds": {
+                    "brightness": 28,
+                    "pixels": [
+                        {"red": 255, "green": 255, "blue": 255},
+                        *[
+                            {"red": 0, "green": 0, "blue": 0}
+                            for _ in range(15)
+                        ],
+                    ],
+                },
                 "game_phase": "ready",
                 "run_generation": 0,
                 "clock": {"shift": 1, "elapsed_seconds": 65},
@@ -120,4 +130,4 @@ class HardwareFrontendIntegrationTests(unittest.TestCase):
             [{"first": "subscriber_0", "second": "operator"}],
         )
         self.assertEqual(frontend.state_revision, 4)
-        self.assertEqual(components[0].calls[0], ("lines", [True] + [False] * 11))
+        self.assertEqual(components[0].calls[0], ("lines", [True] + [False] * 15))

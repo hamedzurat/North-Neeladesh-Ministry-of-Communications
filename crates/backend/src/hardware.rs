@@ -5,16 +5,20 @@
 //! rules.
 
 use exchange_protocol::{
-    CallPhase, ClockState, CordConnection, InputState, OutputDebug, PROTOCOL_VERSION, PortId,
-    PrinterEntry, ProtocolError, ShiftPhase, ShiftStatus, StateMessage, StateOutput,
-    TapBridgeMonitoring, TuningState,
+    CallPhase, ClockState, CordConnection, HeldControls, InputState, LedFrame, LedPixel,
+    OutputDebug, PROTOCOL_VERSION, PortId, PrinterEntry, ProtocolError, ShiftPhase, ShiftStatus,
+    StateMessage, StateOutput, TapBridgeMonitoring, TuningState, VoiceStatus,
 };
 
-use crate::config::{GameConfig, LINES};
+use crate::config::{GameConfig, LedConfig, RgbColor, LINES};
 
 pub(crate) fn initial_state(config: &GameConfig) -> StateOutput {
     StateOutput {
         line_lamps: [false; 12],
+        leds: LedFrame {
+            brightness: config.leds.brightness,
+            ..LedFrame::default()
+        },
         game_phase: exchange_protocol::GamePhase::Ready,
         run_generation: 0,
         clock: ClockState {
@@ -51,6 +55,99 @@ pub(crate) fn initial_state(config: &GameConfig) -> StateOutput {
         dirty_work_completed_contacts: vec![],
         nahid_story_beat: "Scamming".into(),
         nahid_scam_count: 0,
+    }
+}
+
+pub(crate) fn led_frame(
+    config: &LedConfig,
+    line_lamps: &[bool; 12],
+    controls: &HeldControls,
+    patience: &[(u8, u64, u64)],
+    direct_lines: &[(u8, u8)],
+    operator_lines: &[u8],
+    missed_lines: &[u8],
+    tap_lines: Option<(u8, u8)>,
+    crank_level: u8,
+    voice_status: Option<VoiceStatus>,
+) -> LedFrame {
+    let mut frame = LedFrame {
+        brightness: config.brightness,
+        ..LedFrame::default()
+    };
+    for (line, (pixel, active)) in frame.pixels.iter_mut().zip(line_lamps).enumerate() {
+        *pixel = if tap_lines.is_some_and(|(caller, callee)| {
+            line as u8 == caller || line as u8 == callee
+        }) {
+            pixel_color(config.tap)
+        } else if direct_lines
+            .iter()
+            .any(|(caller, callee)| line as u8 == *caller || line as u8 == *callee)
+        {
+            pixel_color(config.connected_direct)
+        } else if operator_lines.contains(&(line as u8)) {
+            pixel_color(config.connected_operator)
+        } else if *active {
+            pixel_color(patience
+                .iter()
+                .find(|(caller, _, _)| *caller == line as u8)
+                .map_or(config.call_wait, |(_, remaining, total)| {
+                    let total = (*total).max(1);
+                    blend_color(config.call_expired, config.call_wait, *remaining, total)
+                }))
+        } else if missed_lines.contains(&(line as u8)) {
+            pixel_color(config.call_expired)
+        } else {
+            LedPixel::default()
+        };
+    }
+    for (pixel, active) in frame.pixels[12..].iter_mut().zip([
+        controls.ptt || controls.police || controls.ems,
+        controls.tap,
+        crank_level > 0,
+        false,
+    ]) {
+        if active {
+            *pixel = pixel_color(config.control);
+        }
+    }
+    frame.pixels[14] = scale_color(config.crank, crank_level);
+    frame.pixels[15] = match voice_status {
+        Some(VoiceStatus::Transcribing) => pixel_color(config.status_stt),
+        Some(VoiceStatus::GeneratingResponse) => pixel_color(config.status_llm),
+        Some(VoiceStatus::Synthesizing | VoiceStatus::Playing) => pixel_color(config.status_tts),
+        Some(VoiceStatus::Listening) => pixel_color(config.status_record),
+        _ if controls.ptt || controls.police || controls.ems => pixel_color(config.status_record),
+        _ => pixel_color(config.status_wait),
+    };
+    frame
+}
+
+fn pixel_color(color: RgbColor) -> LedPixel {
+    LedPixel {
+        red: color.red,
+        green: color.green,
+        blue: color.blue,
+    }
+}
+
+fn scale_color(color: RgbColor, level: u8) -> LedPixel {
+    LedPixel {
+        red: (u16::from(color.red) * u16::from(level) / 255) as u8,
+        green: (u16::from(color.green) * u16::from(level) / 255) as u8,
+        blue: (u16::from(color.blue) * u16::from(level) / 255) as u8,
+    }
+}
+
+fn blend_color(from: RgbColor, to: RgbColor, remaining: u64, total: u64) -> RgbColor {
+    let remaining = remaining.min(total) as u128;
+    let total = total.max(1) as u128;
+    let blend = |start: u8, end: u8| {
+        ((u128::from(start) * (total - remaining) + u128::from(end) * remaining) / total) as u8
+    };
+    RgbColor {
+        red: blend(from.red, to.red),
+        green: blend(from.green, to.green),
+        blue: blend(from.blue, to.blue),
     }
 }
 
@@ -339,8 +436,9 @@ pub(crate) fn valid_tap_circuit(input: &InputState, caller: u8, callee: u8) -> b
 
 #[cfg(test)]
 mod tests {
-    use super::directory_pages;
+    use super::{directory_pages, led_frame};
     use crate::config::GameConfig;
+    use exchange_protocol::HeldControls;
 
     #[test]
     fn shapla_directory_uses_its_story_place() {
@@ -352,5 +450,78 @@ mod tests {
                 .iter()
                 .any(|line| line == "LOCATION // Shapla Apartments")
         );
+    }
+
+    #[test]
+    fn led_frame_marks_active_calls_yellow_and_missed_callers_red() {
+        let config = GameConfig::load();
+        let mut lines = [false; 12];
+        lines[2] = true;
+        let frame = led_frame(
+            &config.leds,
+            &lines,
+            &HeldControls::default(),
+            &[],
+            &[],
+            &[],
+            &[4],
+            None,
+            0,
+            None,
+        );
+
+        assert_eq!(frame.pixels[2].red, 255);
+        assert_eq!(frame.pixels[2].green, 255);
+        assert_eq!(frame.pixels[2].blue, 0);
+        assert_eq!(frame.pixels[4].red, 255);
+        assert_eq!(frame.pixels[4].green, 0);
+        assert_eq!(frame.pixels[4].blue, 0);
+
+        let tap_frame = led_frame(
+            &config.leds,
+            &lines,
+            &HeldControls::default(),
+            &[],
+            &[],
+            &[],
+            &[],
+            Some((2, 5)),
+            0,
+            None,
+        );
+        assert_eq!(tap_frame.pixels[2].green, 80);
+        assert_eq!(tap_frame.pixels[2].blue, 255);
+        assert_eq!(tap_frame.pixels[5].blue, 255);
+
+        let connected_frame = led_frame(
+            &config.leds,
+            &lines,
+            &HeldControls::default(),
+            &[],
+            &[(2, 7)],
+            &[],
+            &[],
+            None,
+            0,
+            None,
+        );
+        assert_eq!(connected_frame.pixels[2].red, 255);
+        assert_eq!(connected_frame.pixels[2].green, 255);
+        assert_eq!(connected_frame.pixels[2].blue, 255);
+
+        let operator_frame = led_frame(
+            &config.leds,
+            &lines,
+            &HeldControls::default(),
+            &[],
+            &[],
+            &[2],
+            &[],
+            None,
+            0,
+            None,
+        );
+        assert_eq!(operator_frame.pixels[2].red, 0);
+        assert_eq!(operator_frame.pixels[2].green, 255);
     }
 }

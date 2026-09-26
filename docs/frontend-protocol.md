@@ -8,7 +8,7 @@ Each message is framed as:
 u32 big-endian payload length | CBOR payload
 ```
 
-The maximum payload is 4 MiB. The normal frontend protocol version is `3`; the development debug protocol version is `2`. The game cabinet has twelve subscriber lines, one two-jack Tap Bridge, and Police/EMS service controls.
+The maximum payload is 4 MiB. The normal frontend protocol version is `4`; the development debug protocol version is `2`. The game cabinet has twelve subscriber lines, one two-jack Tap Bridge, and Police/EMS service controls.
 
 ## InputMessage
 
@@ -16,7 +16,7 @@ The wire shape is exactly:
 
 ```text
 {
-  "protocol_version": 3,
+  "protocol_version": 4,
   "input_sequence": u64,
   "expected_state_revision": u64,
   "input": {
@@ -26,6 +26,7 @@ The wire shape is exactly:
     },
     "directory_digits": [u8; 4],
     "ring_line": i16,
+    "crank_active": bool,
     "tuning": {"coarse": u16, "fine": u16},
     "debug": {
       "firmware_version": string|null,
@@ -48,13 +49,17 @@ The response wire shape is exactly:
 
 ```text
 {
-  "protocol_version": 3,
+  "protocol_version": 4,
   "input_sequence": u64,
   "accepted": bool,
   "error": {"code": string, "message": string}|null,
   "state_revision": u64,
-  "output": {
-    "line_lamps": [bool; 12],
+    "output": {
+      "line_lamps": [bool; 12],
+      "leds": {
+        "brightness": u8,
+        "pixels": [{"red": u8, "green": u8, "blue": u8}; 16]
+      },
     "game_phase": string,
     "run_generation": u64,
     "clock": {"shift": u8, "elapsed_seconds": u32},
@@ -75,6 +80,8 @@ The response wire shape is exactly:
 ```
 
 The response never echoes topology, held controls, directory digits, crank timestamps, Cabinet Frontend diagnostics, or Cabinet Frontend/session data. `speaker_active`, `interference_level`, `tap_bridge_audio_active`, `tuning`, `calls`, `service_call`, and `tap_bridge_monitoring` are backend-owned output state. `call` is the Call currently connected to the Operator, while `calls` contains the current Call records, including competing and Held Callers. Terminal Call phases remain visible until their physical topology is cleared. `speaker_active` reflects an active Operator, service, or held Tap Bridge monitoring control. `tap_bridge_audio_active` is true only while the held listen control matches a live Tap Bridge Circuit; it represents the authored dummy monitoring stream. `interference_level` is a bounded percentage for authored Diegetic Interference, where zero is clear. The demo clock maps eight real minutes to the Shift display from `08:00` through `16:00`; consumers interpret `elapsed_seconds` as seconds since midnight, not an elapsed MM:SS duration. Backend diagnostics are only in `output.debug`; Cabinet Frontend diagnostics are only in `input.debug`.
+
+`leds` is the authoritative 16-pixel RGB frame. Each channel and the global brightness use `0..255`. The frontend sends the frame directly to the WS2812 driver; animations are represented by sending successive frames. The backend currently renders active call lines yellow, missed calls whose caller patience expired red, and the four held-control indicators as white.
 
 ## Commands
 

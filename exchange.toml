@@ -53,6 +53,21 @@ Example output:
 {{"dialogue":"I will answer that."}}
 '''
 
+[leds]
+brightness = 28
+call_wait = { red = 255, green = 255, blue = 0 }
+call_expired = { red = 255, green = 0, blue = 0 }
+connected_direct = { red = 255, green = 255, blue = 255 }
+connected_operator = { red = 0, green = 255, blue = 0 }
+tap = { red = 0, green = 80, blue = 255 }
+control = { red = 255, green = 255, blue = 255 }
+crank = { red = 255, green = 255, blue = 255 }
+status_wait = { red = 24, green = 24, blue = 24 }
+status_record = { red = 255, green = 80, blue = 0 }
+status_stt = { red = 0, green = 80, blue = 255 }
+status_llm = { red = 180, green = 0, blue = 255 }
+status_tts = { red = 0, green = 255, blue = 80 }
+
 [[subscribers]]
 id = 1021
 line = 0

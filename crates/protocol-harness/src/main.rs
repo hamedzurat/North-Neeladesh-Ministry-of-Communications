@@ -234,6 +234,7 @@ fn message(sequence: u64, revision: u64, digits: [u8; 4]) -> InputMessage {
             },
             directory_digits: digits,
             ring_line: -1,
+            crank_active: false,
             tuning: TuningState::default(),
             debug: InputDebug {
                 firmware_version: Some("harness".to_string()),

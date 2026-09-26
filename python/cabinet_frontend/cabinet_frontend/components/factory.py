@@ -66,7 +66,11 @@ def build_real_components(config: HardwareConfig) -> ComponentBundle:
     initialized: list[object] = [i2c]
     try:
         mcp = MCP23017(i2c, address=config.i2c_address)
-        line_lamps = Ws2812LineLamps(config.ws2812_count, config.line_led_map)
+        line_lamps = Ws2812LineLamps(
+            config.ws2812_count,
+            config.line_led_map,
+            device=config.ws2812_device,
+        )
         initialized.append(line_lamps)
         seven_segment = Tm1637Display(config.tm1637_clk, config.tm1637_dio)
         initialized.append(seven_segment)

@@ -31,6 +31,7 @@ class PhysicalInput:
     held_controls: HeldControls = field(default_factory=HeldControls)
     directory_digits: list[int] = field(default_factory=lambda: [0, 0, 0, 1])
     ring_line: int = -1
+    crank_active: bool = False
     tuning: dict[str, int] = field(default_factory=lambda: {"coarse": 0, "fine": 0})
 
 
@@ -42,7 +43,7 @@ def input_message(
     device_faults: list[str],
 ) -> dict[str, Any]:
     return {
-        "protocol_version": 3,
+        "protocol_version": 4,
         "input_sequence": sequence,
         "expected_state_revision": expected_state_revision,
         "input": {
@@ -51,6 +52,7 @@ def input_message(
             "held_controls": physical.held_controls.to_wire(),
             "directory_digits": physical.directory_digits,
             "ring_line": physical.ring_line,
+            "crank_active": physical.crank_active,
             "tuning": physical.tuning,
             "debug": {
                 "firmware_version": firmware_version,

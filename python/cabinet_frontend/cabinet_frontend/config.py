@@ -66,7 +66,11 @@ class HardwareConfig:
     pin_to_port: dict[int, str] = field(
         default_factory=lambda: dict(DEFAULT_PATCH_PANEL_PIN_TO_PORT)
     )
-    line_led_map: dict[int, int] = field(default_factory=lambda: dict(enumerate(range(16))))
+    # The strip is mounted with pixel 15 at the cabinet's left end, so map
+    # logical line order to physical LEDs from left to right.
+    line_led_map: dict[int, int] = field(
+        default_factory=lambda: dict(enumerate(range(15, -1, -1)))
+    )
     line_lamp_count: int = 12
     poll_interval: float = 0.1
     input_status_interval: float = 5.0

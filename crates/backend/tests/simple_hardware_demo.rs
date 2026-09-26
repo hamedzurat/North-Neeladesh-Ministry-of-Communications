@@ -39,6 +39,7 @@ fn input(
                 (directory_id % 10) as u8,
             ],
             ring_line: ring_line.unwrap_or(-1),
+            crank_active: false,
             tuning: TuningState::default(),
             debug: InputDebug::default(),
         },

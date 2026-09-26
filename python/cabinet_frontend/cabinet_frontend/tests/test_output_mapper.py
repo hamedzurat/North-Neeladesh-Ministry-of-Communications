@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from cabinet_frontend.output_mapper import OutputMapper
+from cabinet_frontend.state import HeldControls
 
 
 class Spy:
@@ -32,6 +33,17 @@ class Spy:
 
 
 class OutputMapperTests(unittest.TestCase):
+    def test_maps_held_controls_to_the_four_extra_leds(self) -> None:
+        components = [Spy() for _ in range(4)]
+        mapper = OutputMapper(*components, line_lamp_count=12)
+
+        mapper.apply_held_controls(HeldControls(ptt=True, ems=True))
+
+        self.assertEqual(
+            components[0].calls,
+            [("lines", [False] * 12 + [True, False, True, False])],
+        )
+
     def test_logs_all_authoritative_active_calls_when_the_queue_changes(self) -> None:
         components = [Spy() for _ in range(4)]
         messages: list[str] = []

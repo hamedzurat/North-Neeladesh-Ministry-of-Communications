@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwn
 use std::fmt;
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u16 = 3;
+pub const PROTOCOL_VERSION: u16 = 4;
 pub const DEBUG_PROTOCOL_VERSION: u16 = 2;
 pub const MAX_FRAME_SIZE: usize = 4 * 1_048_576;
 pub const VOICE_PROTOCOL_VERSION: u16 = 2;
@@ -165,6 +165,7 @@ pub struct InputState {
     pub held_controls: HeldControls,
     pub directory_digits: [u8; 4],
     pub ring_line: i16,
+    pub crank_active: bool,
     pub tuning: TuningState,
     pub debug: InputDebug,
 }
@@ -345,10 +346,47 @@ pub struct OutputDebug {
     pub messages: Vec<BackendDiagnostic>,
 }
 
+pub const LED_COUNT: usize = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LedPixel {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+}
+
+impl Default for LedPixel {
+    fn default() -> Self {
+        Self {
+            red: 0,
+            green: 0,
+            blue: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LedFrame {
+    pub brightness: u8,
+    pub pixels: [LedPixel; LED_COUNT],
+}
+
+impl Default for LedFrame {
+    fn default() -> Self {
+        Self {
+            brightness: 28,
+            pixels: [LedPixel::default(); LED_COUNT],
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StateOutput {
     pub line_lamps: [bool; 12],
+    pub leds: LedFrame,
     pub game_phase: GamePhase,
     pub run_generation: u64,
     pub clock: ClockState,

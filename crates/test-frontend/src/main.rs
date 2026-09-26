@@ -2854,6 +2854,7 @@ fn input(
             },
             directory_digits: digits,
             ring_line,
+            crank_active: false,
             tuning: TuningState::default(),
             debug: InputDebug {
                 firmware_version: Some("text-test-frontend".into()),

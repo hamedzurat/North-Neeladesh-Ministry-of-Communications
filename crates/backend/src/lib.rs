@@ -130,6 +130,7 @@ pub struct Backend {
     rng: u64,
     calls: Vec<ActiveCall>,
     call_history: Vec<DebugCallRecord>,
+    recent_missed_lines: Vec<u8>,
     events: Vec<DebugEvent>,
     next_event_id: u64,
     line_limit: u8,
@@ -201,6 +202,7 @@ pub struct Backend {
     last_logged_topology: Option<Vec<exchange_protocol::CordConnection>>,
     last_logged_ring_line: Option<i16>,
     ring_active_line: i16,
+    last_crank_elapsed_seconds: Option<u64>,
     godmode: bool,
     bypass_restrictions: bool,
 }
@@ -367,6 +369,7 @@ impl Backend {
             rng: config.story_seed,
             calls: Vec::new(),
             call_history: Vec::new(),
+            recent_missed_lines: Vec::new(),
             events: Vec::new(),
             next_event_id: 1,
             line_limit: LINES,
@@ -438,6 +441,7 @@ impl Backend {
             last_logged_topology: None,
             last_logged_ring_line: None,
             ring_active_line: -1,
+            last_crank_elapsed_seconds: None,
             godmode: false,
             bypass_restrictions: false,
         }
@@ -627,6 +631,8 @@ impl Backend {
         self.debug_elapsed = 0;
         self.calls.clear();
         self.call_history.clear();
+        self.recent_missed_lines.clear();
+        self.last_crank_elapsed_seconds = None;
         self.events.clear();
         self.next_event_id = 1;
         self.resolved = 0;
@@ -1022,7 +1028,11 @@ impl Backend {
         }
         self.refill_calls(self.call_target);
         self.revision = self.revision.wrapping_add(1);
-        self.state.clock.elapsed_seconds = self.elapsed_seconds();
+        let elapsed_seconds = self.elapsed_seconds();
+        if input.crank_active {
+            self.last_crank_elapsed_seconds = Some(elapsed_seconds as u64);
+        }
+        self.state.clock.elapsed_seconds = elapsed_seconds;
         self.state.directory_pages = directory_pages(&self.config, input.directory_digits);
         self.state.calls = self
             .calls
@@ -1119,6 +1129,52 @@ impl Backend {
         self.state.speaker_active = (input.held_controls.ptt
             && !self.state.tap_bridge_audio_active)
             || self.voice_speaker_active;
+        let patience: Vec<(u8, u64, u64)> = self
+            .calls
+            .iter()
+            .filter(|call| call.phase != CallPhase::Connected)
+            .map(|call| {
+                (
+                    call.caller,
+                    call.deadline.saturating_sub(elapsed_seconds as u64),
+                    call.deadline.saturating_sub(call.started_elapsed_seconds),
+                )
+            })
+            .collect();
+        let direct_lines: Vec<(u8, u8)> = self
+            .calls
+            .iter()
+            .filter(|call| call.phase == CallPhase::Connected)
+            .map(|call| (call.caller, call.callee))
+            .collect();
+        let operator_lines: Vec<u8> = self
+            .calls
+            .iter()
+            .filter(|call| call.phase == CallPhase::OperatorSession)
+            .map(|call| call.caller)
+            .collect();
+        let tap_lines = self
+            .state
+            .tap_bridge_monitoring
+            .as_ref()
+            .map(|monitoring| (monitoring.caller_line, monitoring.callee_line));
+        let crank_level = self.last_crank_elapsed_seconds.map_or(0, |last| {
+            let age = (elapsed_seconds as u64).saturating_sub(last);
+            255_u64.saturating_sub(age.saturating_mul(128)) as u8
+        });
+        self.state.leds = led_frame(
+            &self.config.leds,
+            &self.state.line_lamps,
+            &input.held_controls,
+            &patience,
+            &direct_lines,
+            &operator_lines,
+            &self.recent_missed_lines,
+            tap_lines,
+            crank_level,
+            self.voice_status,
+        );
+        self.recent_missed_lines.clear();
         self.state.game_phase = if self.state.game_phase == GamePhase::Ended {
             GamePhase::Ended
         } else if self.state.shift.phase == ShiftPhase::Settled {
@@ -2053,6 +2109,9 @@ impl Backend {
 
     fn finish_call(&mut self, index: usize, missed: bool) {
         let call = self.calls.remove(index);
+        if missed {
+            self.recent_missed_lines.push(call.caller);
+        }
         if !missed
             && call.phase == CallPhase::Connected
             && let Some(story) = self.story_id_for_caller(call.caller)

@@ -9,6 +9,7 @@ from functools import partial
 from typing import Any
 
 from .diagnostics import ChangeLogger
+from .state import HeldControls
 
 
 class OutputMapper:
@@ -40,12 +41,15 @@ class OutputMapper:
         self.local_audio_queue = local_audio_queue
         self.clock = clock
         self._last_lines: list[bool] | None = None
+        self._last_led_frame: tuple[tuple[tuple[int, int, int], ...], int] | None = None
         self._last_seven_segment: str | None = None
         self._clock_start_monotonic: float | None = None
         self._clock_run_generation: int | None = None
         self._clock_lock = threading.Lock()
         self._clock_closed = False
         self._clock_thread: threading.Thread | None = None
+        self._held_controls: HeldControls | None = None
+        self._line_lamp_lock = threading.Lock()
         self._last_pages: list[dict[str, object]] | None = None
         self._page_index = 0
         self._next_page_at = 0.0
@@ -79,14 +83,31 @@ class OutputMapper:
             )
             self._clock_thread.start()
 
+    def apply_held_controls(self, controls: HeldControls) -> None:
+        """Show the four physical control states on the remaining LEDs."""
+        with self._line_lamp_lock:
+            if controls == self._held_controls:
+                return
+            self._held_controls = controls
+            lines = self._last_lines or [False] * self.line_lamp_count
+            self._try("line_lamps", lambda: self._set_line_lamps(lines))
+
     def apply(self, output: dict[str, Any], now: float | None = None) -> None:
         self.faults.clear()
         lines = [bool(value) for value in output.get("line_lamps", [False] * self.line_lamp_count)]
         lines = lines[: self.line_lamp_count]
-        if lines != self._last_lines and self._try(
-            "line_lamps", lambda: self.line_lamps.set_lines(lines)
-        ):
-            self._last_lines = lines
+        led_frame = self._parse_led_frame(output.get("leds"))
+        if led_frame is not None:
+            with self._line_lamp_lock:
+                if led_frame != self._last_led_frame and self._try(
+                    "line_lamps", lambda: self._set_led_frame(led_frame)
+                ):
+                    self._last_led_frame = led_frame
+                self._last_lines = lines
+        elif lines != self._last_lines:
+            with self._line_lamp_lock:
+                if self._try("line_lamps", lambda: self._set_line_lamps(lines)):
+                    self._last_lines = lines
 
         clock = output.get("clock", {})
         elapsed = max(0, int(clock.get("elapsed_seconds", 0)))
@@ -370,6 +391,61 @@ class OutputMapper:
             self.faults.append(f"{name}: {type(error).__name__}: {error}")
             return False
         return True
+
+    def _set_line_lamps(self, lines: list[bool]) -> None:
+        rendered = list(lines)
+        if self._held_controls is not None:
+            rendered.extend(
+                (
+                    self._held_controls.ptt,
+                    self._held_controls.police,
+                    self._held_controls.ems,
+                    self._held_controls.tap,
+                )
+            )
+        self.line_lamps.set_lines(rendered)
+
+    def _set_led_frame(
+        self,
+        frame: tuple[tuple[tuple[int, int, int], ...], int],
+    ) -> None:
+        pixels, brightness = frame
+        set_pixels = getattr(self.line_lamps, "set_pixels", None)
+        if set_pixels is None:
+            self.line_lamps.set_lines([any(pixel) for pixel in pixels])
+        else:
+            set_pixels(pixels, brightness)
+
+    @staticmethod
+    def _parse_led_frame(
+        value: object,
+    ) -> tuple[tuple[tuple[int, int, int], ...], int] | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise TypeError("output.leds must be a map")
+        brightness = value.get("brightness")
+        pixels = value.get("pixels")
+        if type(brightness) is not int or not 0 <= brightness <= 255:
+            raise ValueError("output.leds.brightness must be between 0 and 255")
+        if not isinstance(pixels, list) or len(pixels) != 16:
+            raise ValueError("output.leds.pixels must contain sixteen pixels")
+        parsed: list[tuple[int, int, int]] = []
+        for pixel in pixels:
+            if not isinstance(pixel, dict):
+                raise TypeError("output.leds pixel must be a map")
+            red, green, blue = (
+                pixel.get("red"),
+                pixel.get("green"),
+                pixel.get("blue"),
+            )
+            if any(
+                type(channel) is not int or not 0 <= channel <= 255
+                for channel in (red, green, blue)
+            ):
+                raise ValueError("output.leds pixel channels must be between 0 and 255")
+            parsed.append((red, green, blue))
+        return tuple(parsed), brightness
 
     def close(self) -> None:
         with self._epaper_condition:

@@ -69,7 +69,7 @@ class ProtocolValidationError(ValueError):
 
 def validate_input_message(message: dict[str, Any]) -> None:
     _require_keys(message, "protocol_version", "input_sequence", "expected_state_revision", "input")
-    if message["protocol_version"] != 3:
+    if message["protocol_version"] != 4:
         raise ProtocolValidationError("unsupported input protocol version")
     _require_int_range(message["input_sequence"], "input_sequence", 1, None)
     _require_int_range(message["expected_state_revision"], "expected_state_revision", 0, None)
@@ -81,6 +81,7 @@ def validate_input_message(message: dict[str, Any]) -> None:
         "held_controls",
         "directory_digits",
         "ring_line",
+        "crank_active",
         "tuning",
         "debug",
     )
@@ -119,6 +120,8 @@ def validate_input_message(message: dict[str, Any]) -> None:
     ring_line = input_state["ring_line"]
     if type(ring_line) is not int or not -1 <= ring_line < 12:
         raise ProtocolValidationError("ring_line must be -1 or a subscriber line")
+    if not isinstance(input_state["crank_active"], bool):
+        raise ProtocolValidationError("crank_active must be boolean")
 
     tuning = _map(input_state["tuning"], "tuning")
     for key in ("coarse", "fine"):
@@ -148,7 +151,7 @@ def validate_state_message(message: dict[str, Any]) -> None:
         "state_revision",
         "output",
     )
-    if message["protocol_version"] != 3:
+    if message["protocol_version"] != 4:
         raise ProtocolValidationError("unsupported state protocol version")
     _require_int_range(message["input_sequence"], "input_sequence", 1, None)
     _require_int_range(message["state_revision"], "state_revision", 0, None)
@@ -163,6 +166,7 @@ def validate_state_message(message: dict[str, Any]) -> None:
     _require_keys(
         output,
         "line_lamps",
+        "leds",
         "game_phase",
         "run_generation",
         "clock",
@@ -186,6 +190,17 @@ def validate_state_message(message: dict[str, Any]) -> None:
         or not all(isinstance(value, bool) for value in lamps)
     ):
         raise ProtocolValidationError("output.line_lamps must contain twelve booleans")
+    leds = _map(output["leds"], "output.leds")
+    _require_keys(leds, "brightness", "pixels")
+    _require_int_range(leds["brightness"], "output.leds.brightness", 0, 255)
+    pixels = leds["pixels"]
+    if not isinstance(pixels, list) or len(pixels) != 16:
+        raise ProtocolValidationError("output.leds.pixels must contain sixteen pixels")
+    for pixel in pixels:
+        pixel_map = _map(pixel, "output.leds pixel")
+        _require_keys(pixel_map, "red", "green", "blue")
+        for channel in ("red", "green", "blue"):
+            _require_int_range(pixel_map[channel], f"output.leds.{channel}", 0, 255)
     if not isinstance(output["game_phase"], str):
         raise ProtocolValidationError("output.game_phase must be a string")
     _require_int_range(output["run_generation"], "output.run_generation", 0, None)

@@ -9,7 +9,7 @@ class StateTests(unittest.TestCase):
     def test_input_message_uses_current_ring_line(self) -> None:
         message = input_message(PhysicalInput(), 1, 0, "test", [])
 
-        self.assertEqual(message["protocol_version"], 3)
+        self.assertEqual(message["protocol_version"], 4)
         self.assertEqual(message["input"]["ring_line"], -1)
 
 

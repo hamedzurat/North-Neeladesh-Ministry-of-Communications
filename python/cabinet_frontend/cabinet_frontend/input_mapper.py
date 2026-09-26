@@ -196,6 +196,7 @@ class PhysicalInputSource:
             held_controls=held_controls,
             directory_digits=directory_digits,
             ring_line=self.ring_line,
+            crank_active=event != 0,
             tuning={"coarse": self.tuning[0], "fine": self.tuning[1]},
         )
         self._log_status(physical, event, now)

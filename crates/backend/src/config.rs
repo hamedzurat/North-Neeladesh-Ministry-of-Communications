@@ -6,6 +6,32 @@ use serde::Deserialize;
 
 pub const LINES: u8 = 12;
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RgbColor {
+    pub(crate) red: u8,
+    pub(crate) green: u8,
+    pub(crate) blue: u8,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LedConfig {
+    pub(crate) brightness: u8,
+    pub(crate) call_wait: RgbColor,
+    pub(crate) call_expired: RgbColor,
+    pub(crate) connected_direct: RgbColor,
+    pub(crate) connected_operator: RgbColor,
+    pub(crate) tap: RgbColor,
+    pub(crate) control: RgbColor,
+    pub(crate) crank: RgbColor,
+    pub(crate) status_wait: RgbColor,
+    pub(crate) status_record: RgbColor,
+    pub(crate) status_stt: RgbColor,
+    pub(crate) status_llm: RgbColor,
+    pub(crate) status_tts: RgbColor,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct GameConfig {
@@ -19,6 +45,7 @@ pub(crate) struct GameConfig {
     pub(crate) shift_duration_seconds: u64,
     pub(crate) call_arrival_interval_seconds: u64,
     pub(crate) story_seed: u64,
+    pub(crate) leds: LedConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]

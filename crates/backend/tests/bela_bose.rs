@@ -21,6 +21,7 @@ fn input_with_ring(
             held_controls: HeldControls::default(),
             directory_digits: digits,
             ring_line,
+            crank_active: false,
             tuning: TuningState::default(),
             debug: InputDebug::default(),
         },
