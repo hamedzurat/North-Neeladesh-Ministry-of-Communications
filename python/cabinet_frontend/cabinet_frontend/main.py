@@ -95,16 +95,7 @@ class HardwareFrontend:
     def _handle_response(self, response: dict[str, Any]) -> None:
         input_sequence = response.get("input_sequence")
         if isinstance(input_sequence, int):
-            sent_at = self._sent_at.pop(input_sequence, None)
-            if sent_at is not None and (
-                response.get("accepted") is False or response.get("error") is not None
-            ):
-                latency_us = int((time.monotonic() - sent_at) * 1_000_000)
-                self.diagnostics.emit(
-                    "input_ack",
-                    (input_sequence, latency_us),
-                    f"BACKEND // input_ack sequence={input_sequence} latency_us={latency_us}",
-                )
+            self._sent_at.pop(input_sequence, None)
         with self._transport_lock:
             self.state_revision = int(response.get("state_revision", self.state_revision))
             self._last_response = dict(response)

@@ -235,13 +235,19 @@ class PipeWireCapture:
 class SoundDeviceCapture:
     """Continuous callback-based capture through PortAudio/PipeWire."""
 
-    def __init__(self, max_samples: int = MAX_CAPTURE_SAMPLES, status_sink: Any = print) -> None:
+    def __init__(
+        self,
+        max_samples: int = MAX_CAPTURE_SAMPLES,
+        status_sink: Any = print,
+        device: str | int | None = None,
+    ) -> None:
         try:
             import sounddevice
         except ImportError as error:
             raise RuntimeError("sounddevice is not installed") from error
 
         self.sounddevice = sounddevice
+        self.device = device
         self.max_samples = max_samples
         self.samples: deque[int] = deque(maxlen=max_samples)
         self.lock = threading.Lock()
@@ -266,6 +272,7 @@ class SoundDeviceCapture:
 
         try:
             self.stream = self.sounddevice.RawInputStream(
+                device=self.device,
                 samplerate=VOICE_INPUT_SAMPLE_RATE,
                 channels=1,
                 dtype="int16",
@@ -276,7 +283,6 @@ class SoundDeviceCapture:
         except Exception as error:
             self.stream = None
             raise RuntimeError(f"PortAudio capture setup failed: {error}") from error
-        self.diagnostics.emit("stream", "recording", "VOICE CAPTURE // library stream active")
 
     def start(self) -> None:
         if self.stream is None or not self.stream.active:
@@ -320,7 +326,6 @@ class SoundDeviceCapture:
             self.stream.stop()
             self.stream.close()
             self.stream = None
-        self.diagnostics.emit("stream", "closed", "VOICE CAPTURE // library stream stopped")
 
 
 class AlsaPlayback:
@@ -367,7 +372,12 @@ class AlsaPlayback:
 class SoundDevicePlayback:
     """Play PCM through the same PortAudio device layer as microphone capture."""
 
-    def __init__(self, status_sink: Any = print, gain: float = 1.0) -> None:
+    def __init__(
+        self,
+        status_sink: Any = print,
+        gain: float = 1.0,
+        device: str | int | None = None,
+    ) -> None:
         if not math.isfinite(gain) or gain <= 0:
             raise ValueError("playback gain must be a positive finite number")
         try:
@@ -381,6 +391,7 @@ class SoundDevicePlayback:
         self.diagnostics = ChangeLogger(status_sink)
         try:
             self.stream = sounddevice.RawOutputStream(
+                device=device,
                 samplerate=VOICE_AUDIO_SAMPLE_RATE,
                 channels=1,
                 dtype="int16",
@@ -726,8 +737,8 @@ class VoiceRelay:
             self.upload_connection.close()
 
 
-def _capture() -> Capture:
-    return SoundDeviceCapture(status_sink=print)
+def _capture(device: str | int | None = None) -> Capture:
+    return SoundDeviceCapture(status_sink=print, device=device)
 
 
 def run_embedded(
@@ -735,6 +746,8 @@ def run_embedded(
     voice_upload_address: tuple[str, int] | None = None,
     playback_gain: float = 1.0,
     local_audio_queue: queue.Queue[tuple[str, int]] | None = None,
+    playback_device: str | int | None = None,
+    capture_device: str | int | None = None,
 ) -> None:
     """Run the audio edge inside the Cabinet Frontend process.
 
@@ -747,12 +760,18 @@ def run_embedded(
     backend_address = os.environ.get("NN_BACKEND_ADDRESS")
     default_host = backend_host or (backend_address.rsplit(":", 1)[0] if backend_address else "127.0.0.1")
     address = os.environ.get("NN_VOICE_BACKEND_ADDRESS", f"{default_host}:7879")
+    if playback_device is None:
+        playback_device = os.environ.get("NN_VOICE_PLAYBACK_DEVICE", "pulse")
+    if capture_device is None:
+        capture_device = os.environ.get("NN_VOICE_CAPTURE_DEVICE", "pulse")
     host, port_text = address.rsplit(":", 1)
     diagnostics = ChangeLogger(print)
     while not stop.is_set():
         connection: socket.socket | None = None
         upload_connection: socket.socket | None = None
         relay: VoiceRelay | None = None
+        capture: Capture | None = None
+        playback: Playback | None = None
         try:
             connection = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             connection.connect((host, int(port_text)))
@@ -762,10 +781,16 @@ def run_embedded(
             else:
                 upload_host, upload_port = voice_upload_address
             upload_connection = socket.create_connection((upload_host, upload_port), timeout=5.0)
+            capture = _capture(capture_device)
+            playback = SoundDevicePlayback(
+                status_sink=print,
+                gain=playback_gain,
+                device=playback_device,
+            )
             relay = VoiceRelay(
                 connection,
-                _capture(),
-                SoundDevicePlayback(status_sink=print, gain=playback_gain),
+                capture,
+                playback,
                 upload_connection=upload_connection,
                 background_playback=True,
                 local_audio_queue=local_audio_queue,
@@ -784,8 +809,15 @@ def run_embedded(
         finally:
             if relay is not None:
                 relay.close()
-            elif connection is not None:
-                connection.close()
+            else:
+                if capture is not None:
+                    close_capture = getattr(capture, "close", None)
+                    if close_capture is not None:
+                        close_capture()
+                if playback is not None:
+                    playback.finish()
+                if connection is not None:
+                    connection.close()
             if upload_connection is not None:
                 upload_connection.close()
         stop.wait(1.0)

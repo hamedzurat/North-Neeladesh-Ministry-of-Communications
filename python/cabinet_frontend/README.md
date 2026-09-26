@@ -27,7 +27,11 @@ relay remains wire-compatible with the backend:
 tagged CBOR over connected
 UDP for control, status, and 16 kHz input PCM, plus RTP/L16 at 24 kHz for
 speaker audio. Configure `NN_VOICE_BACKEND_ADDRESS` during setup if the backend
-is not on localhost.
+is not on localhost. Playback defaults to the PortAudio `pulse` device so
+PipeWire can accept the 24 kHz RTP audio; override it with
+`NN_VOICE_PLAYBACK_DEVICE` when the Pi uses a different device name.
+Capture likewise defaults to `pulse` so PipeWire can resample the USB
+microphone to 16 kHz; override it with `NN_VOICE_CAPTURE_DEVICE` if needed.
 
 ## Diagnostics
 
