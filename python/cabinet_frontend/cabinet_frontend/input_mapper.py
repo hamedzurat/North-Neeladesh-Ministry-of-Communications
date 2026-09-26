@@ -240,6 +240,12 @@ class PhysicalInputSource:
             return "pair_detector: topology stale"
         return fault
 
+    @staticmethod
+    def _topology_label(topology: list[dict[str, str]]) -> str:
+        return ",".join(
+            f"{cord['first']}>{cord['second']}" for cord in topology
+        ) or "-"
+
     def _scan_topology(self) -> list[dict[str, str]]:
         first_topology, first_faults = self._scan_topology_once()
         second_topology, second_faults = self._scan_topology_once()
@@ -247,7 +253,12 @@ class PhysicalInputSource:
             self._reset_candidate()
             self.topology_status = "unstable"
             self._topology_rejections = [
-                "pair_detector: unstable scan; retaining last valid topology"
+                (
+                    "pair_detector: unstable scan; "
+                    f"first={self._topology_label(first_topology)} "
+                    f"second={self._topology_label(second_topology)}; "
+                    "retaining last valid topology"
+                )
             ]
             return list(self.topology)
         self._topology_rejections = first_faults
