@@ -13,9 +13,23 @@ MODEL_ROOT = Path(
 )
 WHISPER_MODEL = MODEL_ROOT / "ggml-base.en.bin"
 POCKET_VOICE_ROOT = Path(__file__).resolve().parents[1] / ".models"
+POCKET_VOICE_NAMES = (
+    "anna",
+    "alba",
+    "charles",
+    "vera",
+    "fantine",
+    "paul",
+    "eponine",
+    "azelma",
+    "george",
+    "mary",
+    "jane",
+    "michael",
+)
 POCKET_VOICES = {
-    f"pocket-line-{line}": POCKET_VOICE_ROOT / f"pocket-line-{line}.safetensors"
-    for line in range(12)
+    f"pocket-line-{line}": POCKET_VOICE_ROOT / f"{name}.safetensors"
+    for line, name in enumerate(POCKET_VOICE_NAMES)
 }
 WHISPER_BINARY = "whisper-cli"
 
