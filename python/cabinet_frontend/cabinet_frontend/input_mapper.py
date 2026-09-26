@@ -215,7 +215,7 @@ class PhysicalInputSource:
             tuple(
                 (connection["first"], connection["second"]) for connection in physical.cord_topology
             ),
-            tuple(self.faults),
+            tuple(self._fault_identity(fault) for fault in self.faults),
         )
         if status == self._last_status and (not self.faults or now < self._next_status_log):
             return
@@ -231,6 +231,12 @@ class PhysicalInputSource:
         log_runtime(message)
         self._last_status = status
         self._next_status_log = now + self.status_interval
+
+    @staticmethod
+    def _fault_identity(fault: str) -> str:
+        if fault.startswith("pair_detector: topology stale for "):
+            return "pair_detector: topology stale"
+        return fault
 
     def _scan_topology(self) -> list[dict[str, str]]:
         first_topology, first_faults = self._scan_topology_once()
@@ -357,8 +363,10 @@ class PhysicalInputSource:
             if first is None or second is None:
                 invalid_pin = first_pin if first is None else second_pin
                 return [], [
-                    (f"pair_detector: invalid endpoint pin {invalid_pin}; "
-                     "retaining last valid topology")
+                    (
+                        f"pair_detector: invalid endpoint pin {invalid_pin}; "
+                        "retaining last valid topology"
+                    )
                 ]
             if first == second:
                 return [], [
@@ -391,8 +399,10 @@ class PhysicalInputSource:
             ]
         if len(cords) > 8:
             return [], [
-                (f"pair_detector: found {len(cords)} cords, maximum is 8; "
-                 "retaining last valid topology")
+                (
+                    f"pair_detector: found {len(cords)} cords, maximum is 8; "
+                    "retaining last valid topology"
+                )
             ]
         return cords, []
 

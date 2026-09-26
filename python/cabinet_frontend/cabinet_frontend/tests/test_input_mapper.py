@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from cabinet_frontend.config import HardwareConfig
 from cabinet_frontend.input_mapper import PhysicalInputSource
-from cabinet_frontend.state import HeldControls
+from cabinet_frontend.state import HeldControls, PhysicalInput
 
 
 class Rotary:
@@ -328,3 +328,22 @@ class InputMapperTests(unittest.TestCase):
         self.assertIn("subscriber_0>operator", text)
         self.assertIn("tap_1>tap_2", text)
         self.assertEqual(text.count("[INPUT]"), 1)
+
+    def test_changing_stale_age_does_not_bypass_status_throttle(self) -> None:
+        source = PhysicalInputSource(
+            Rotary([0]),
+            Scanner([]),
+            {},
+            (0, 0, 0, 1),
+            status_interval=5,
+        )
+        physical = PhysicalInput()
+        output = StringIO()
+
+        with redirect_stdout(output):
+            source.faults = ["pair_detector: topology stale for 5.21s"]
+            source._log_status(physical, 0, 0)
+            source.faults = ["pair_detector: topology stale for 6.43s"]
+            source._log_status(physical, 0, 1)
+
+        self.assertEqual(output.getvalue().count("[INPUT]"), 1)
