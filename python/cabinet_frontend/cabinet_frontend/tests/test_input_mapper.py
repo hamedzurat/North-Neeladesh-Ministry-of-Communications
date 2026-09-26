@@ -344,6 +344,6 @@ class InputMapperTests(unittest.TestCase):
             source.faults = ["pair_detector: topology stale for 5.21s"]
             source._log_status(physical, 0, 0)
             source.faults = ["pair_detector: topology stale for 6.43s"]
-            source._log_status(physical, 0, 1)
+            source._log_status(physical, 0, 6)
 
         self.assertEqual(output.getvalue().count("[INPUT]"), 1)

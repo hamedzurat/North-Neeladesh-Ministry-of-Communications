@@ -217,7 +217,7 @@ class PhysicalInputSource:
             ),
             tuple(self._fault_identity(fault) for fault in self.faults),
         )
-        if status == self._last_status and (not self.faults or now < self._next_status_log):
+        if status == self._last_status:
             return
         message = (
             "INPUT // "
