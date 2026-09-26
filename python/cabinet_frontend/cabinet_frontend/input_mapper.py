@@ -266,6 +266,7 @@ class PhysicalInputSource:
             self._reset_candidate()
             self.topology_status = "ambiguous"
             return list(self.topology)
+        self._last_valid_scan_at = self._clock()
         required_scans = self.topology_confirmation_scans
         if not second_topology and self.topology:
             required_scans = max(required_scans, self.empty_topology_confirmation_scans)
@@ -279,7 +280,6 @@ class PhysicalInputSource:
                 "pair_detector: topology not yet stable; retaining last valid topology"
             ]
             return list(self.topology)
-        self._last_valid_scan_at = self._clock()
         self.topology_status = "valid" if second_topology else "empty"
         self.topology_stale = False
         return second_topology

@@ -72,8 +72,8 @@ class HardwareConfig:
     input_status_interval: float = 5.0
     pair_scan_interval: float = 0.1
     probe_settle_time: float = 0.001
-    topology_confirmation_scans: int = 3
-    empty_topology_confirmation_scans: int = 3
+    topology_confirmation_scans: int = 1
+    empty_topology_confirmation_scans: int = 2
     topology_stale_timeout: float = 1.0
     epaper_page_interval: float = 8.0
     epaper_update_delay: float = 0.75
