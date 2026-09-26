@@ -129,9 +129,9 @@ class InputMapperTests(unittest.TestCase):
             (0, 0, 0, 1),
             pair_scan_interval=0,
             topology_stale_timeout=1,
+            clock=lambda: 0,
         )
         source.poll(now=0)
-        source._last_valid_scan_at = 0
 
         source.poll(now=2)
 

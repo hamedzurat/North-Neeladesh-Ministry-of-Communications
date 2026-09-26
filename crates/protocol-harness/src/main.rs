@@ -227,6 +227,7 @@ fn message(sequence: u64, revision: u64, digits: [u8; 4]) -> InputMessage {
         expected_state_revision: revision,
         input: InputState {
             cord_topology: Vec::new(),
+            topology_revision: 0,
             held_controls: HeldControls {
                 ptt: true,
                 ..HeldControls::default()
@@ -238,6 +239,8 @@ fn message(sequence: u64, revision: u64, digits: [u8; 4]) -> InputMessage {
                 firmware_version: Some("harness".to_string()),
                 transport_connected: true,
                 device_faults: Vec::new(),
+                topology_status: "empty".to_string(),
+                topology_age_ms: 0,
             },
         },
     }

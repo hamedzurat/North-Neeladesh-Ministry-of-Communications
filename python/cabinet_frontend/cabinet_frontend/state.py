@@ -25,6 +25,9 @@ class HeldControls:
 @dataclass
 class PhysicalInput:
     cord_topology: list[dict[str, str]] = field(default_factory=list)
+    topology_revision: int = 0
+    topology_status: str = "unknown"
+    topology_age_ms: int = -1
     held_controls: HeldControls = field(default_factory=HeldControls)
     directory_digits: list[int] = field(default_factory=lambda: [0, 0, 0, 1])
     ring_line: int = -1
@@ -44,6 +47,7 @@ def input_message(
         "expected_state_revision": expected_state_revision,
         "input": {
             "cord_topology": physical.cord_topology,
+            "topology_revision": physical.topology_revision,
             "held_controls": physical.held_controls.to_wire(),
             "directory_digits": physical.directory_digits,
             "ring_line": physical.ring_line,
@@ -52,6 +56,8 @@ def input_message(
                 "firmware_version": firmware_version,
                 "transport_connected": True,
                 "device_faults": device_faults,
+                "topology_status": physical.topology_status,
+                "topology_age_ms": physical.topology_age_ms,
             },
         },
     }

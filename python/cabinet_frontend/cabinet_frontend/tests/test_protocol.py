@@ -50,6 +50,7 @@ class ProtocolTests(unittest.TestCase):
             "expected_state_revision": 0,
             "input": {
                 "cord_topology": [{"first": "subscriber_0", "second": "operator"}],
+                "topology_revision": 1,
                 "held_controls": {
                     "ptt": False,
                     "police": False,
@@ -63,6 +64,8 @@ class ProtocolTests(unittest.TestCase):
                     "firmware_version": "test",
                     "transport_connected": True,
                     "device_faults": [],
+                    "topology_status": "valid",
+                    "topology_age_ms": 0,
                 },
             },
         }
@@ -85,6 +88,7 @@ class ProtocolTests(unittest.TestCase):
                     {"first": "subscriber_0", "second": "operator"},
                     {"first": "subscriber_0", "second": "subscriber_1"},
                 ],
+                "topology_revision": 1,
                 "held_controls": {
                     "ptt": False,
                     "police": False,
@@ -98,6 +102,8 @@ class ProtocolTests(unittest.TestCase):
                     "firmware_version": "test",
                     "transport_connected": True,
                     "device_faults": [],
+                    "topology_status": "valid",
+                    "topology_age_ms": 0,
                 },
             },
         }

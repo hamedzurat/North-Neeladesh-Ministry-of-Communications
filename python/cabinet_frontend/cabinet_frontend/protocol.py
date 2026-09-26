@@ -77,6 +77,7 @@ def validate_input_message(message: dict[str, Any]) -> None:
     _require_keys(
         input_state,
         "cord_topology",
+        "topology_revision",
         "held_controls",
         "directory_digits",
         "ring_line",
@@ -96,6 +97,8 @@ def validate_input_message(message: dict[str, Any]) -> None:
                     "cord topology contains an invalid or repeated endpoint"
                 )
             endpoints.add(endpoint)
+
+    _require_int_range(input_state["topology_revision"], "topology_revision", 0, None)
 
     held = _map(input_state["held_controls"], "held_controls")
     held_keys = {"ptt", "police", "ems", "tap"}
@@ -130,6 +133,9 @@ def validate_input_message(message: dict[str, Any]) -> None:
         isinstance(value, str) for value in debug["device_faults"]
     ):
         raise ProtocolValidationError("debug.device_faults must be strings")
+    if not isinstance(debug.get("topology_status"), str):
+        raise ProtocolValidationError("debug.topology_status must be a string")
+    _require_int_range(debug.get("topology_age_ms"), "debug.topology_age_ms", -1, None)
 
 
 def validate_state_message(message: dict[str, Any]) -> None:

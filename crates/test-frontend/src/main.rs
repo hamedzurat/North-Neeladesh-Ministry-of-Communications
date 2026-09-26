@@ -2847,6 +2847,7 @@ fn input(
         expected_state_revision: revision,
         input: InputState {
             cord_topology: cords,
+            topology_revision: 0,
             held_controls: HeldControls {
                 ptt,
                 ..HeldControls::default()
@@ -2858,6 +2859,8 @@ fn input(
                 firmware_version: Some("text-test-frontend".into()),
                 transport_connected: true,
                 device_faults: vec![],
+                topology_status: "empty".to_string(),
+                topology_age_ms: 0,
             },
         },
     }

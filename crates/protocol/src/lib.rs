@@ -153,12 +153,15 @@ pub struct InputDebug {
     pub firmware_version: Option<String>,
     pub transport_connected: bool,
     pub device_faults: Vec<String>,
+    pub topology_status: String,
+    pub topology_age_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct InputState {
     pub cord_topology: Vec<CordConnection>,
+    pub topology_revision: u64,
     pub held_controls: HeldControls,
     pub directory_digits: [u8; 4],
     pub ring_line: i16,

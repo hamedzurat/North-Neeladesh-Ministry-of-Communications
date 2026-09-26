@@ -7,7 +7,7 @@ from threading import Lock
 
 @dataclass(frozen=True)
 class PairScanResult:
-    pairs: list[tuple[int, int]]
+    pairs: tuple[tuple[int, int], ...]
     status: str
     scan_id: int
     started_at: float
@@ -70,15 +70,16 @@ class McpPairDetector:
                     self._all_inputs()
                 except Exception as error:  # noqa: BLE001 - cleanup is part of scan safety
                     status = "hardware_error"
-                    fault = f"cleanup {type(error).__name__}: {error}"
+                    cleanup_fault = f"cleanup {type(error).__name__}: {error}"
+                    fault = f"{fault}; {cleanup_fault}" if fault else cleanup_fault
                     pairs = []
             finished_at = time.monotonic()
-            return PairScanResult(pairs, status, scan_id, started_at, finished_at, fault)
+            return PairScanResult(tuple(pairs), status, scan_id, started_at, finished_at, fault)
 
     def find_pairs(self) -> list[tuple[int, int]]:
         """Return pairs for legacy callers and the hardware smoke test."""
         result = self.scan()
-        return result.pairs
+        return list(result.pairs)
 
     def close(self) -> None:
         with self._scan_lock:

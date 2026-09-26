@@ -11,6 +11,7 @@ fn first_input(backend: &Backend) -> InputMessage {
         expected_state_revision: backend.debug_snapshot().run.state_revision,
         input: InputState {
             cord_topology: Vec::new(),
+            topology_revision: 0,
             held_controls: HeldControls::default(),
             directory_digits: [0, 0, 0, 1],
             ring_line: -1,

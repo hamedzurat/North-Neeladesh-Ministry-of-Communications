@@ -72,7 +72,7 @@ class PairDetectorTests(unittest.TestCase):
             result = detector.scan()
 
         self.assertEqual(result.status, "valid")
-        self.assertEqual(result.pairs, [(0, 2)])
+        self.assertEqual(result.pairs, ((0, 2),))
         self.assertTrue(all(pin.direction == Direction.INPUT for pin in mcp.pins))
         self.assertTrue(all(pin.pull == Pull.UP for pin in mcp.pins))
 

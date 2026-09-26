@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from typing import Protocol
 
 from .diagnostics import log_runtime
@@ -49,6 +50,7 @@ class PhysicalInputSource:
         topology_confirmation_scans: int = 1,
         empty_topology_confirmation_scans: int = 3,
         topology_stale_timeout: float = 1.0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.rotary = rotary
         self.scanner = scanner
@@ -64,6 +66,7 @@ class PhysicalInputSource:
         if topology_stale_timeout <= 0:
             raise ValueError("topology_stale_timeout must be positive")
         self.topology_stale_timeout = topology_stale_timeout
+        self._clock = clock
         self.controls = controls
         if status_interval <= 0:
             raise ValueError("status_interval must be positive")
@@ -90,12 +93,13 @@ class PhysicalInputSource:
         self._line_pairs: dict[int, list[tuple[int, int]]] = {}
         self._line_candidate: list[dict[str, str]] | None = None
         self._line_candidate_count = 0
-        self._empty_topology_scan_count = 0
         self._topology_candidate: list[dict[str, str]] | None = None
         self._topology_candidate_count = 0
         self.topology_revision = 0
         self.topology_stale = False
         self._last_valid_scan_at: float | None = None
+        self.topology_status = "unknown"
+        self.topology_fault: str | None = None
         self._scan_line = 0
         self._control_thread: threading.Thread | None = None
         self._rotary_thread: threading.Thread | None = None
@@ -180,6 +184,13 @@ class PhysicalInputSource:
         )
         physical = PhysicalInput(
             cord_topology=list(self.topology),
+            topology_revision=self.topology_revision,
+            topology_status=self.topology_status,
+            topology_age_ms=(
+                -1
+                if self._last_valid_scan_at is None
+                else max(0, int((now - self._last_valid_scan_at) * 1000))
+            ),
             held_controls=held_controls,
             directory_digits=directory_digits,
             ring_line=self.ring_line,
@@ -225,17 +236,17 @@ class PhysicalInputSource:
         first_topology, first_faults = self._scan_topology_once()
         second_topology, second_faults = self._scan_topology_once()
         if first_topology != second_topology or first_faults != second_faults:
+            self._reset_candidate()
+            self.topology_status = "unstable"
             self._topology_rejections = [
                 "pair_detector: unstable scan; retaining last valid topology"
             ]
             return list(self.topology)
         self._topology_rejections = first_faults
         if first_faults:
+            self._reset_candidate()
+            self.topology_status = "ambiguous"
             return list(self.topology)
-        if not second_topology and self.topology:
-            self._empty_topology_scan_count += 1
-        else:
-            self._empty_topology_scan_count = 0
         required_scans = self.topology_confirmation_scans
         if not second_topology and self.topology:
             required_scans = max(required_scans, self.empty_topology_confirmation_scans)
@@ -249,15 +260,17 @@ class PhysicalInputSource:
                 "pair_detector: topology not yet stable; retaining last valid topology"
             ]
             return list(self.topology)
-        self._last_valid_scan_at = time.monotonic()
+        self._last_valid_scan_at = self._clock()
+        self.topology_status = "valid" if second_topology else "empty"
+        self.topology_stale = False
         return second_topology
 
     def _scan_loop(self) -> None:
         while not self._scan_stop.is_set():
             try:
-                topology = self._scan_topology()
-                scan_faults = list(self._topology_rejections)
                 with self._topology_lock:
+                    topology = self._scan_topology()
+                    scan_faults = list(self._topology_rejections)
                     self._set_topology(topology)
                     self._scan_faults = scan_faults
             except Exception as error:  # noqa: BLE001 - hardware errors are reported by poll
@@ -298,11 +311,15 @@ class PhysicalInputSource:
             result = scan()
             status = getattr(result, "status", "valid")
             pairs = getattr(result, "pairs", [])
+            self.topology_status = status
+            self.topology_fault = getattr(result, "fault", None)
             if status not in {"valid", "empty"}:
                 fault = getattr(result, "fault", None) or status
                 return [], [f"pair_detector: scan {status}: {fault}"]
         else:
             pairs = self.scanner.find_pairs()
+            self.topology_status = "valid" if pairs else "empty"
+            self.topology_fault = None
         return self._topology_from_pairs(pairs)
 
     def _set_topology(self, topology: list[dict[str, str]]) -> None:
@@ -310,17 +327,23 @@ class PhysicalInputSource:
             self.topology_revision += 1
         self.topology = list(topology)
 
+    def _reset_candidate(self) -> None:
+        self._topology_candidate = None
+        self._topology_candidate_count = 0
+
     def _refresh_stale(self, now: float) -> None:
         if self._last_valid_scan_at is None:
             return
         self.topology_stale = now - self._last_valid_scan_at > self.topology_stale_timeout
         if self.topology_stale:
+            self._reset_candidate()
+            self.topology_status = "stale"
             self.faults.append(
                 f"pair_detector: topology stale for {now - self._last_valid_scan_at:.2f}s"
             )
 
     def _topology_from_pairs(
-        self, pairs: list[tuple[int, int]]
+        self, pairs: list[tuple[int, int]] | tuple[tuple[int, int], ...]
     ) -> tuple[list[dict[str, str]], list[str]]:
         cords: list[dict[str, str]] = []
         used_endpoints: set[str] = set()
@@ -331,8 +354,16 @@ class PhysicalInputSource:
         for first_pin, second_pin in pairs:
             first = self.pin_to_port.get(first_pin)
             second = self.pin_to_port.get(second_pin)
-            if first is None or second is None or first == second:
-                continue
+            if first is None or second is None:
+                invalid_pin = first_pin if first is None else second_pin
+                return [], [
+                    (f"pair_detector: invalid endpoint pin {invalid_pin}; "
+                     "retaining last valid topology")
+                ]
+            if first == second:
+                return [], [
+                    f"pair_detector: self-connection {first}; retaining last valid topology"
+                ]
             if first in used_endpoints or second in used_endpoints:
                 if first in used_endpoints:
                     repeated_endpoints.add(first)
@@ -358,7 +389,12 @@ class PhysicalInputSource:
                     f"ignored {rejected_cords} cord(s), retaining last valid topology"
                 )
             ]
-        return cords[:8], []
+        if len(cords) > 8:
+            return [], [
+                (f"pair_detector: found {len(cords)} cords, maximum is 8; "
+                 "retaining last valid topology")
+            ]
+        return cords, []
 
     def _ring_generator_line(self) -> int:
         for connection in self.topology:
