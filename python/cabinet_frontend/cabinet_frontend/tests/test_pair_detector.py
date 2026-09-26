@@ -43,10 +43,16 @@ class Pin:
 class Mcp:
     def __init__(self) -> None:
         self.pins: list[Pin] = []
+        self.gpio_reads = 0
         self.pins.extend(Pin(index, self.pins) for index in range(4))
 
     def get_pin(self, index: int) -> Pin:
         return self.pins[index]
+
+    @property
+    def gpio(self) -> int:
+        self.gpio_reads += 1
+        return sum(1 << index for index, pin in enumerate(self.pins) if pin.value)
 
 
 class FailingPin(Pin):
@@ -73,6 +79,7 @@ class PairDetectorTests(unittest.TestCase):
 
         self.assertEqual(result.status, "valid")
         self.assertEqual(result.pairs, ((0, 2),))
+        self.assertEqual(mcp.gpio_reads, 4)
         self.assertTrue(all(pin.direction == Direction.INPUT for pin in mcp.pins))
         self.assertTrue(all(pin.pull == Pull.UP for pin in mcp.pins))
 

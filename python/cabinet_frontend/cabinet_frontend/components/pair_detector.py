@@ -32,6 +32,7 @@ class McpPairDetector:
             raise ValueError("probe_settle_time must be non-negative")
         self._direction = Direction
         self._pull = Pull
+        self._mcp = mcp
         self.pins = [mcp.get_pin(index) for index in pins]
         self.pin_numbers = list(pins)
         self.probe_settle_time = probe_settle_time
@@ -50,15 +51,20 @@ class McpPairDetector:
             started_at = time.monotonic()
             pairs: list[tuple[int, int]] = []
             try:
+                samples: list[tuple[int, int]] = []
                 for index, pin in enumerate(self.pins):
                     self._all_inputs()
                     pin.pull = None
                     pin.direction = self._direction.OUTPUT
                     pin.value = False
                     time.sleep(self.probe_settle_time)
+                    samples.append((index, self._mcp.gpio))
+                for index, gpio in samples:
+                    probe_pin = self.pin_numbers[index]
                     for other in range(index + 1, len(self.pins)):
-                        if not self.pins[other].value:
-                            pairs.append((self.pin_numbers[index], self.pin_numbers[other]))
+                        other_pin = self.pin_numbers[other]
+                        if not (gpio & (1 << other_pin)):
+                            pairs.append((probe_pin, other_pin))
                 status = "valid" if pairs else "empty"
                 fault = None
             except Exception as error:  # noqa: BLE001 - hardware libraries vary
