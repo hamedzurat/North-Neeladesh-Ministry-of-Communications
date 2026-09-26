@@ -31,7 +31,7 @@ def parse_backend_address(value: str) -> tuple[str, int]:
 class HardwareConfig:
     backend_address: tuple[str, int] = ("127.0.0.1", 7878)
     voice_upload_address: tuple[str, int] = ("127.0.0.1", 7883)
-    voice_playback_gain: float = 1.5
+    voice_playback_gain: float = 1
     # Raspberry Pi BCM GPIO numbers. Keep every cabinet connection here so
     # hardware changes do not require edits across component implementations.
     mcp_sda: int = 2
