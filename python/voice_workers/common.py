@@ -33,34 +33,19 @@ POCKET_VOICES = {
 }
 WHISPER_BINARY = "whisper-cli"
 
-DEFAULT_DIALOGUE_PROMPT = """You are a configured subscriber in a telephone exchange.
-Generate only the subscriber's next spoken reply to the Exchange Operator.
-Use only the supplied Response Context. Do not invent facts, actions, routing, events, authority, or world state.
-Do not address the prompt, explain your role, or emit stage directions.
-Return exactly one JSON object with one string property: {{"dialogue":"..."}}.
-Keep the spoken reply under {max_dialogue_chars} characters.
-
-Response Context:
-{context_json}
-
-Exchange Operator transcript:
-{transcript}
-
-Example output:
-{{"dialogue":"I will answer that."}}
-"""
-
-
-def dialogue_prompt_template() -> str:
-    path = Path(os.environ.get("NN_EXCHANGE_CONFIG", Path(__file__).resolve().parents[2] / "exchange.toml"))
+def prompt_template(name: str) -> str:
+    path = Path(__file__).resolve().parents[2] / "crates/backend/src/prompts" / name
     try:
-        with path.open("rb") as config_file:
-            template = tomllib.load(config_file).get("dialogue_prompt_template")
-        if isinstance(template, str) and template.strip():
-            return template
-    except (OSError, tomllib.TOMLDecodeError):
-        pass
-    return DEFAULT_DIALOGUE_PROMPT
+        template = path.read_text()
+    except OSError as error:
+        fail(f"cannot read prompt {path}: {error}")
+    if not template.strip():
+        fail(f"prompt {path} is empty")
+    return template
+
+
+def world_knowledge() -> str:
+    return prompt_template("world_knowledge.txt")
 
 
 def recognition_prompt() -> str:

@@ -2614,9 +2614,12 @@ fn run_neel_story(
         text: "You connect LINE 3 to the Operator.",
     })?;
     let mut arnab_turns = turns;
-    for turn in 0..2 {
+    let turn_count = if path == "neel_direct" { 3 } else { 2 };
+    for turn in 0..turn_count {
         let task = if turn == 0 {
             "ask Arnab who he wants to be connected to"
+        } else if path == "neel_direct" && turn == 2 {
+            "ask Arnab for more information about Bela Bose"
         } else if path == "neel_arnab_unrelated_questions" {
             "ask Arnab an unrelated personal question about his favorite food"
         } else if path.contains("questions") {
@@ -2624,7 +2627,9 @@ fn run_neel_story(
         } else {
             "ask Arnab whether he knows Bela Bose's directory ID"
         };
-        let utterance = if path == "neel_arnab_unrelated_questions" && turn == 1 {
+        let utterance = if path == "neel_direct" && turn == 2 {
+            "Can you tell me more about her?".to_string()
+        } else if path == "neel_arnab_unrelated_questions" && turn == 1 {
             "What is your favorite food?".to_string()
         } else {
             player_utterance(player_command, &arnab, revision, &arnab_turns, task)?

@@ -3,9 +3,9 @@
 import json
 import os
 import sys
-import urllib.request
 
-from .common import fail, worker_timeout
+from .common import fail, prompt_template
+from .ollama import chat
 
 
 def main() -> int:
@@ -15,27 +15,15 @@ def main() -> int:
         text = request["text"]
         if not isinstance(prompt, str) or not isinstance(text, str) or not text.strip():
             fail("classifier request must contain prompt and text")
-        full_prompt = f"{prompt}\n\nPlayer text:\n{text}\n\nReturn JSON only. Example: {{\"classification\":\"success\"}}"
-        body = json.dumps(
-            {
-                "model": os.environ.get("NN_OLLAMA_CLASSIFIER_MODEL", "qwen3.5:4b"),
-                "messages": [{"role": "user", "content": full_prompt}],
-                "think": os.environ.get("NN_OLLAMA_THINK", "false").lower() in {"1", "true", "yes"},
-                "stream": False,
-                "options": {
-                    "temperature": 0.0,
-                    "num_predict": int(os.environ.get("NN_OLLAMA_CLASSIFIER_NUM_PREDICT", "8")),
-                },
-            }
-        ).encode()
-        request = urllib.request.Request(
-            os.environ.get("NN_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/") + "/api/chat",
-            data=body,
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(request, timeout=worker_timeout()) as response:
-            result = json.load(response)
-        content = result["message"]["content"].strip()
+        system = prompt_template("classifier_system.txt").format(story_rules=prompt)
+        content = chat(
+            model=os.environ.get("NN_OLLAMA_CLASSIFIER_MODEL", "qwen3.5:4b"),
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": text}],
+            options={
+                "temperature": 0.0,
+                "num_predict": int(os.environ.get("NN_OLLAMA_CLASSIFIER_NUM_PREDICT", "8")),
+            },
+        ).strip()
         try:
             parsed = json.loads(content)
             value = str(parsed["classification"]).strip().lower()

@@ -37,7 +37,6 @@ pub(crate) struct LedConfig {
 pub(crate) struct GameConfig {
     pub(crate) subscribers: Vec<SubscriberConfig>,
     pub(crate) voice_vocabulary: Vec<String>,
-    pub(crate) dialogue_prompt_template: String,
     pub(crate) active_calls: usize,
     pub(crate) patience_min_seconds: u64,
     pub(crate) patience_max_seconds: u64,
@@ -98,10 +97,6 @@ impl GameConfig {
                 .iter()
                 .all(|term| !term.trim().is_empty()),
             "exchange config {path:?}: voice_vocabulary cannot contain empty terms"
-        );
-        assert!(
-            !self.dialogue_prompt_template.trim().is_empty(),
-            "exchange config {path:?}: dialogue_prompt_template is required"
         );
         let mut seen = [false; LINES as usize];
         let mut seen_ids = std::collections::HashSet::new();

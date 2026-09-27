@@ -2,10 +2,11 @@
 
 import json
 import os
+import re
 import sys
-import urllib.request
 
-from .common import fail, worker_timeout
+from .common import fail, prompt_template, world_knowledge
+from .ollama import chat
 
 
 def task_guidance(task: str) -> str:
@@ -59,8 +60,10 @@ def task_guidance(task: str) -> str:
         )
     if "ems" in lowered or "medical" in lowered:
         return (
-            "Make this a direct medical-help request. Mention EMS, an ambulance, "
-            "or medical assistance and Shapla Apartments. Do not turn it into a question."
+            "Address EMS directly. Tell them to send an ambulance or medical help "
+            "to Shapla Apartments. Phrase it as a direct instruction, such as "
+            "'Please send an ambulance to Shapla Apartments.' Do not say that you "
+            "will send or dispatch help yourself, and do not turn it into a question."
         )
     if "pet" in lowered:
         return "Ask only about the caller's pet and its name. Do not add emergency questions."
@@ -110,49 +113,36 @@ def validate_task_output(task: str, text: str) -> None:
         and "shapla" in lowered_text
     ):
         fail("player output did not request Police at Shapla Apartments")
-    if ("ems" in lowered_task or "medical" in lowered_task) and not (
-        any(word in lowered_text for word in ("ems", "ambulance", "medical"))
-        and "shapla" in lowered_text
-    ):
-        fail("player output did not request medical help at Shapla Apartments")
+    if "ems" in lowered_task or "medical" in lowered_task:
+        if not (
+            any(word in lowered_text for word in ("ems", "ambulance", "medical"))
+            and "shapla" in lowered_text
+        ):
+            fail("player output did not request medical help at Shapla Apartments")
+        if not re.search(r"\b(?:please\s+)?(?:send|dispatch)\b", lowered_text):
+            fail("player output did not directly tell EMS to send help")
+        if re.search(r"\bi\s+(?:will|shall|am)\s+(?:send|dispatch)|\bi(?:'ll|'m)\s+(?:send|dispatch)", lowered_text):
+            fail("player output incorrectly said the operator would dispatch help")
 
 
 def main() -> int:
     try:
         request = json.load(sys.stdin)
         task = request.get("task", "continue the conversation")
-        prompt = (
-            "You are simulating a human telephone operator. Generate only the next "
-            "thing the operator would say. Follow the requested intent, but phrase "
-            "it in your own natural words. Never copy the examples verbatim. Do not "
-            "describe button presses or other actions. Return JSON with one text property.\n\n"
-            f"Intent: {task}\n"
-            f"Constraints: {task_guidance(str(task))}\n\n"
-            + json.dumps(request, ensure_ascii=True)
-            + '\n\nExample styles (do not copy): '
-            '{"text":"Could you send someone to the apartment?"}; '
-            '{"text":"What should I call you?"}'
+        system = prompt_template("operator_system.txt").format(world_knowledge=world_knowledge())
+        user = prompt_template("operator_user.txt").format(
+            task=task,
+            constraints=task_guidance(str(task)),
+            request_json=json.dumps(request, ensure_ascii=True),
         )
-        body = json.dumps(
-            {
-                "model": os.environ.get("NN_OLLAMA_PLAYER_MODEL", "qwen3.5:4b"),
-                "messages": [{"role": "user", "content": prompt}],
-                "think": os.environ.get("NN_OLLAMA_THINK", "false").lower() in {"1", "true", "yes"},
-                "format": "json",
-                "stream": False,
-                "options": {
-                    "temperature": 0.2,
-                    "num_predict": int(os.environ.get("NN_OLLAMA_PLAYER_NUM_PREDICT", "80")),
-                },
-            }
-        ).encode()
-        http_request = urllib.request.Request(
-            os.environ.get("NN_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/") + "/api/chat",
-            data=body,
-            headers={"Content-Type": "application/json"},
+        content = chat(
+            model=os.environ.get("NN_OLLAMA_PLAYER_MODEL", "qwen3.5:4b"),
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            options={
+                "temperature": 0.2,
+                "num_predict": int(os.environ.get("NN_OLLAMA_PLAYER_NUM_PREDICT", "80")),
+            },
         )
-        with urllib.request.urlopen(http_request, timeout=worker_timeout()) as response:
-            content = json.load(response)["message"]["content"]
         text = json.loads(content).get("text")
         if not isinstance(text, str) or not text.strip():
             fail("player model returned no text")

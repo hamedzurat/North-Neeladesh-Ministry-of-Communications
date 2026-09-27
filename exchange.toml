@@ -36,25 +36,8 @@ voice_vocabulary = [
     "bKash",
 ]
 
-dialogue_prompt_template = '''You are a configured subscriber in a telephone exchange.
-Generate only the subscriber's next spoken reply to the Exchange Operator.
-Use only the supplied Response Context. Do not invent facts, actions, routing, events, authority, or world state.
-Do not address the prompt, explain your role, or emit stage directions.
-Return exactly one JSON object with one string property: {{"dialogue":"..."}}.
-Keep the spoken reply under {max_dialogue_chars} characters.
-
-Response Context:
-{context_json}
-
-Exchange Operator transcript:
-{transcript}
-
-Example output:
-{{"dialogue":"I will answer that."}}
-'''
-
 [leds]
-brightness = 28
+brightness = 30
 call_wait = { red = 255, green = 255, blue = 0 }
 call_expired = { red = 255, green = 0, blue = 0 }
 connected_direct = { red = 255, green = 255, blue = 255 }
@@ -84,7 +67,7 @@ place = "Shapla Apartments"
 name = "Nusrat Rahman"
 role = "architect"
 private_info = "has a parrot named Tiya"
-voice_id = "pocket-line-1"
+voice_id = "george"
 
 [[subscribers]]
 id = 1023
@@ -93,7 +76,7 @@ place = "Neel University"
 name = "Prof. Kashem"
 role = "university professor"
 private_info = "has a tortoise named Dheere"
-voice_id = "pocket-line-2"
+voice_id = "giovanni"
 
 [[subscribers]]
 id = 1024
