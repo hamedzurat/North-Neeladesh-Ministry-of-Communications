@@ -70,12 +70,17 @@ def main() -> int:
     bela_recordings = {
         "professor_arnab.wav": [
             (kashem_voice, f"I would like to speak with {arnab_name}."),
-            (arnab_voice, "Hello."),
-            (kashem_voice, "Congratulations, you got the job. Welcome to Neel University family.",),
+            (arnab_voice, f"Yes, {arnab_name} speaking."),
+            (kashem_voice, "I am glad to inform you that we have liked your portfolio and you have been selected as a lecturer at Neel University. You can start from next Monday."),
+            (arnab_voice, "Oh thank you so much for the opportunity. This means a lot."),
         ],
         "belabose_wrong.wav": [
+            (bela_voice, "Hello"),
             (arnab_voice, "Hello, I am looking for Bela Bose."),
-            (bela_voice, "I am Bela Bose, but I do not know Arnab Bhattacharjee."),
+            (bela_voice, "Yes, this is Bela. But who am I speaking to?"),
+            (arnab_voice, "I am Arnab Bhattacharjee. Sorry. But I am looking for Bela, Bela Bose."),
+            (bela_voice, "Yes, this is Bela Bose."),
+            (arnab_voice, "Oh. I think I have the wrong number. Sorry for the bother."),
         ],
     }
     for filename, segments in bela_recordings.items():
@@ -115,19 +120,25 @@ def main() -> int:
 
     dirty_recordings = {
         "kamal_farhana.wav": [
-            (kamal_voice, f"{kamal_name}: I would like to place a short obituary notice for a former colleague."),
-            (farhana_voice, "Farhana: Of course. Please give me the name and the details you would like printed."),
-            (kamal_voice, f"{kamal_name}: Thank you. It is an ordinary notice; I appreciate your help."),
+            (kamal_voice, f"I would like to place a short obituary notice for a former colleague."),
+            (farhana_voice, "Of course. Please give me the name and the details you would like printed."),
+            (kamal_voice, f"Thank you. His name was Professor Rahim. He was my colleague at Neel University."),
+            (farhana_voice, "I am sorry to hear that. I will pass it on to the editorial team."),
+            (kamal_voice, "Thank you."),
         ],
         "tariq_farhana.wav": [
-            (tariq_voice, "Tariq: I need to report rotten grain at Koyal Market Depot."),
-            (tariq_voice, "Tariq: The merchants are hiding what happened, and I have signed delivery slips."),
-            (tariq_voice, "Tariq: Please protect my name when you investigate the report."),
+            (tariq_voice, "I need to report about the extortion by Sumon Mia's mob at Koyal Market Depot."),
+            (farhana_voice, "Ok. Are you sure this is not a misunderstanding?"),
+            (tariq_voice, "Yes. This is not the first time this happened."),
+            (farhana_voice, "Ok. I will send some journalists to investigate. He will get in touch with you."),
+            (tariq_voice, "Ok. Thanks."),
         ],
         "rehana_farhana.wav": [
-            (rehana_voice, "Rehana: I am calling because my newspaper insert was missing this morning."),
-            (farhana_voice, "Farhana: I am sorry about that. We will make sure the next copy includes it."),
-            (rehana_voice, "Rehana: Thank you. That is all I needed to know."),
+            (rehana_voice, "Hello. I would like to talk about an article idea on money plants."),
+            (farhana_voice, "Yes, go on."),
+            (rehana_voice, "Ok. As you know money plants are very popular as a domestic plant. So I want to publish an article on the history of money plants and its domestication."),
+            (farhana_voice, "Interesting idea. I will think about that. Call me again after a day or two."),
+            (rehana_voice, "Ok. Bye."),
         ],
     }
     for filename, segments in dirty_recordings.items():
@@ -139,10 +150,14 @@ def main() -> int:
     for victim_line in (0, 1, 4, 5, 10):
         victim_voice, victim_name = profile(config, victim_line)
         recordings = [
-            (nahid_voice, f"I'm Nahid from bKash. There is an urgent problem with your account."),
-            (victim_voice, f"{victim_name}: What kind of problem?"),
-            (nahid_voice, "Nahid: Confirm the code I just sent, and I can secure your balance immediately."),
-            (victim_voice, "The caller sounds suspicious, so I am not sharing any code."),
+            (nahid_voice, f"Hello. I'm Nahid from bKash. Are you {victim_name}?"),
+            (victim_voice, f"Yes this is {victim_name}."),
+            (nahid_voice, "There is an urgent problem with your account. Confirm the code you received by mail this weekend, and I can secure your balance immediately."),
+            (victim_voice, "I don't think I received any code."),
+            (nahid_voice, "Check your mails. There should be purple envelope with a code inside."),
+            (victim_voice, "Oh yes. I have found the code. It's 4201"),
+            (nahid_voice, "Congratulations. Your balanced has been secured."),
+            (victim_voice, "Thank you so much."),
         ]
         output = args.output / "nahid" / f"nahid_{victim_line}.wav"
         samples = [sample for voice_id, text in recordings for sample in synthesize(voice_id, text)]
