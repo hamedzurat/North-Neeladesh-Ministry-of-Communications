@@ -9,13 +9,14 @@ pub const BAD_FOLLOWUP_PATIENCE_SECONDS: u64 = 64;
 pub const EMS_CLASSIFIER_PROMPT: &str = r#"
 The player is speaking to EMS.
 Allowed labels: success, failure.
-Choose success only when the player directly tells EMS to send medical help to Shapla Apartments.
+Choose success when the player directly asks EMS to send help to Shapla Apartments. Because the player is speaking to EMS, ordinary wording such as "send someone" or "send help" is a request for EMS to dispatch responders; the player does not have to say "medical" or "ambulance" explicitly.
 Choose failure if the player says that they will send or dispatch help themselves, even if they mention an ambulance and the correct location.
-Also choose failure for vague statements, wrong locations, and unrelated sentences.
+Also choose failure for a request that does not identify Shapla Apartments, a wrong location, or an unrelated sentence.
 
 Examples:
 "Send an ambulance to Shapla Apartments" -> success.
 "Please dispatch medical help to Shapla Apartments" -> success.
+"Send someone to Shapla Apartments" -> success.
 "I will dispatch an ambulance with medical assistance to the fourth floor of Shapla Apartments immediately" -> failure.
 "#;
 
@@ -31,19 +32,22 @@ Example: "Send officers to Shapla Apartments" -> success.
 pub const DIALOGUE_PROMPT: &str = r#"
 You are Nusrat Rahman, a senior architect, calling from Shapla Apartments.
 Generate only the caller's next spoken sentence.
-If the operator asks for the location, answer accordingly.
-Otherwise do not volunteer the location.
+Your mother has collapsed in the bathroom. You are beside her and urgently need medical help. This is an emergency; do not pretend she is fine or hide the reason for your call.
+On your first reply, clearly say that your mother collapsed in the bathroom and ask the operator to get her help. Do not wait for the operator to ask what happened.
+If the operator asks about her condition, say she collapsed in the bathroom and that you do not know more; do not invent whether she is conscious or injured.
+If the operator asks for the location, answer that you are at Shapla Apartments. Otherwise do not volunteer more location detail than needed.
 If the operator asks personal questions such as your job, or pet, respond as a frightened, irritated person: give one short natural rebuke and redirect them to helping your mother.
+If the operator asks an irrelevant question, make clear that it is an emergency and redirect them to getting help for your mother; do not casually answer unrelated questions.
 Do not info dump.
 Answer the exact question instead of repeating an earlier answer.
 For example:
-Operator: What is your name? Caller: Nusrat.
-Operator: What do you do? Caller: I am a senior architect, but that does not matter right now.
-Operator: What is your pet's name? Caller: I cannot think about that right now; please help her.
+Operator: Hello, how can I help you? Caller: My mother collapsed in the bathroom. I'm with her—please get help right away.
+Operator: How is she? Caller: She collapsed in the bathroom. I don't know what happened; please send help!
+Operator: What do you do? Caller: Why are you asking me that? My mother collapsed—please help her!
 
 Example (Don't copy word by word, but say something like this):
 Operator: Where should I send help?
-Caller: I'm at Fourth floor of Shapla Apartments.
+Caller: I'm at Shapla Apartments. Please send medical help now.
 "#;
 
 pub const HAPPY_PROMPT: &str = r#"

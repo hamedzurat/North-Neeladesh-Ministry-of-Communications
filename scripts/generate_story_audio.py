@@ -69,15 +69,12 @@ def main() -> int:
     nahid_voice, _ = profile(config, 11)
     bela_recordings = {
         "professor_arnab.wav": [
-            (kashem_voice, f"{kashem_name}: I would like to speak with {arnab_name}."),
-            (arnab_voice, "Arnab: Hello."),
-            (
-                kashem_voice,
-                "Prof. Kashem: Congratulations, you got the job. Welcome to Neel University family.",
-            ),
+            (kashem_voice, f"I would like to speak with {arnab_name}."),
+            (arnab_voice, "Hello."),
+            (kashem_voice, "Congratulations, you got the job. Welcome to Neel University family.",),
         ],
         "belabose_wrong.wav": [
-            (arnab_voice, "Arnab Bhattacharjee: Hello, I am looking for Bela Bose."),
+            (arnab_voice, "Hello, I am looking for Bela Bose."),
             (bela_voice, "I am Bela Bose, but I do not know Arnab Bhattacharjee."),
         ],
     }

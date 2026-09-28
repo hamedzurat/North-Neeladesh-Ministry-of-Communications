@@ -17,6 +17,9 @@ class Spy:
     def show(self, value: object) -> None:
         self.calls.append(("seven_segment", value))
 
+    def restart_animation(self) -> None:
+        self.calls.append(("restart_animation",))
+
     def show_directory(self, value: object, page_index: int = 0) -> None:
         self.calls.append(("epaper", value, page_index))
 
@@ -175,3 +178,8 @@ class OutputMapperTests(unittest.TestCase):
                 ("printer", "RUN RESET // SHIFT READY"),
             ],
         )
+        self.assertEqual(
+            [call[1] for call in components[1].calls if call[0] == "seven_segment"],
+            ["0000", "0000"],
+        )
+        self.assertIn(("restart_animation",), components[1].calls)

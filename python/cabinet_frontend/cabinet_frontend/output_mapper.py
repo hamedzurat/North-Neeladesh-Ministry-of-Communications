@@ -113,6 +113,20 @@ class OutputMapper:
 
     def apply(self, output: dict[str, Any], now: float | None = None) -> None:
         self.faults.clear()
+        run_generation = int(output.get("run_generation", 0))
+        if self._last_run_generation is not None and run_generation != self._last_run_generation:
+            self._seen_printer_entries.clear()
+            self._last_calls = None
+            self._last_service = None
+            self._last_pages = None
+            self._page_index = 0
+            self._last_seven_segment = None
+            restart_animation = getattr(self.seven_segment, "restart_animation", None)
+            if restart_animation is not None:
+                self._try("seven_segment", restart_animation)
+            for key in ("calls", "service", "printer_output"):
+                self.diagnostics.reset(key)
+        self._last_run_generation = run_generation
         lines = [bool(value) for value in output.get("line_lamps", [False] * self.line_lamp_count)]
         lines = lines[: self.line_lamp_count]
         led_frame = self._parse_led_frame(output.get("leds"))
@@ -170,14 +184,6 @@ class OutputMapper:
             self._request_epaper(pages, self._page_index)
             self._next_page_at = (self.clock() if now is None else now) + self.epaper_page_interval
 
-        run_generation = int(output.get("run_generation", 0))
-        if self._last_run_generation is not None and run_generation != self._last_run_generation:
-            self._seen_printer_entries.clear()
-            self._last_calls = None
-            self._last_service = None
-            for key in ("calls", "service", "printer_output"):
-                self.diagnostics.reset(key)
-        self._last_run_generation = run_generation
         self._log_authoritative_activity(output)
         printer_entries = output.get("printer_output", [])
         for entry in printer_entries:

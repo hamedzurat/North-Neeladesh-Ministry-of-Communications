@@ -175,6 +175,7 @@ pub struct Backend {
     last_request: Option<InputMessage>,
     last_response: Option<StateMessage>,
     last_ptt: bool,
+    awaiting_restart_release: bool,
     voice_peer: Option<SocketAddr>,
     voice_session_id: u64,
     voice_state_revision: u64,
@@ -184,6 +185,7 @@ pub struct Backend {
     voice_subscriber_line: Option<u8>,
     voice_callee_line: Option<u8>,
     voice_status: Option<VoiceStatus>,
+    voice_led_minimum: Option<(VoiceStatus, Option<Instant>)>,
     voice_transcript: Option<String>,
     voice_response_text: Option<String>,
     voice_llm_prompt: Option<String>,
@@ -439,6 +441,7 @@ impl Backend {
             last_request: None,
             last_response: None,
             last_ptt: false,
+            awaiting_restart_release: false,
             voice_peer: None,
             voice_session_id: 0,
             voice_state_revision: 0,
@@ -448,6 +451,7 @@ impl Backend {
             voice_subscriber_line: None,
             voice_callee_line: None,
             voice_status: None,
+            voice_led_minimum: None,
             voice_transcript: None,
             voice_response_text: None,
             voice_llm_prompt: None,
@@ -552,8 +556,18 @@ impl Backend {
         }
         self.voice_peer = Some(peer);
         self.voice_session_id = message.session_id;
-        self.voice_status = Some(message.status);
+        self.set_voice_status(message.status);
         true
+    }
+
+    fn set_voice_status(&mut self, status: VoiceStatus) {
+        self.voice_status = Some(status);
+        if matches!(
+            status,
+            VoiceStatus::GeneratingResponse | VoiceStatus::Synthesizing | VoiceStatus::Playing
+        ) {
+            self.voice_led_minimum = Some((status, None));
+        }
     }
 
     fn voice_input_is_current(&self, input: &exchange_protocol::VoiceInputAudioMessage) -> bool {
@@ -673,6 +687,7 @@ impl Backend {
     pub fn reset_run(&mut self) {
         self.run_generation = self.run_generation.wrapping_add(1);
         self.state = initial_state(&self.config);
+        self.state.run_generation = self.run_generation;
         self.revision = 0;
         self.sequence = None;
         self.clock_started = Instant::now();
@@ -702,6 +717,7 @@ impl Backend {
         self.voice_subscriber_line = None;
         self.voice_callee_line = None;
         self.voice_status = None;
+        self.voice_led_minimum = None;
         self.voice_session_id = 0;
         self.voice_state_revision = 0;
         self.voice_transcript = None;
@@ -965,6 +981,34 @@ impl Backend {
                 &self.state,
             );
         }
+        let controls = &message.input.held_controls;
+        if self.awaiting_restart_release {
+            self.sequence = Some(message.input_sequence);
+            if !controls.ptt && !controls.police && !controls.ems {
+                self.awaiting_restart_release = false;
+            } else {
+                return StateMessage {
+                    protocol_version: PROTOCOL_VERSION,
+                    input_sequence: message.input_sequence,
+                    accepted: true,
+                    error: None,
+                    state_revision: self.revision,
+                    output: self.state.clone(),
+                };
+            }
+        }
+        if controls.ptt && controls.police && controls.ems {
+            self.reset_run();
+            self.awaiting_restart_release = true;
+            return StateMessage {
+                protocol_version: PROTOCOL_VERSION,
+                input_sequence: message.input_sequence,
+                accepted: true,
+                error: None,
+                state_revision: self.revision,
+                output: self.state.clone(),
+            };
+        }
         self.sequence = Some(message.input_sequence);
         let input = &message.input;
         self.log_input_topology(input);
@@ -1169,6 +1213,12 @@ impl Backend {
             let age = (elapsed_seconds as u64).saturating_sub(last);
             255_u64.saturating_sub(age.saturating_mul(128)) as u8
         });
+        let now = Instant::now();
+        let led_voice_status = self.voice_led_minimum.as_mut().and_then(|(status, until)| {
+            let deadline = until.get_or_insert_with(|| now + Duration::from_millis(500));
+            (now < *deadline).then_some(*status)
+        });
+        let led_voice_status = led_voice_status.or(self.voice_status);
         self.state.leds = led_frame(
             &self.config.leds,
             &self.state.line_lamps,
@@ -1179,7 +1229,7 @@ impl Backend {
             &self.recent_missed_lines,
             tap_lines,
             crank_level,
-            self.voice_status,
+            led_voice_status,
         );
         self.recent_missed_lines.clear();
         self.state.game_phase = if self.state.game_phase == GamePhase::Ended {
@@ -1476,7 +1526,7 @@ impl Backend {
                 ),
             );
         }
-        self.voice_status = Some(VoiceStatus::Cancelled);
+        self.set_voice_status(VoiceStatus::Cancelled);
         self.voice_speaker_active = false;
         let finished_elapsed_seconds = self.elapsed_seconds();
         for conversation in &mut self.voice_conversations {
@@ -2955,7 +3005,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         }
                     }
                     if let Ok(mut state) = backend.lock() {
-                        state.voice_status = Some(VoiceStatus::Transcribing);
+                        state.set_voice_status(VoiceStatus::Transcribing);
                     }
                     thread::spawn(move || {
                         let transcript_backend = Arc::clone(&worker_backend);
@@ -2963,16 +3013,15 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                         let mut sample_offset = 0_usize;
                         let result = generate_operator_response(
                             context,
-                            caller,
                             samples,
                             service_turn,
                             &|transcript| {
                                 if let Ok(mut state) = transcript_backend.lock() {
-                                    state.voice_status = if service_turn {
-                                        Some(VoiceStatus::Completed)
+                                    state.set_voice_status(if service_turn {
+                                        VoiceStatus::Completed
                                     } else {
-                                        Some(VoiceStatus::GeneratingResponse)
-                                    };
+                                        VoiceStatus::GeneratingResponse
+                                    });
                                     state.voice_transcript = Some(transcript.to_string());
                                     state.log(
                                         "CALL",
@@ -3129,7 +3178,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                             error.code, error.message
                                         ),
                                     );
-                                    state.voice_status = Some(VoiceStatus::Failed);
+                                    state.set_voice_status(VoiceStatus::Failed);
                                     state.voice_speaker_active = false;
                                     let finished_elapsed_seconds = state.elapsed_seconds();
                                     if let Some(id) = conversation_id
@@ -3178,7 +3227,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                 error: None,
                             };
                             if let Ok(mut state) = worker_backend.lock() {
-                                state.voice_status = Some(VoiceStatus::Completed);
+                                state.set_voice_status(VoiceStatus::Completed);
                                 state.voice_speaker_active = false;
                                 let finished_elapsed_seconds = state.elapsed_seconds();
                                 if let Some(id) = conversation_id
@@ -3259,7 +3308,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                 }
                                 state.complete_story_followup(caller);
                             }
-                            state.voice_status = Some(VoiceStatus::Playing);
+                            state.set_voice_status(VoiceStatus::Playing);
                             state.voice_speaker_active = true;
                             state.voice_transcript = status.transcript.clone();
                             state.voice_response_text = status.response_text.clone();
@@ -3294,7 +3343,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                             let _ = worker_socket.send_to(&datagram, address);
                         }
                         if let Ok(mut state) = worker_backend.lock() {
-                            state.voice_status = Some(VoiceStatus::Completed);
+                            state.set_voice_status(VoiceStatus::Completed);
                             state.voice_speaker_active = false;
                             let finished_elapsed_seconds = state.elapsed_seconds();
                             if let Some(id) = conversation_id
@@ -3355,7 +3404,6 @@ pub fn serve_voice_upload(listener: TcpListener, voice_target: SocketAddr) -> io
 
 fn generate_operator_response(
     context: ResponseContext,
-    caller: u8,
     samples: Vec<i16>,
     service_turn: bool,
     transcript_sink: &dyn Fn(&str),
@@ -3384,7 +3432,7 @@ fn generate_operator_response(
     llm_response_sink(&response);
     let mut audio = Vec::new();
     with_persistent_pocket_tts(|tts| {
-        tts.synthesize_stream(&format!("pocket-line-{caller}"), &response, &mut |chunk| {
+        tts.synthesize_stream(&context.profile.voice_id, &response, &mut |chunk| {
             audio.extend_from_slice(chunk);
             audio_sink(chunk)
         })
@@ -3646,7 +3694,7 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
                         if !response_text.is_empty() {
                             state.complete_story_followup(caller);
                         }
-                        state.voice_status = Some(VoiceStatus::Completed);
+                        state.set_voice_status(VoiceStatus::Completed);
                         state.voice_transcript = Some(request.text.clone());
                         state.voice_response_text = Some(response_text.clone());
                         state.voice_llm_prompt =
@@ -3756,6 +3804,61 @@ fn handle_debug_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) 
 #[cfg(test)]
 mod beat_selector_tests {
     use super::{Backend, CallPhase};
+    use exchange_protocol::{HeldControls, InputMessage, InputState, PROTOCOL_VERSION};
+
+    #[test]
+    fn holding_all_talk_buttons_resets_the_run() {
+        let mut backend = Backend::new_exchange();
+        backend.completed = 7;
+        let response = backend.apply_input_message(InputMessage {
+            protocol_version: PROTOCOL_VERSION,
+            input_sequence: 1,
+            expected_state_revision: 0,
+            input: InputState {
+                held_controls: HeldControls {
+                    ptt: true,
+                    police: true,
+                    ems: true,
+                    ..HeldControls::default()
+                },
+                ..InputState::default()
+            },
+        });
+
+        assert!(response.accepted);
+        assert_eq!(backend.completed, 0);
+        assert_eq!(response.state_revision, 0);
+        assert!(!response.output.speaker_active);
+        assert!(!backend.calls.is_empty());
+
+        let generation = backend.run_generation;
+        let held_response = backend.apply_input_message(InputMessage {
+            protocol_version: PROTOCOL_VERSION,
+            input_sequence: 2,
+            expected_state_revision: 0,
+            input: InputState {
+                held_controls: HeldControls {
+                    ptt: true,
+                    police: true,
+                    ems: true,
+                    ..HeldControls::default()
+                },
+                ..InputState::default()
+            },
+        });
+        assert!(held_response.accepted);
+        assert_eq!(backend.run_generation, generation);
+        assert_eq!(backend.revision, 0);
+
+        let released_response = backend.apply_input_message(InputMessage {
+            protocol_version: PROTOCOL_VERSION,
+            input_sequence: 3,
+            expected_state_revision: 0,
+            input: InputState::default(),
+        });
+        assert!(released_response.accepted);
+        assert_eq!(backend.revision, 1);
+    }
 
     #[test]
     fn new_exchange_starts_with_selected_story_calls() {

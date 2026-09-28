@@ -13,6 +13,7 @@ class Tm1637Display:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._wake = threading.Event()
+        self._restart_animation = threading.Event()
         self._target = "0000"
         self._displayed = "0000"
         self._colon_visible = True
@@ -26,6 +27,11 @@ class Tm1637Display:
     def show(self, text: str) -> None:
         with self._lock:
             self._target = text[:4]
+        self._wake.set()
+
+    def restart_animation(self) -> None:
+        """Replay the power-on display sequence without recreating the device."""
+        self._restart_animation.set()
         self._wake.set()
 
     def _print(self, text: str, colon: bool = False) -> None:
@@ -91,6 +97,11 @@ class Tm1637Display:
         next_colon = time.monotonic() + 0.5
 
         while not self._stop.is_set():
+            if self._restart_animation.is_set():
+                self._restart_animation.clear()
+                self._startup()
+                next_colon = time.monotonic() + 0.5
+                continue
             now = time.monotonic()
             if self._roll_digits():
                 self._stop.wait(0.07)
