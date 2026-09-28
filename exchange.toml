@@ -38,27 +38,27 @@ voice_vocabulary = [
 
 [leds]
 brightness = 30
-call_wait = { red = 255, green = 255, blue = 0 }
-call_expired = { red = 255, green = 0, blue = 0 }
-connected_direct = { red = 255, green = 255, blue = 255 }
-connected_operator = { red = 0, green = 255, blue = 0 }
-tap = { red = 0, green = 80, blue = 255 }
-control = { red = 255, green = 255, blue = 255 }
-crank = { red = 255, green = 255, blue = 255 }
-status_wait = { red = 24, green = 24, blue = 24 }
-status_record = { red = 255, green = 80, blue = 0 }
-status_stt = { red = 0, green = 80, blue = 255 }
-status_llm = { red = 180, green = 0, blue = 255 }
-status_tts = { red = 0, green = 255, blue = 80 }
+call_wait = { red = 255, green = 255, blue = 0 } # Yellow
+call_expired = { red = 255, green = 0, blue = 0 } # Red
+connected_direct = { red = 255, green = 255, blue = 255 } # White
+connected_operator = { red = 0, green = 255, blue = 0 } # Green
+tap = { red = 0, green = 80, blue = 255 } # Blue
+control = { red = 255, green = 255, blue = 255 } # White
+crank = { red = 255, green = 255, blue = 255 } # White
+status_wait = { red = 24, green = 24, blue = 24 } # Dark Gray (Dim)
+status_record = { red = 255, green = 80, blue = 0 } # Orange
+status_stt = { red = 0, green = 80, blue = 255 } # Blue
+status_llm = { red = 180, green = 0, blue = 255 } # Purple
+status_tts = { red = 0, green = 255, blue = 80 } # Spring Green
 
 [[subscribers]]
 id = 1021
 line = 0
 place = "Mohona Heights"
-name = "Rafiq Ahmed"
-role = "building caretaker"
-private_info = "has a rabbit named Chhotu"
-voice_id = "pocket-line-0"
+name = "Mirazul Islam"
+role = "CD seller"
+private_info = "has a dog named Kutta"
+voice_id = "paul"
 
 [[subscribers]]
 id = 1022
@@ -67,7 +67,7 @@ place = "Shapla Apartments"
 name = "Nusrat Rahman"
 role = "architect"
 private_info = "has a parrot named Tiya"
-voice_id = "george"
+voice_id = "anna"
 
 [[subscribers]]
 id = 1023
@@ -85,7 +85,7 @@ place = "Shadhin Housing"
 name = "Arnab Bhattacharjee"
 role = "junior engineer"
 private_info = "has a hamster named Golu"
-voice_id = "pocket-line-3"
+voice_id = "george"
 
 [[subscribers]]
 id = 1031
@@ -94,7 +94,7 @@ place = "Meghna Abashon"
 name = "Bela Bose"
 role = "librarian"
 private_info = "has a dog named Momo"
-voice_id = "pocket-line-4"
+voice_id = "caro_davy"
 
 [[subscribers]]
 id = 1032
@@ -103,7 +103,7 @@ place = "Padma Nibash"
 name = "Bela Bose"
 role = "school teacher"
 private_info = "has a cat named Tuli"
-voice_id = "pocket-line-5"
+voice_id = "cosette"
 
 [[subscribers]]
 id = 1025
@@ -112,7 +112,7 @@ place = "Secret Police"
 name = "Agent Rahman"
 role = "intelligence officer"
 private_info = "has an aquarium with goldfish"
-voice_id = "pocket-line-6"
+voice_id = "alba"
 
 [[subscribers]]
 id = 1026
@@ -121,7 +121,7 @@ place = "Bagha News"
 name = "Farhana"
 role = "newspaper editor"
 private_info = "has a canary named Shonali"
-voice_id = "pocket-line-7"
+voice_id = "azelma"
 
 [[subscribers]]
 id = 1027
@@ -130,7 +130,7 @@ place = "Koyal Market"
 name = "Tariq"
 role = "warehouse clerk"
 private_info = "has a pug named Bagha"
-voice_id = "pocket-line-8"
+voice_id = "bill_boerst"
 
 [[subscribers]]
 id = 1028
@@ -139,7 +139,7 @@ place = "Karnafuli Colony"
 name = "Dr. Kamal"
 role = "retired professor"
 private_info = "has a pigeon named Bakum"
-voice_id = "pocket-line-9"
+voice_id = "charles"
 
 [[subscribers]]
 id = 1029
@@ -148,7 +148,7 @@ place = "Teesta Bhaban"
 name = "Rehana"
 role = "botanist"
 private_info = "has a white cat named Snow"
-voice_id = "pocket-line-10"
+voice_id = "eponine"
 
 [[subscribers]]
 id = 1030
@@ -157,4 +157,4 @@ place = "Shonarpara Tower"
 name = "Nahid"
 role = "call center agent"
 private_info = "has a puppy named Sheru"
-voice_id = "pocket-line-11"
+voice_id = "michael"
