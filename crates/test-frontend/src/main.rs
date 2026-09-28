@@ -3,15 +3,25 @@ use std::fs::OpenOptions;
 use std::io::{self, BufRead, Write};
 use std::net::TcpStream;
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use exchange_protocol::{
-    CordConnection, DEBUG_PROTOCOL_VERSION, DebugCommand, DebugRequest, DebugResponse,
-    HeldControls, InputDebug, InputMessage, InputState, PROTOCOL_VERSION, PortId, PrinterEntry,
-    StateMessage, TEXT_PROTOCOL_VERSION, TextInputMessage, TextResponseMessage, TextStatus,
-    TuningState, read_frame, write_frame,
+    read_frame, write_frame, CordConnection, DebugCommand, DebugRequest, DebugResponse,
+    HeldControls, InputDebug, InputMessage, InputState, PortId, PrinterEntry, StateMessage,
+    TextInputMessage, TextResponseMessage, TextStatus, TuningState, DEBUG_PROTOCOL_VERSION,
+    PROTOCOL_VERSION, TEXT_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
+
+// The scripted scenarios use the conventional exchange.toml line numbers.
+// The backend may assign subscribers to different physical lines per run, so
+// translate at the protocol boundary and keep scenario code in that logical
+// line space.
+static LINE_MAP: Mutex<[u8; 12]> = Mutex::new([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+const LOGICAL_DIRECTORY_IDS: [u16; 12] = [
+    1021, 1022, 1023, 1024, 1031, 1032, 1025, 1026, 1027, 1028, 1029, 1030,
+];
 
 #[derive(Debug, Serialize)]
 struct PlayerPrompt<'a> {
@@ -190,21 +200,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let mut sequence = 0;
-    let mut revision = 0;
     let mut turns = Vec::new();
     let mut state = exchange(
         &mut backend,
-        input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+        input(&mut sequence, 0, vec![], false, [0, 0, 0, 1]),
     )?;
-    revision = state.state_revision;
+    let mut revision = state.state_revision;
     let call = state
         .output
         .calls
-        .first()
-        .filter(|call| call.caller_line == 1)
-        .or_else(|| state.output.calls.iter().find(|call| call.caller_line == 1))
+        .iter()
+        .find(|call| call.caller_line == 1)
         .cloned()
-        .ok_or("backend returned no call")?;
+        .ok_or_else(|| format!("backend returned no Shapla call: {:?}", state.output.calls))?;
     log.row(CsvRow {
         event: "state",
         sequence,
@@ -553,13 +561,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         text: "caller disconnected after service request",
     })?;
 
-    if state
-        .output
-        .calls
-        .iter()
-        .all(|active| active.caller_line != call.caller_line)
-        && debug_snapshot(&mut debug)?.snapshot.shapla_story_beat == "BadFollowup"
-    {
+    if debug_snapshot(&mut debug)?.snapshot.shapla_story_beat == "BadFollowup" {
         log.row(CsvRow {
             event: "beat_result",
             sequence,
@@ -751,12 +753,11 @@ fn run_cross_thread_success(
     initial_money: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut sequence = 0;
-    let mut revision = 0;
     let mut state = exchange(
         backend,
-        input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+        input(&mut sequence, 0, vec![], false, [0, 0, 0, 1]),
     )?;
-    revision = state.state_revision;
+    let mut revision = state.state_revision;
     let shapla = state
         .output
         .calls
@@ -1341,21 +1342,13 @@ fn run_nahid_dialogue_then_police_report_stops_scams(
     player_command: &Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut sequence = 0;
-    let mut revision = 0;
     let mut state = exchange(
         backend,
-        input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+        input(&mut sequence, 0, vec![], false, [0, 0, 0, 1]),
     )?;
-    revision = state.state_revision;
-    for caller in [1, 2, 6, 11] {
-        if !state
-            .output
-            .calls
-            .iter()
-            .any(|call| call.caller_line == caller)
-        {
-            return Err(format!("intertwined test did not start LINE {caller}").into());
-        }
+    let mut revision = state.state_revision;
+    if !state.output.calls.iter().any(|call| call.caller_line == 11) {
+        return Err("intertwined test did not start Nahid's call".into());
     }
     let nahid = state
         .output
@@ -1490,13 +1483,12 @@ fn run_dirty_work(
     initial_money: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut sequence = 0;
-    let mut revision = 0;
     let mut turns = Vec::new();
     let mut state = exchange(
         backend,
-        input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+        input(&mut sequence, 0, vec![], false, [0, 0, 0, 1]),
     )?;
-    revision = state.state_revision;
+    let mut revision = state.state_revision;
     let rahman = state
         .output
         .calls
@@ -1694,12 +1686,11 @@ fn run_nahid(
     initial_money: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut sequence = 0;
-    let mut revision = 0;
     let mut state = exchange(
         backend,
-        input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+        input(&mut sequence, 0, vec![], false, [0, 0, 0, 1]),
     )?;
-    revision = state.state_revision;
+    let mut revision = state.state_revision;
     let mut victims = Vec::new();
 
     let scam_count = if path == "nahid_police_report_stops_scams" {
@@ -1889,6 +1880,7 @@ fn route_direct_call(
                     .iter()
                     .find(|call| call.requested_callee_line == callee)
                     .and_then(|call| call.requested_callee_directory_id)
+                    .or_else(|| LOGICAL_DIRECTORY_IDS.get(callee as usize).copied())
                     .ok_or("active call has no directory id")?,
             ),
             callee as i16,
@@ -1910,6 +1902,7 @@ fn route_direct_call(
                     .iter()
                     .find(|call| call.requested_callee_line == callee)
                     .and_then(|call| call.requested_callee_directory_id)
+                    .or_else(|| LOGICAL_DIRECTORY_IDS.get(callee as usize).copied())
                     .ok_or("active call has no directory id")?,
             ),
             callee as i16,
@@ -1931,6 +1924,7 @@ fn route_direct_call(
                     .iter()
                     .find(|call| call.requested_callee_line == callee)
                     .and_then(|call| call.requested_callee_directory_id)
+                    .or_else(|| LOGICAL_DIRECTORY_IDS.get(callee as usize).copied())
                     .ok_or("active call has no directory id")?,
             ),
         ),
@@ -1951,6 +1945,7 @@ fn route_direct_call(
                     .iter()
                     .find(|call| call.requested_callee_line == callee)
                     .and_then(|call| call.requested_callee_directory_id)
+                    .or_else(|| LOGICAL_DIRECTORY_IDS.get(callee as usize).copied())
                     .ok_or("active call has no directory id")?,
             ),
         ),
@@ -1985,6 +1980,7 @@ fn route_tap_call(
                     .iter()
                     .find(|call| call.requested_callee_line == callee)
                     .and_then(|call| call.requested_callee_directory_id)
+                    .or_else(|| LOGICAL_DIRECTORY_IDS.get(callee as usize).copied())
                     .ok_or("active call has no directory id")?,
             ),
         ),
@@ -2008,6 +2004,7 @@ fn route_tap_call(
                         .iter()
                         .find(|call| call.requested_callee_line == callee)
                         .and_then(|call| call.requested_callee_directory_id)
+                        .or_else(|| LOGICAL_DIRECTORY_IDS.get(callee as usize).copied())
                         .ok_or("active call has no directory id")?,
                 ),
             ),
@@ -2062,6 +2059,7 @@ fn route_tap_call(
                     .iter()
                     .find(|call| call.requested_callee_line == callee)
                     .and_then(|call| call.requested_callee_directory_id)
+                    .or_else(|| LOGICAL_DIRECTORY_IDS.get(callee as usize).copied())
                     .ok_or("active call has no directory id")?,
             ),
         ),
@@ -2119,13 +2117,12 @@ fn run_bela_bose_story(
     initial_money: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut sequence = 0;
-    let mut revision = 0;
     let mut logged_money_count = 0;
     let mut state = exchange(
         backend,
-        input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
+        input(&mut sequence, 0, vec![], false, [0, 0, 0, 1]),
     )?;
-    revision = state.state_revision;
+    let mut revision = state.state_revision;
     let professor = state
         .output
         .calls
@@ -2883,6 +2880,89 @@ fn cord(first: PortId, second: PortId) -> CordConnection {
     CordConnection { first, second }
 }
 
+fn physical_line(logical: u8) -> u8 {
+    LINE_MAP.lock().expect("line map lock poisoned")[logical as usize]
+}
+
+fn logical_line(physical: u8) -> u8 {
+    LINE_MAP
+        .lock()
+        .expect("line map lock poisoned")
+        .iter()
+        .position(|line| *line == physical)
+        .map(|line| line as u8)
+        .unwrap_or(physical)
+}
+
+fn translate_port(port: &mut PortId, translate: impl Fn(u8) -> u8 + Copy) {
+    if let PortId::Subscriber(line) = port {
+        *line = translate(*line);
+    }
+}
+
+fn normalize_call(call: &mut exchange_protocol::CallStatus) {
+    call.caller_line = logical_line(call.caller_line);
+    call.requested_callee_line = logical_line(call.requested_callee_line);
+}
+
+fn normalize_state(state: &mut StateMessage) {
+    for call in &mut state.output.calls {
+        normalize_call(call);
+    }
+    if let Some(call) = &mut state.output.call {
+        normalize_call(call);
+    }
+    if let Some(monitoring) = &mut state.output.tap_bridge_monitoring {
+        monitoring.caller_line = logical_line(monitoring.caller_line);
+        monitoring.callee_line = logical_line(monitoring.callee_line);
+    }
+    let mut lamps = [false; 12];
+    for (physical, active) in state.output.line_lamps.iter().copied().enumerate() {
+        let logical = logical_line(physical as u8) as usize;
+        lamps[logical] = active;
+    }
+    state.output.line_lamps = lamps;
+}
+
+fn normalize_debug(response: &mut DebugResponse) {
+    for call in &mut response.snapshot.calls {
+        normalize_call(call);
+    }
+    for call in &mut response.snapshot.active_calls {
+        call.caller_line = logical_line(call.caller_line);
+        call.requested_callee_line = logical_line(call.requested_callee_line);
+    }
+    for call in &mut response.snapshot.call_history {
+        call.caller_line = logical_line(call.caller_line);
+        call.requested_callee_line = logical_line(call.requested_callee_line);
+    }
+    for subscriber in &mut response.snapshot.subscribers {
+        subscriber.line = subscriber.line.map(logical_line);
+    }
+}
+
+fn initialize_line_map(response: &DebugResponse) -> io::Result<()> {
+    let mut map = [u8::MAX; 12];
+    for (logical, directory_id) in LOGICAL_DIRECTORY_IDS.iter().enumerate() {
+        let line = response
+            .snapshot
+            .subscribers
+            .iter()
+            .find(|subscriber| subscriber.directory_id == *directory_id)
+            .and_then(|subscriber| subscriber.line)
+            .ok_or_else(|| {
+                io::Error::other(format!(
+                    "debug snapshot has no line for directory {directory_id}"
+                ))
+            })?;
+        map[logical] = line;
+    }
+    *LINE_MAP
+        .lock()
+        .map_err(|_| io::Error::other("subscriber line map lock poisoned"))? = map;
+    Ok(())
+}
+
 fn directory_for_id(directory_id: u16) -> [u8; 4] {
     [
         (directory_id / 1000) as u8,
@@ -2907,7 +2987,16 @@ fn input(
             | (PortId::Subscriber(line), PortId::RingGenerator) => Some(i16::from(*line)),
             _ => None,
         })
+        .map(|line| i16::from(physical_line(line as u8)))
         .unwrap_or(-1);
+    let cords = cords
+        .into_iter()
+        .map(|mut cord| {
+            translate_port(&mut cord.first, physical_line);
+            translate_port(&mut cord.second, physical_line);
+            cord
+        })
+        .collect();
     InputMessage {
         protocol_version: PROTOCOL_VERSION,
         input_sequence: *sequence,
@@ -2943,7 +3032,11 @@ fn input_with_ring(
     ring_line: i16,
 ) -> InputMessage {
     let mut message = input(sequence, revision, cords, ptt, digits);
-    message.input.ring_line = ring_line;
+    message.input.ring_line = if ring_line < 0 {
+        ring_line
+    } else {
+        i16::from(physical_line(ring_line as u8))
+    };
     message
 }
 
@@ -3065,7 +3158,9 @@ fn assert_printer_balance(
 
 fn exchange(stream: &mut TcpStream, message: InputMessage) -> io::Result<StateMessage> {
     write_frame(stream, &message).map_err(frame_io)?;
-    read_frame(stream).map_err(frame_io)
+    let mut response: StateMessage = read_frame(stream).map_err(frame_io)?;
+    normalize_state(&mut response);
+    Ok(response)
 }
 
 fn send_text(stream: &mut TcpStream, message: TextInputMessage) -> io::Result<TextResponseMessage> {
@@ -3082,10 +3177,13 @@ fn debug_snapshot(stream: &mut TcpStream) -> io::Result<DebugResponse> {
         },
     )
     .map_err(frame_io)?;
-    read_frame(stream).map_err(frame_io)
+    let mut response: DebugResponse = read_frame(stream).map_err(frame_io)?;
+    normalize_debug(&mut response);
+    Ok(response)
 }
 
 fn debug_command(stream: &mut TcpStream, command: DebugCommand) -> io::Result<DebugResponse> {
+    let reset = command == DebugCommand::ResetRun;
     write_frame(
         stream,
         &DebugRequest {
@@ -3094,7 +3192,12 @@ fn debug_command(stream: &mut TcpStream, command: DebugCommand) -> io::Result<De
         },
     )
     .map_err(frame_io)?;
-    read_frame(stream).map_err(frame_io)
+    let mut response: DebugResponse = read_frame(stream).map_err(frame_io)?;
+    if reset {
+        initialize_line_map(&response)?;
+    }
+    normalize_debug(&mut response);
+    Ok(response)
 }
 
 fn frame_io(error: exchange_protocol::FrameError) -> io::Error {

@@ -94,7 +94,6 @@ pub fn audio_path(caller: u16, callee: u16) -> Option<PathBuf> {
     Some(Path::new("assets/stories/bela_bose").join(name))
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Beat {
     ProfessorRouting,

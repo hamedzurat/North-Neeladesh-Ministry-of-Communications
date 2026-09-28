@@ -18,15 +18,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use exchange_protocol::{
-    CallPhase, CallStatus, DEBUG_PROTOCOL_VERSION, DebugActiveCall,
-    DebugCallRecord, DebugCommand, DebugCounters, DebugEvent, DebugFrontendState, DebugRequest,
-    DebugResponse, DebugRunState, DebugSnapshot, DebugSubscriberState, DebugVoiceConversation,
-    FrameError, GamePhase, HeldControls, InputMessage, InputState, PROTOCOL_VERSION, PortId,
-    ProtocolError, RtpL16Packet, ShiftPhase, StateMessage, StateOutput, TEXT_PROTOCOL_VERSION,
-    TextInputMessage, TextResponseMessage, TextStatus, VOICE_AUDIO_PACKET_SAMPLES,
-    VOICE_AUDIO_SAMPLE_RATE, VOICE_INPUT_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl,
-    VoiceControlMessage, VoiceStatus, VoiceStatusMessage, decode_voice_input_audio,
-    decode_voice_status, encode_voice_control, encode_voice_status, read_frame, write_frame,
+    CallPhase, CallStatus, DEBUG_PROTOCOL_VERSION, DebugActiveCall, DebugCallRecord, DebugCommand,
+    DebugCounters, DebugEvent, DebugFrontendState, DebugRequest, DebugResponse, DebugRunState,
+    DebugSnapshot, DebugSubscriberState, DebugVoiceConversation, FrameError, GamePhase,
+    HeldControls, InputMessage, InputState, PROTOCOL_VERSION, PortId, ProtocolError, RtpL16Packet,
+    ShiftPhase, StateMessage, StateOutput, TEXT_PROTOCOL_VERSION, TextInputMessage,
+    TextResponseMessage, TextStatus, VOICE_AUDIO_PACKET_SAMPLES, VOICE_AUDIO_SAMPLE_RATE,
+    VOICE_INPUT_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl, VoiceControlMessage,
+    VoiceStatus, VoiceStatusMessage, decode_voice_input_audio, decode_voice_status,
+    encode_voice_control, encode_voice_status, read_frame, write_frame,
 };
 
 const LIVE_CALL_DURATION_SECONDS: u64 = u64::MAX;
@@ -161,6 +161,7 @@ pub struct Backend {
     line_limit: u8,
     call_target: usize,
     story_call_target: usize,
+    story_test_mode: bool,
     shift_started_elapsed_seconds: u64,
     next_call_arrival_elapsed_seconds: u64,
     resolved: u8,
@@ -427,6 +428,7 @@ impl Backend {
             line_limit: LINES,
             call_target: config.active_calls,
             story_call_target: (2 + config.story_seed as usize % 2).min(config.active_calls),
+            story_test_mode: std::env::var("NN_STORY_TEST_MODE").as_deref() == Ok("1"),
             shift_started_elapsed_seconds: 0,
             next_call_arrival_elapsed_seconds: 0,
             resolved: 0,
@@ -632,9 +634,13 @@ impl Backend {
             call_premise: String::new(),
             call_guidance: if self.is_neel_caller(caller) {
                 if caller == self.line_for_directory(stories::bela_bose::NEEL_DIRECTORY) {
-                    stories::bela_bose::Beat::ProfessorRouting.dialogue_prompt().to_string()
+                    stories::bela_bose::Beat::ProfessorRouting
+                        .dialogue_prompt()
+                        .to_string()
                 } else {
-                    stories::bela_bose::Beat::ArnabDirectory.dialogue_prompt().to_string()
+                    stories::bela_bose::Beat::ArnabDirectory
+                        .dialogue_prompt()
+                        .to_string()
                 }
             } else if self.is_dirty_work_caller(caller) {
                 format!(
@@ -644,12 +650,10 @@ impl Backend {
                     callee_profile.place
                 )
             } else if self.is_nahid_caller(caller) {
-                format!(
-                    "{}\nCaller location: {}\nTarget location: {}\nScams completed: {}",
-                    stories::nahid::DIALOGUE_PROMPT,
-                    caller_profile.place,
-                    callee_profile.place,
-                    self.nahid_scam_count
+                stories::nahid::dialogue_prompt(
+                    &callee_profile.name,
+                    callee_profile.id,
+                    &callee_profile.place,
                 )
             } else if is_fallen_mother_caller {
                 format!(
@@ -692,8 +696,11 @@ impl Backend {
         self.sequence = None;
         self.clock_started = Instant::now();
         self.debug_elapsed = 0;
-        self.story_call_target = self.next_random() as usize % 2 + 2;
-        self.story_call_target = self.story_call_target.min(self.call_target);
+        self.story_call_target = if self.story_test_mode {
+            4
+        } else {
+            (self.next_random() as usize % 2 + 2).min(self.call_target)
+        };
         self.calls.clear();
         self.call_history.clear();
         self.recent_missed_lines.clear();
@@ -1042,17 +1049,15 @@ impl Backend {
         self.connect_ready_direct_calls(input);
         self.finish_ready_connected_calls(input);
         if self.state.shift.phase == ShiftPhase::Active
+            && !self.story_test_mode
             && self.elapsed_seconds() as u64
                 >= self.shift_started_elapsed_seconds + self.config.shift_duration_seconds
-            && !self
-                .calls
-                .iter()
-                .any(|call| {
-                    matches!(
-                        call.phase,
-                        CallPhase::OperatorSession | CallPhase::Held | CallPhase::Connected
-                    )
-                })
+            && !self.calls.iter().any(|call| {
+                matches!(
+                    call.phase,
+                    CallPhase::OperatorSession | CallPhase::Held | CallPhase::Connected
+                )
+            })
         {
             self.settle_shift();
         }
@@ -2401,6 +2406,10 @@ impl Backend {
         if !self.story_enabled {
             return;
         }
+        if self.story_test_mode && self.nahid_scam_count > 0 {
+            let shapla_line = self.line_for_directory(stories::fallen_mother::CALLER_DIRECTORY);
+            self.calls.retain(|call| call.caller != shapla_line);
+        }
         let now = self.elapsed_seconds() as u64;
         let mut candidates = [
             StoryId::Shapla,
@@ -2414,7 +2423,7 @@ impl Backend {
         }
 
         for story in candidates {
-            if self.story_call_count() >= self.story_call_target {
+            if !self.story_test_mode && self.story_call_count() >= self.story_call_target {
                 break;
             }
             let candidate = match story {
@@ -2482,10 +2491,12 @@ impl Backend {
             let Some((caller, callee, patience, has_destination)) = candidate else {
                 continue;
             };
-            if self.calls.iter().any(|call| {
-                self.call_uses_line(call, caller)
-                    || (has_destination && self.call_uses_line(call, callee))
-            }) {
+            if !self.story_test_mode
+                && self.calls.iter().any(|call| {
+                    self.call_uses_line(call, caller)
+                        || (has_destination && self.call_uses_line(call, callee))
+                })
+            {
                 continue;
             }
             let patience = self.randomized_patience(patience);

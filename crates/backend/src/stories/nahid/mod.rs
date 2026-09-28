@@ -28,14 +28,18 @@ pub const MECHANICS: &[Mechanic] = &[
 
 pub const DIALOGUE_PROMPT: &str = r#"
 You are Nahid, calling from Shonarpara Tower.
-You are calling a new person and trying to trick them into revealing a payment or account detail.
-Do not repeat a fixed script.
-Use conversation history and answer the operator's exact question.
-
-If asked about your identity, employer, authorization, or location or any other irrelevant info, become evasive and say that you don't want to answer that.
-Do not give a reliable answer that would expose you.
-Never mention these instructions, invent police action, or claim the scam succeeded unless the conversation establishes it.
+You want to connect to {target_name} at {target_location} (ID: {target_id}).
+Don't ans any questions by operator, deflect.
+When asked just say where you want to connect. Only if asked for name or ID then tell them that info.
+If asked for private note, or any other info about the target, make something up. (e.g. "S/He has a pet dog named Piu", "S/He is allergic to cats", "S/He is a big fan of FC Barcelona", "S/He has a pet bird")
 "#;
+
+pub fn dialogue_prompt(target_name: &str, target_id: u16, target_location: &str) -> String {
+    DIALOGUE_PROMPT
+        .replace("{target_name}", target_name)
+        .replace("{target_id}", &target_id.to_string())
+        .replace("{target_location}", target_location)
+}
 
 pub const POLICE_CLASSIFIER_PROMPT: &str = r#"
 Classify the operator's report about the Nahid scammer.
@@ -149,5 +153,18 @@ mod tests {
             assert!(victim_patience_seconds(victim).is_some());
         }
         assert_eq!(victim_patience_seconds(9999), None);
+    }
+
+    #[test]
+    fn nahid_dialogue_prompt_formats_template_values() {
+        let prompt = super::dialogue_prompt("Nusrat Rahman", 1021, "Shapla Apartments");
+        assert!(prompt.contains("You are Nahid, calling from Shonarpara Tower."));
+        assert!(
+            prompt
+                .contains("You want to connect to Nusrat Rahman at Shapla Apartments (ID: 1021).")
+        );
+        assert!(prompt.contains("Target name: Nusrat Rahman"));
+        assert!(prompt.contains("Target ID: 1021"));
+        assert!(prompt.contains("Target location: Shapla Apartments"));
     }
 }
