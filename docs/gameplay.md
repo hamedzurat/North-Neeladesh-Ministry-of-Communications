@@ -106,20 +106,21 @@ gets a 16-second ring grace period before returning to `AwaitingRouting`.
 ### Patience and arrivals
 
 Neutral calls use a random patience deadline from 32 through 64 seconds.
-Story calls use their story-specific deadlines:
-
-- Bela Bose callers: 32 seconds.
-- Dirty Work callers: 64 seconds.
-- Nahid: 64 seconds.
-- The Shapla emergency caller uses a very large deadline and does not normally
-  expire through the ordinary patience rule.
+Each story beat defines its own patience in its story module. A missed call
+returns its beat to the selector unless that story defines a timeout transition.
+Dirty Work defers an expired contact while it selects another uncompleted
+contact. Nahid tries another unused victim after a missed call. Fallen Mother's
+`EmergencyCall` expiry moves to `BadFollowup` and applies the $100 penalty.
 
 When a waiting call expires, the backend marks it missed, deducts `$4`, and
 creates replacement work when appropriate.
 
-At reset, the four story callers are inserted together. This means the run can
-start with four active story calls even though `active_calls` is set to `3`.
-Neutral calls fill the configured capacity after story calls leave the board.
+At reset, a seeded selector activates two or three eligible story beats. A beat
+must have an available caller and destination; neither line may already belong
+to another active call. The selector runs again when a call leaves the board.
+Only selected callers light as waiting calls. Thread state defines which beats
+are eligible, it does not light every unfinished thread. Neutral calls fill any
+remaining configured call capacity.
 
 ### Voice controls
 
@@ -309,9 +310,11 @@ still apply.
 Nahid is a scammer at Shonarpara Tower, directory 1030. This story uses direct
 routing, police service, patience, and scoring.
 
-### Scam beats
+### Independent victim calls
 
-Nahid calls one of five victims, chosen in seeded order:
+While the thread is in `Scamming`, the selector can choose any uncompleted victim
+call. These five call beats are independent; their order does not matter. The
+selector chooses randomly and skips victims whose lines conflict with active calls:
 
 - 1021, Rafiq Ahmed
 - 1022, Nusrat Rahman
@@ -319,15 +322,16 @@ Nahid calls one of five victims, chosen in seeded order:
 - 1032, Bela's cat entry
 - 1029, Rehana
 
-The five calls are five separate beats: `ScamOne` through `ScamFive`. Route
-each call normally. A completed call advances exactly one beat and pays the
-normal `$5` connection reward. The victim list does not repeat during a run.
+Route each call normally. A completed call increments the scam count and pays
+the normal `$5` connection reward. A victim who has been successfully scammed
+does not repeat during the run. Each victim call has its own patience setting in
+the Nahid story module.
 
 After the fifth completed scam, the story enters `Penalized` and deducts
 `$100`. This happens after the ordinary `$5` payment for the fifth call.
 
-Missing or abandoning a Nahid call does not advance the beat. The same beat
-continues until its call is completed.
+Missing or abandoning a Nahid call does not advance the count or consume that
+victim. The selector defers that victim and tries another eligible one first.
 
 ### Police report
 
@@ -347,8 +351,8 @@ penalty.
 
 These are intentional implementation details worth deciding explicitly:
 
-1. The opening board has four story calls even though the neutral capacity is
-   three.
+1. Story-thread beat eligibility and active-beat selection are separate. The
+   selector activates two or three conflict-free story calls at a time.
 2. Dirty Work declares Tap monitoring as a story mechanic, but the current
    backend does not require `TAP` to be held before an authored direct call can
    complete. Tap monitoring is exposed and works, but it is not yet a hard

@@ -136,7 +136,8 @@ pub enum Beat {
 impl Beat {
     pub const fn patience_seconds(self) -> u64 {
         match self {
-            Self::ProfessorRouting | Self::ArnabDirectory => 32,
+            Self::ProfessorRouting => 32,
+            Self::ArnabDirectory => 32,
             Self::Completed | Self::BadEnding => 0,
         }
     }

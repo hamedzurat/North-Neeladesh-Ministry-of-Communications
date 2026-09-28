@@ -8,7 +8,7 @@
     :root { color-scheme: light; --paper:#f3efe2; --ink:#111; --yellow:#ffd21f; --cyan:#66e3e8; --red:#ff5b4d; --green:#58d68d; --blue:#5e72eb; --muted:#68645b; --shadow:5px 5px 0 var(--ink); }
     * { box-sizing:border-box; }
     html, body { height:100%; }
-    body { margin:0; background:var(--paper); color:var(--ink); font:13px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; overflow:auto; }
+     body { margin:0; background:var(--paper); color:var(--ink); font:13px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
     header { height:72px; display:flex; justify-content:space-between; align-items:center; gap:20px; padding:12px 22px; border-bottom:4px solid var(--ink); background:var(--yellow); }
     h1,h2,h3,p { margin:0; } h1 { font-size:25px; line-height:1; letter-spacing:-.08em; } h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; } h3 { font-size:13px; }
     .eyebrow,.label { font-size:10px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; } .muted { color:var(--muted); } .good { color:#116b39; } .bad { color:#9d1f17; }
@@ -17,21 +17,20 @@
     nav button { height:34px; padding:6px 11px; border:3px solid var(--ink); background:#ded8c7; box-shadow:2px 2px 0 var(--ink); font:inherit; font-weight:900; cursor:pointer; }
     nav button.active { background:var(--cyan); transform:translateY(3px); }
     main { min-height:calc(100vh - 72px); padding:14px 22px 28px; } .tab { display:none; min-height:100%; } .tab.active { display:block; }
-    .overview { min-height:100%; display:grid; grid-template-columns:minmax(0,1.25fr) minmax(300px,.75fr); grid-template-rows:auto minmax(380px,auto) auto; gap:16px; align-items:stretch; }
+     .overview { min-height:100%; display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(380px,auto); gap:16px; align-items:stretch; }
     .panel { min-width:0; min-height:0; padding:12px; border:3px solid var(--ink); background:#fffdf5; box-shadow:var(--shadow); overflow:visible; }
     .panel-title { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:9px; } .panel-title span { text-align:right; }
     .controls { display:flex; flex-wrap:wrap; gap:7px; align-items:center; } button,input { min-height:30px; padding:5px 8px; border:2px solid var(--ink); border-radius:0; background:white; color:var(--ink); font:inherit; font-weight:900; } button { cursor:pointer; box-shadow:2px 2px 0 var(--ink); } button:hover { transform:translate(1px,1px); box-shadow:1px 1px 0 var(--ink); } button.primary { background:var(--cyan); } button.danger { background:var(--red); } input { width:58px; }
     .action { margin-top:5px; min-height:16px; font-weight:900; }
-    .stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; } .stat { padding:8px; border:2px solid var(--ink); background:var(--paper); min-width:0; } .stat .number { display:block; margin-top:3px; font-size:20px; font-weight:900; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .stats-panel { grid-column:1/-1; } .story-panel { grid-column:1; grid-row:2; } .right-panel { grid-column:2; grid-row:2; } .bottom-left { grid-column:1; grid-row:3; } .bottom-right { grid-column:2; grid-row:3; }
-    .graphs { display:grid; grid-template-columns:1fr 1fr; gap:14px; } .graph h3 { margin-bottom:7px; } .graph-line { display:flex; align-items:center; gap:6px; margin:7px 0; } .node { flex:1; min-width:0; padding:9px 8px; border:2px solid var(--ink); background:#ded8c7; font-size:11px; font-weight:900; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .node.active { background:var(--yellow); box-shadow:3px 3px 0 var(--ink); } .node.done { background:var(--green); } .arrow { font-weight:900; }
-    .mermaid { min-height:220px; padding:8px 0; background:var(--paper); overflow:auto; } .mermaid svg { max-width:none; min-width:440px; } .mermaid .nodeLabel { font:900 12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; } .graph-fallback { display:grid; gap:8px; padding:8px; } .fallback-node { padding:10px; border:2px solid var(--ink); background:#ded8c7; font-weight:900; } .fallback-node.active { background:var(--yellow); box-shadow:3px 3px 0 var(--ink); } .fallback-node.done { background:var(--green); }
-    .voice-now { display:grid; grid-template-columns:130px 1fr; gap:10px; } .voice-state { padding:10px; border:2px solid var(--ink); background:var(--cyan); } .voice-state .status { margin-top:5px; font-size:18px; font-weight:900; text-transform:uppercase; overflow-wrap:anywhere; } .copy { min-width:0; padding:8px; border:2px solid var(--ink); background:var(--paper); margin-bottom:7px; } .copy:last-child { margin-bottom:0; } .copy .text { margin-top:4px; min-height:25px; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .mini-table { max-height:220px; overflow:auto; } table { width:100%; border-collapse:collapse; } th,td { padding:4px 5px; border-bottom:2px solid var(--ink); text-align:left; vertical-align:top; white-space:nowrap; } th { color:var(--muted); font-size:10px; text-transform:uppercase; } td { overflow:hidden; text-overflow:ellipsis; max-width:180px; }
-    .scroll { min-height:100%; overflow:visible; } .wire-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; } .wire-grid > section { min-width:0; } pre { margin:0; padding:10px; min-height:100px; background:#1d1d1d; color:#f7edc7; white-space:pre-wrap; overflow-wrap:anywhere; overflow-x:auto; } .json-key { color:#66e3e8; } .json-string { color:#f7edc7; } .json-number { color:#b9a7ff; } .json-boolean { color:#ff9d76; } .json-null { color:#a7a39a; } .json-invalid { color:#ff8b80; }
+     .story-panel { grid-column:1; grid-row:2; } .right-panel { grid-column:1; grid-row:1; }
+     .graphs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:start; } .graph { min-width:0; } .graph h3 { margin-bottom:7px; } .graph-status { min-height:52px; margin:0 0 7px; padding:6px 8px; border:2px solid var(--ink); background:#ded8c7; font-size:10px; font-weight:900; overflow-wrap:anywhere; } .graph-status.selected { background:var(--yellow); } .graph-status.eligible { background:#d8edf0; } .graph-status.terminal { background:#ffd2cd; } .graph-line { display:flex; align-items:center; gap:6px; margin:7px 0; } .node { flex:1; min-width:0; padding:9px 8px; border:2px solid var(--ink); background:#ded8c7; font-size:11px; font-weight:900; overflow-wrap:anywhere; } .node.active { background:var(--yellow); box-shadow:3px 3px 0 var(--ink); } .node.done { background:var(--green); } .arrow { font-weight:900; }
+      .mermaid { width:100%; min-height:180px; padding:4px; background:var(--paper); } .mermaid svg { display:block; width:100%; max-width:100%; min-width:0; height:auto; } .mermaid .nodeLabel { font:900 12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; } .graph-fallback { display:grid; gap:8px; padding:8px; } .fallback-node { padding:10px; border:2px solid var(--ink); background:#ded8c7; font-weight:900; overflow-wrap:anywhere; } .fallback-node.selected { background:var(--yellow); box-shadow:3px 3px 0 var(--ink); } .fallback-node.eligible { background:#d8edf0; } .fallback-node.done { background:var(--green); } .fallback-node.terminal { background:#ffd2cd; border-color:#9d1f17; } .fallback-node.locked { color:var(--muted); }
+     .voice-now { display:grid; grid-template-columns:130px minmax(0,1fr); gap:10px; } .voice-state { padding:10px; border:2px solid var(--ink); background:var(--cyan); } .voice-state .status { margin-top:5px; font-size:18px; font-weight:900; text-transform:uppercase; overflow-wrap:anywhere; } .copy { min-width:0; padding:8px; border:2px solid var(--ink); background:var(--paper); } .copy .text { margin-top:4px; min-height:25px; white-space:pre-wrap; overflow-wrap:anywhere; }
+     .mini-table { min-width:0; } table { width:100%; border-collapse:collapse; table-layout:fixed; } th,td { padding:4px 5px; border-bottom:2px solid var(--ink); text-align:left; vertical-align:top; white-space:normal; overflow-wrap:anywhere; } th { color:var(--muted); font-size:10px; text-transform:uppercase; } td { min-width:0; }
+     .scroll { min-height:100%; } .wire-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; } .wire-grid > section { min-width:0; } pre { margin:0; padding:10px; min-height:100px; background:#1d1d1d; color:#f7edc7; white-space:pre-wrap; overflow-wrap:anywhere; } .json-key { color:#66e3e8; } .json-string { color:#f7edc7; } .json-number { color:#b9a7ff; } .json-boolean { color:#ff9d76; } .json-null { color:#a7a39a; } .json-invalid { color:#ff8b80; }
     .cards { display:grid; gap:10px; } .card { padding:10px; border:2px solid var(--ink); background:#fffdf5; } .card.failed { background:#ffd2cd; } .card-grid { display:grid; grid-template-columns:150px minmax(0,1fr) minmax(180px,220px); gap:12px; } .card p { margin:4px 0; white-space:pre-wrap; overflow-wrap:anywhere; } audio { width:100%; }
     .empty { padding:9px; border:2px dashed var(--ink); color:var(--muted); } .alert { display:none; padding:8px; border:2px solid var(--ink); background:var(--red); font-weight:900; } .alert.visible { display:block; margin-bottom:10px; }
-    @media (max-width:900px) { header { height:auto; } nav { overflow:auto; } main { height:auto; } .overview { display:flex; flex-direction:column; } .overview .panel { min-height:170px; } .graphs { min-height:150px; } .wire-grid,.card-grid { grid-template-columns:1fr; } }
+      @media (max-width:1000px) { header { height:auto; flex-wrap:wrap; } nav { flex-wrap:wrap; } main { height:auto; } .overview { display:flex; flex-direction:column; } .overview .panel { min-height:170px; } .graphs { grid-template-columns:minmax(0,1fr); } .wire-grid,.card-grid { grid-template-columns:1fr; } }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 </head>
@@ -39,18 +38,18 @@
   <header><div><div class="eyebrow">NORTH NEELADESH / LIVE OPERATIONS</div><h1>EXCHANGE CONTROL ROOM</h1></div><nav><button class="active" data-tab="overview">Live overview</button><button data-tab="details">Operations data</button><button data-tab="llm">LLM conversations</button></nav><div id="connection" class="connection bad">BACKEND OFFLINE</div></header>
   <main>
     <div id="failure-alert" class="alert"></div>
-    <section id="overview" class="tab active"><div class="overview">
-      <section class="panel stats-panel"><div class="panel-title"><h2>Live stats</h2><span id="story-label" class="muted">-</span></div><div id="stats" class="stats"></div></section>
-       <section class="panel story-panel"><div class="panel-title"><h2>Story graphs</h2><span class="muted">active beat highlighted yellow · completed green</span></div><div class="graphs"><div class="graph"><h3>Fallen Mother</h3><div id="shapla-graph"></div></div><div class="graph"><h3>Bela Bose</h3><div id="neel-graph"></div></div><div class="graph"><h3>Dirty Work</h3><div id="dirty-graph"></div></div><div class="graph"><h3>Nahid</h3><div id="nahid-graph"></div></div></div></section>
-       <section class="panel right-panel"><div class="panel-title"><h2>Live voice</h2><span id="voice-id" class="muted"></span></div><div class="voice-now"><div id="voice-state" class="voice-state"></div><div><div class="copy"><div class="label">STT / transcript</div><div id="voice-transcript" class="text">-</div></div><div class="copy"><div class="label">LLM / prompt sent</div><div id="voice-prompt" class="text">-</div></div><div class="copy"><div class="label">LLM / generated response</div><div id="voice-response" class="text">-</div></div></div></div></section>
-      <section class="panel bottom-left"><div class="panel-title"><h2>Active calls</h2><span id="topology-status" class="muted">-</span></div><div id="active-calls" class="mini-table"></div></section>
-      <section class="panel bottom-right"><div class="panel-title"><h2>Recent failures</h2><span class="muted">diagnostics</span></div><div id="errors" class="mini-table"></div></section>
-    </div></section>
-     <section id="details" class="tab scroll">
-        <div class="panel"><div class="panel-title"><h2>Operator controls</h2><span class="muted">backend-authoritative debug commands</span></div><div class="controls"><button class="danger" onclick="send('reset')">Reset run</button><input id="seconds" type="number" min="0" value="30"><button onclick="advance()">Advance time</button><input id="caller" type="number" min="0" max="11" value="0"><input id="callee" type="number" min="0" max="11" value="1"><button class="primary" onclick="injectCall()">Inject call</button><button onclick="toggleDebug('godmode')">Toggle godmode</button><button onclick="toggleDebug('bypass_restrictions')">Toggle bypass</button></div><div id="action-status" class="action muted">No command sent.</div></div>
-        <div class="panel"><div class="panel-title"><h2>Frontend wire state</h2><span class="muted">exact JSON received and sent · scrollable</span></div><div class="wire-grid"><section><div class="label">last input received from frontend</div><pre id="frontend-input">No frontend input received.</pre></section><section><div class="label">last output sent to frontend</div><pre id="frontend-output">No backend output sent.</pre></section></div><div class="panel-title" style="margin-top:16px"><h2>All frontend data</h2></div><pre id="frontend-all">Waiting for snapshot.</pre><div class="panel-title" style="margin-top:16px"><h2>Shared mechanics</h2></div><pre id="mechanics">Waiting for mechanics.</pre></div>
-        <div class="panel"><div class="panel-title"><h2>Calls &amp; subscribers</h2><span class="muted">all retained operational state</span></div><div id="calls-table"></div><div style="margin-top:18px" id="subscribers"></div></div>
-        <div class="panel"><div class="panel-title"><h2>Event journal</h2><span class="muted">backend-retained actions and transitions</span></div><div id="events" class="mini-table"></div></div>
+      <section id="overview" class="tab active"><div class="overview">
+        <section class="panel right-panel"><div class="panel-title"><div class="label">Live voice</div><span id="voice-id" class="muted"></span></div><div class="voice-now"><div id="voice-state" class="voice-state"></div><div class="copy"><div class="label">LLM / TTS output</div><div id="voice-response" class="text">-</div></div></div></section>
+        <section class="panel story-panel"><div class="panel-title"><h2>Story threads</h2><span><span id="story-label" class="muted">-</span> · yellow = selected · blue = eligible · green = completed</span></div><div class="graphs"><div class="graph"><h3>Fallen Mother</h3><div id="shapla-status" class="graph-status"></div><div id="shapla-graph"></div></div><div class="graph"><h3>Bela Bose</h3><div id="neel-status" class="graph-status"></div><div id="neel-graph"></div></div><div class="graph"><h3>Dirty Work</h3><div id="dirty-status" class="graph-status"></div><div id="dirty-graph"></div></div><div class="graph"><h3>Nahid</h3><div id="nahid-status" class="graph-status"></div><div id="nahid-graph"></div></div></div></section>
+     </div></section>
+      <section id="details" class="tab scroll">
+         <div class="panel"><div class="panel-title"><h2>Operator controls</h2><span class="muted">backend-authoritative debug commands</span></div><div class="controls"><button class="danger" onclick="send('reset')">Reset run</button><input id="seconds" type="number" min="0" value="30"><button onclick="advance()">Advance time</button><input id="caller" type="number" min="0" max="11" value="0"><input id="callee" type="number" min="0" max="11" value="1"><button class="primary" onclick="injectCall()">Inject call</button><button onclick="toggleDebug('godmode')">Toggle godmode</button><button onclick="toggleDebug('bypass_restrictions')">Toggle bypass</button></div><div id="action-status" class="action muted">No command sent.</div></div>
+         <div class="panel"><div class="panel-title"><h2>Active calls</h2><span id="topology-status" class="muted">-</span></div><div id="active-calls" class="mini-table"></div></div>
+         <div class="panel"><div class="panel-title"><h2>Recent failures</h2><span class="muted">diagnostics</span></div><div id="errors" class="mini-table"></div></div>
+         <div class="panel"><div class="panel-title"><h2>Calls &amp; subscribers</h2><span class="muted">all retained operational state</span></div><div id="calls-table"></div><div style="margin-top:18px" id="subscribers"></div></div>
+         <div class="panel"><div class="panel-title"><h2>Event journal</h2><span class="muted">backend-retained actions and transitions</span></div><div id="events" class="mini-table"></div></div>
+         <div class="panel"><div class="panel-title"><h2>Money</h2><strong id="money-balance">$0</strong></div><div class="label">Transaction log</div><div id="money-log" class="mini-table"></div></div>
+         <div class="panel"><div class="panel-title"><h2>Frontend wire state</h2><span class="muted">exact JSON received and sent · scrollable</span></div><div class="wire-grid"><section><div class="label">last input received from frontend</div><pre id="frontend-input">No frontend input received.</pre></section><section><div class="label">last output sent to frontend</div><pre id="frontend-output">No backend output sent.</pre></section></div><div class="panel-title" style="margin-top:16px"><h2>All frontend data</h2></div><pre id="frontend-all">Waiting for snapshot.</pre><div class="panel-title" style="margin-top:16px"><h2>Shared mechanics</h2></div><pre id="mechanics">Waiting for mechanics.</pre></div>
       </section>
       <section id="llm" class="tab scroll">
         <div class="panel"><div class="panel-title"><h2>LLM conversations</h2><span class="muted">exact dialogue context, transcript, response, and replayable audio</span></div><div id="voice-history" class="cards"></div></div>
@@ -58,6 +57,7 @@
   </main>
   <script>
     let latestSnapshot = null;
+    let lastStoryGraphKey = null;
     const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const statusText = status => status || 'offline';
     document.querySelectorAll('nav button').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('nav button').forEach(item => item.classList.remove('active')); document.querySelectorAll('.tab').forEach(item => item.classList.remove('active')); button.classList.add('active'); document.getElementById(button.dataset.tab).classList.add('active'); }));
@@ -65,69 +65,175 @@
     function render(snapshot) {
       latestSnapshot=snapshot; const voice=snapshot.voice||{}; const conversations=voice.conversations||[]; const failures=(snapshot.recent_errors||[]).filter(error=>error.code!=='backend_ready');
       const alert=document.getElementById('failure-alert'); if (voice.status==='failed'||failures.length||conversations.some(item=>item.status==='failed'&&item.error)) { const first=failures[0]||conversations.find(item=>item.error)?.error; alert.textContent='VOICE FAILURE // '+(first?`${first.code}: ${first.message}`:'inspect retained evidence'); alert.className='alert visible'; } else alert.className='alert';
-      const activeCalls=snapshot.active_calls||snapshot.calls||[]; document.getElementById('story-label').textContent=`Fallen Mother: ${snapshot.shapla_story_beat} / Bela Bose: ${snapshot.neel_story_beat} / Dirty Work: ${snapshot.dirty_work_story_beat} / Nahid: ${snapshot.nahid_story_beat} (${snapshot.nahid_scam_count}/5)`;
-      document.getElementById('stats').innerHTML=[['RUN',snapshot.run.number],['ELAPSED',snapshot.run.elapsed_seconds+'s'],['MONEY','$'+snapshot.money],['CALLS',snapshot.counters?.active_call_count||activeCalls.length],['ROUTINGS',snapshot.counters?.completed_routings||0],['SHIFT',snapshot.shift.number],['VOICE',statusText(voice.status)],['REVISION',snapshot.run.state_revision]].map(item=>`<div class="stat"><span class="label">${item[0]}</span><span class="number">${esc(item[1])}</span></div>`).join('');
-        renderGraph('shapla-graph',['EmergencyCall','HappyFollowup','NeutralFollowup','BadFollowup'],snapshot.shapla_story_beat||snapshot.story_beat); renderGraph('neel-graph',['ProfessorRouting','ArnabDirectory','Completed','BadEnding'],snapshot.neel_story_beat||snapshot.story_beat); renderDirtyGraph(snapshot.dirty_work_story_beat,snapshot.dirty_work_completed_contacts||[]); renderGraph('nahid-graph',['ScamOne','ScamTwo','ScamThree','ScamFour','ScamFive','Stopped','Penalized'],snapshot.nahid_story_beat);
-       document.getElementById('voice-id').textContent=voice.session_id?`session ${voice.session_id} / turn ${voice.turn_id}`:'no active session'; document.getElementById('voice-state').innerHTML=`<div class="eyebrow">STATUS</div><div class="status">${esc(statusText(voice.status))}</div><div class="muted">speaker active: ${esc(voice.speaker_active)}</div>`; document.getElementById('voice-transcript').textContent=voice.transcript||'-'; document.getElementById('voice-prompt').textContent=voice.llm_prompt||'-'; document.getElementById('voice-response').textContent=voice.llm_response||voice.response_text||'-';
+      const activeCalls=snapshot.active_calls?.length?snapshot.active_calls:(snapshot.calls||[]);
+       renderStoryGraphs(snapshot);
+       const lastConversation=conversations.at(-1);
+       document.getElementById('voice-id').textContent=voice.session_id?`session ${voice.session_id} / turn ${voice.turn_id}`:'no active session';
+       document.getElementById('voice-state').innerHTML=`<div class="eyebrow">STATUS</div><div class="status">${esc(voice.status||'idle')}</div><div class="muted">speaker active: ${esc(voice.speaker_active)}</div>`;
+       document.getElementById('voice-response').textContent=voice.llm_response||voice.response_text||lastConversation?.llm_response||lastConversation?.response_text||'-';
        document.getElementById('active-calls').innerHTML=activeCallTable(activeCalls); document.getElementById('topology-status').textContent=`${activeCalls.length} active call${activeCalls.length===1?'':'s'}`; document.getElementById('errors').innerHTML=failures.length?failures.slice(-4).reverse().map(error=>`<div class="card failed"><b>${esc(error.code)}</b><br>${esc(error.message)}</div>`).join(''):'<div class="empty">No failures retained.</div>';
         document.getElementById('frontend-input').innerHTML=highlightJson(snapshot.frontend?.last_input_json,'No frontend input received.'); document.getElementById('frontend-output').innerHTML=highlightJson(snapshot.frontend?.last_output_json,'No backend output sent.'); document.getElementById('frontend-all').textContent=JSON.stringify(snapshot.frontend||{},null,2); document.getElementById('mechanics').textContent=(snapshot.story_mechanics||[]).join('\n');
-        document.getElementById('calls-table').innerHTML='<h3>Call history</h3>'+table(snapshot.call_history||[],['caller_line','requested_callee_line','final_phase','outcome','reason','finished_elapsed_seconds']); document.getElementById('subscribers').innerHTML='<h3>Subscribers</h3>'+table(snapshot.subscribers||[],['id','directory_id','name','line','status','availability','pressure','private_info','status_flags']); document.getElementById('events').innerHTML=table([...(snapshot.events||[])].reverse(),['id','elapsed_seconds','state_revision','category','action','details']); document.getElementById('voice-history').innerHTML=conversations.length?[...conversations].reverse().map(conversationCard).join(''):'<div class="empty">No voice conversations retained.</div>';
+         document.getElementById('calls-table').innerHTML='<h3>Call history</h3>'+table(snapshot.call_history||[],['caller_line','requested_callee_line','final_phase','outcome','reason','finished_elapsed_seconds']); document.getElementById('subscribers').innerHTML='<h3>Subscribers</h3>'+table(snapshot.subscribers||[],['id','directory_id','name','line','status','availability','pressure','private_info','status_flags']); document.getElementById('events').innerHTML=table([...(snapshot.events||[])].reverse(),['id','elapsed_seconds','state_revision','category','action','details']); document.getElementById('voice-history').innerHTML=conversations.length?[...conversations].reverse().map(conversationCard).join(''):'<div class="empty">No voice conversations retained.</div>';
+       document.getElementById('money-balance').textContent=`$${snapshot.money??0}`;
+       const moneyEvents=(snapshot.events||[]).filter(event=>event.category==='money').slice(-30).reverse();
+       document.getElementById('money-log').innerHTML=moneyEvents.length?'<table><tr><th>time</th><th>change</th><th>reason / balance</th></tr>'+moneyEvents.map(event=>{
+         const match=event.details.match(/^([+-]\d+)\s+(.*)$/);
+         const change=match?Number(match[1]):0;
+         return `<tr><td>${esc(event.elapsed_seconds)}s</td><td class="${change<0?'bad':'good'}">${match?esc(match[1]):'-'}</td><td>${esc(match?match[2]:event.details)}</td></tr>`;
+       }).join('')+'</table>':'<div class="empty">No money transactions recorded this run.</div>';
      }
      function activeCallTable(items) {
-       if(!items||!items.length) return '<div class="empty">None.</div>';
-        return '<table><tr><th>caller</th><th>destination</th><th>directory id</th><th>phase</th><th>patience</th><th>audio</th></tr>'+items.map(item=>{
-         const waiting=['waiting','ringing','awaiting_routing','operator_session'].includes(item.phase);
-         const patience=waiting?`${item.patience_remaining_seconds||0}s`:'—';
-         const audio=['held','connected'].includes(item.phase)?`${item.audio_duration_seconds||0}s`:'—';
-          return `<tr><td>${esc(item.caller_line)}</td><td>${esc(item.requested_callee_line)}</td><td>${esc(item.requested_callee_directory_id||'-')}</td><td>${esc(item.phase)}</td><td>${patience}</td><td>${audio}</td></tr>`;
+        if(!items||!items.length) return '<div class="empty">None.</div>';
+         return '<table><tr><th>caller</th><th>destination</th><th>directory id</th><th>phase</th><th>patience</th><th>audio</th></tr>'+items.map(item=>{
+          const waiting=['waiting','ringing','awaiting_routing','operator_session'].includes(item.phase);
+          const patience=waiting?`${item.patience_remaining_seconds||0}s`:'—';
+          const audio=['held','connected'].includes(item.phase)?`${item.audio_duration_seconds||0}s`:'—';
+          const destination=item.requested_callee_directory_id?`directory ${item.requested_callee_directory_id}`:(Number(item.requested_callee_line)===0?'-1':`line ${item.requested_callee_line}`);
+           return `<tr><td>${esc(item.caller_line)}</td><td>${esc(destination)}</td><td>${esc(item.requested_callee_directory_id||'-')}</td><td>${esc(item.phase)}</td><td>${patience}</td><td>${audio}</td></tr>`;
        }).join('')+'</table>';
      }
-      function renderGraph(id,nodes,active) {
-        const container=document.getElementById(id); const prefix=id.replace(/[^a-z]/gi,''); const activeIndex=nodes.indexOf(active); const names=nodes.map((node,index)=>`n${index}["${node}"]`).join('\n');
-        const links=id==='shapla-graph'?'n0 --> n1\nn0 --> n2\nn0 --> n3':id==='neel-graph'?'n0 --> n1\nn1 --> n2\nn1 --> n3':nodes.slice(1).map((_,index)=>`n${index} --> n${index+1}`).join('\n');
-        const classes=nodes.map((_,index)=>{
-          let state='idle';
-          if(id==='shapla-graph') {
-            if(activeIndex===index) state='active';
-            else if(activeIndex>0 && index===0) state='done';
-          } else if(activeIndex===2 || activeIndex===3) {
-            if(index<activeIndex) state='done';
-            else if(index===activeIndex) state='active';
-          } else if(activeIndex===index) {
-            state='active';
-          } else if(activeIndex>index) {
-            state='done';
-          }
-          return `class n${index} ${state};`;
-        }).join('\n');
-        const edgeCount=id==='shapla-graph'?3:id==='neel-graph'?3:nodes.length-1;
-        const edgeStyles=Array.from({length:edgeCount},(_,index)=>{
-          let color='#9b9b9b';
-          if(id==='shapla-graph') {
-            const target=[1,2,3][index];
-            color=target===activeIndex?'#ffd21f':'#9b9b9b';
-          } else if(id==='neel-graph') {
-            const target=[1,2,3][index];
-            color=target===activeIndex?'#ffd21f':(activeIndex>1 && target===1?'#58d68d':'#9b9b9b');
-          } else {
-            const target=index+1;
-            color=target===activeIndex?'#ffd21f':(target<activeIndex?'#58d68d':'#9b9b9b');
-          }
-          return `linkStyle ${index} stroke:${color},stroke-width:3px;`;
-        }).join('\n');
-        const diagram=`flowchart LR\n${names}\n${links}\nclassDef active fill:#ffd21f,stroke:#111,stroke-width:4px,color:#111;\nclassDef done fill:#58d68d,stroke:#111,stroke-width:2px,color:#111;\nclassDef idle fill:#ded8c7,stroke:#111,stroke-width:2px,color:#111;\n${classes}\n${edgeStyles}`;
+     function lineForDirectory(snapshot,directoryId) {
+       return (snapshot?.subscribers||[]).find(subscriber=>Number(subscriber.directory_id)===directoryId)?.line;
+     }
+     function currentCallerDirectory(thread,beat) {
+       if(thread==='shapla') return 1022;
+       if(thread==='bela') return beat==='ProfessorRouting'?1023:(beat==='ArnabDirectory'?1024:null);
+       if(thread==='dirty') return ({MundaneCall:1028,WhistleblowerLeak:1027,SubscriberCall:1029})[beat]||(['Instruction','Interrogation','GoodEnding','NeutralEnding','BadEnding'].includes(beat)?1025:null);
+       if(thread==='nahid'&&beat==='Scamming') return 1030;
+       return null;
+     }
+     function selectedCall(snapshot,thread,beat) {
+       const directoryId=currentCallerDirectory(thread,beat);
+       const line=directoryId===null?undefined:lineForDirectory(snapshot,directoryId);
+        const calls=snapshot?.active_calls?.length?snapshot.active_calls:(snapshot?.calls||[]);
+        return line===undefined?null:calls.find(call=>Number(call.caller_line)===Number(line))||null;
+     }
+     function updateThreadStatus(id,snapshot,thread,beat) {
+       const element=document.getElementById(id);
+        if(!snapshot) { element.className='graph-status eligible'; element.textContent='BACKEND OFFLINE · showing the story path; live selection is unknown.'; return false; }
+        if(['Completed','BadEnding','BadFollowup','Stopped','Penalized','GoodEnding','NeutralEnding'].includes(beat)) { element.className='graph-status terminal'; element.textContent=`TERMINAL · ${beat}`; return false; }
+        const calls=snapshot.active_calls?.length?snapshot.active_calls:(snapshot.calls||[]);
+        if(!calls.length) { element.className='graph-status eligible'; element.textContent=`NO ACTIVE CALLS · ${beat} is eligible; reset the run or send gameplay input to start call selection.`; return false; }
+        const call=selectedCall(snapshot,thread,beat);
+        if(!call) {
+          const expectedLine=lineForDirectory(snapshot,currentCallerDirectory(thread,beat));
+          const callerLines=[...new Set(calls.map(item=>Number(item.caller_line)))].join(', ')||'none';
+         element.className='graph-status eligible';
+         element.textContent=`ELIGIBLE · ${beat} not selected · expected caller line ${expectedLine??'unknown'} · active callers ${callerLines}`;
+         return false;
+       }
+       const phase=String(call.phase||'waiting').toLowerCase();
+       const destination=call.requested_callee_directory_id?`directory ${call.requested_callee_directory_id}`:(call.requested_callee_line===0?'operator/service':`line ${call.requested_callee_line}`);
+       const patience=['waiting','ringing','awaitingrouting','awaiting_routing','operatorsession','operator_session'].includes(phase)?` · ${call.patience_remaining_seconds??0}s patience`:'';
+       element.className='graph-status selected';
+       element.textContent=`SELECTED · ${phase} · line ${call.caller_line} → ${destination}${patience}`;
+       return true;
+     }
+     function renderStoryGraphs(snapshot) {
+        const beats={shapla:snapshot?.shapla_story_beat||snapshot?.story_beat||'EmergencyCall',bela:snapshot?.neel_story_beat||'ProfessorRouting',dirty:snapshot?.dirty_work_story_beat||'Instruction',nahid:snapshot?.nahid_story_beat||'Scamming'};
+        const selected={shapla:updateThreadStatus('shapla-status',snapshot,'shapla',beats.shapla),bela:updateThreadStatus('neel-status',snapshot,'bela',beats.bela),dirty:updateThreadStatus('dirty-status',snapshot,'dirty',beats.dirty),nahid:updateThreadStatus('nahid-status',snapshot,'nahid',beats.nahid)};
+        const selectedCount=Object.values(selected).filter(Boolean).length;
+        document.getElementById('story-label').textContent=snapshot?`${selectedCount} selected · ${beats.shapla} / ${beats.bela} / ${beats.dirty} / ${beats.nahid} (${snapshot.nahid_scam_count||0}/5)`:'Story state unavailable · paths shown below';
+        const calls=snapshot?.active_calls?.length?snapshot.active_calls:(snapshot?.calls||[]);
+        const graphKey=JSON.stringify({beats,selected,dirty: snapshot?.dirty_work_completed_contacts||[],nahidCount:snapshot?.nahid_scam_count||0,calls:calls.map(call=>[call.caller_line,call.requested_callee_line,call.phase]),history:(snapshot?.call_history||[]).filter(call=>call.outcome==='completed'&&Number(call.caller_line)===Number(lineForDirectory(snapshot,1030))).map(call=>call.requested_callee_line)});
+        if(graphKey===lastStoryGraphKey) return;
+        lastStoryGraphKey=graphKey;
+        renderGraph('shapla-graph',['EmergencyCall','HappyFollowup','NeutralFollowup','BadFollowup'],beats.shapla,selected.shapla);
+       renderGraph('neel-graph',['ProfessorRouting','ArnabDirectory','Completed','BadEnding'],beats.bela,selected.bela);
+       renderDirtyGraph(beats.dirty,snapshot?.dirty_work_completed_contacts||[],selected.dirty);
+       renderNahidGraph(snapshot,beats.nahid);
+     }
+     function renderGraph(id,nodes,current,selected,completedCount=0) {
+       const container=document.getElementById(id), prefix=id.replace(/[^a-z]/gi,'');
+       const currentIndex=nodes.indexOf(current), terminal=['Completed','BadEnding','Stopped','Penalized'].includes(current);
+       const stateAt=index=>{
+         if(index===currentIndex) return terminal?'terminal':(selected?'selected':'eligible');
+         if(id==='shapla-graph') return index===0&&currentIndex>0?'done':'locked';
+         if(id==='neel-graph') {
+           if(['Completed','BadEnding'].includes(current)) return index<2?'done':'locked';
+           return index<currentIndex?'done':'locked';
+         }
+         return currentIndex>index?'done':'locked';
+       };
+        const nodeId=index=>`${prefix}-n${index}`;
+        const links=id==='shapla-graph'?`${nodeId(0)} --> ${nodeId(1)}\n${nodeId(0)} --> ${nodeId(2)}\n${nodeId(0)} --> ${nodeId(3)}`:id==='neel-graph'?`${nodeId(0)} --> ${nodeId(1)}\n${nodeId(1)} --> ${nodeId(2)}\n${nodeId(1)} --> ${nodeId(3)}`:nodes.slice(1).map((_,index)=>`${nodeId(index)} --> ${nodeId(index+1)}`).join('\n');
+        const classes=nodes.map((_,index)=>`class ${nodeId(index)} ${stateAt(index)};`).join('\n');
+         const diagram=`flowchart TB\n${nodes.map((node,index)=>`${nodeId(index)}["${node}"]`).join('\n')}\n${links}\nclassDef selected fill:#ffd21f,stroke:#111,stroke-width:4px,color:#111;\nclassDef eligible fill:#d8edf0,stroke:#111,stroke-width:3px,color:#111;\nclassDef done fill:#58d68d,stroke:#111,stroke-width:2px,color:#111;\nclassDef locked fill:#ded8c7,stroke:#777,stroke-width:1px,color:#68645b;\nclassDef terminal fill:#ffd2cd,stroke:#9d1f17,stroke-width:3px,color:#111;\n${classes}`;
         container.innerHTML=`<div class="mermaid" id="${prefix}-diagram">${diagram}</div>`;
-        if (window.mermaid) { window.mermaid.initialize({startOnLoad:false,theme:'base',securityLevel:'strict'}); window.mermaid.run({nodes:[document.getElementById(`${prefix}-diagram`)]}).catch(()=>renderGraphFallback(container,nodes,active,activeIndex)); } else renderGraphFallback(container,nodes,active,activeIndex);
+        if(window.mermaid) { window.mermaid.initialize({startOnLoad:false,theme:'base',securityLevel:'strict'}); renderMermaid(container,`${prefix}-diagram`,()=>renderGraphFallback(container,nodes,current,stateAt)); }
+       else renderGraphFallback(container,nodes,current,stateAt);
+     }
+      function renderDirtyGraph(current,completed,selected) {
+       const container=document.getElementById('dirty-graph');
+       const names=['Instruction','Contact pool (uncompleted contacts)','Kamal / MundaneCall','Tariq / WhistleblowerLeak','Rehana / SubscriberCall','Interrogation','GoodEnding','NeutralEnding','BadEnding'];
+       const contactNames={'Kamal / MundaneCall':'Dr. Kamal','Tariq / WhistleblowerLeak':'Tariq','Rehana / SubscriberCall':'Rehana'};
+       const activeName=current==='MundaneCall'?'Kamal / MundaneCall':current==='WhistleblowerLeak'?'Tariq / WhistleblowerLeak':current==='SubscriberCall'?'Rehana / SubscriberCall':current;
+       const done=new Set(completed);
+       const stateAt=index=>{
+         const name=names[index], contact=contactNames[name];
+         if(name===activeName) return ['GoodEnding','NeutralEnding','BadEnding'].includes(current)?'terminal':(selected?'selected':'eligible');
+         if(contact&&done.has(contact)) return 'done';
+         if(contact&&['MundaneCall','WhistleblowerLeak','SubscriberCall'].includes(current)) return 'eligible';
+         if(name==='Contact pool (uncompleted contacts)') return current==='Instruction'?'locked':'eligible';
+         if(name==='Instruction') return current!=='Instruction'?'done':'eligible';
+         if(name==='Interrogation') return ['GoodEnding','NeutralEnding','BadEnding'].includes(current)?'done':'locked';
+         if(['GoodEnding','NeutralEnding','BadEnding'].includes(name)) return 'locked';
+         return 'locked';
+       };
+        const nodeId=index=>`dirty-d${index}`;
+        const links=`${nodeId(0)} --> ${nodeId(1)}\n${nodeId(1)} --> ${nodeId(2)}\n${nodeId(1)} --> ${nodeId(3)}\n${nodeId(1)} --> ${nodeId(4)}\n${nodeId(2)} --> ${nodeId(1)}\n${nodeId(3)} --> ${nodeId(1)}\n${nodeId(4)} --> ${nodeId(1)}\n${nodeId(1)} --> ${nodeId(5)}\n${nodeId(5)} --> ${nodeId(6)}\n${nodeId(5)} --> ${nodeId(7)}\n${nodeId(5)} --> ${nodeId(8)}`;
+        const classes=names.map((_,index)=>`class ${nodeId(index)} ${stateAt(index)};`).join('\n');
+         const diagram=`flowchart TB\n${names.map((name,index)=>`${nodeId(index)}["${name}"]`).join('\n')}\n${links}\nclassDef selected fill:#ffd21f,stroke:#111,stroke-width:4px,color:#111;\nclassDef eligible fill:#d8edf0,stroke:#111,stroke-width:3px,color:#111;\nclassDef done fill:#58d68d,stroke:#111,stroke-width:2px,color:#111;\nclassDef locked fill:#ded8c7,stroke:#777,stroke-width:1px,color:#68645b;\nclassDef terminal fill:#ffd2cd,stroke:#9d1f17,stroke-width:3px,color:#111;\n${classes}`;
+        container.innerHTML=`<div class="mermaid" id="dirty-diagram">${diagram}</div>`;
+        if(window.mermaid) renderMermaid(container,'dirty-diagram',()=>renderGraphFallback(container,names,activeName,stateAt));
+        else renderGraphFallback(container,names,activeName,stateAt);
       }
-      function renderDirtyGraph(active,completed) {
-        const container=document.getElementById('dirty-graph'); const names=['Instruction','Contact pool\n(one unvisited contact)','Kamal / MundaneCall','Tariq / WhistleblowerLeak','Rehana / SubscriberCall','Interrogation','GoodEnding','NeutralEnding','BadEnding']; const activeName=active==='MundaneCall'?'Kamal / MundaneCall':active==='WhistleblowerLeak'?'Tariq / WhistleblowerLeak':active==='SubscriberCall'?'Rehana / SubscriberCall':active; const done=new Set(completed); const classes=names.map((name,index)=>{ const contact=(name.startsWith('Kamal')?'Dr. Kamal':name.startsWith('Tariq')?'Tariq':name.startsWith('Rehana')?'Rehana':null); return `class d${index} ${name===activeName?'active':(contact&&done.has(contact)?'done':'idle')};`; }).join('\n'); const diagram=`flowchart LR\nd0["Instruction"] --> d1["Contact pool\\n(one unvisited contact)"]\nd1 --> d2["Kamal / MundaneCall"]\nd1 --> d3["Tariq / WhistleblowerLeak"]\nd1 --> d4["Rehana / SubscriberCall"]\nd2 --> d1\nd3 --> d1\nd4 --> d1\nd1 --> d5["Interrogation"]\nd5 --> d6["GoodEnding"]\nd5 --> d7["NeutralEnding"]\nd5 --> d8["BadEnding"]\nclassDef active fill:#ffd21f,stroke:#111,stroke-width:4px,color:#111;\nclassDef done fill:#58d68d,stroke:#111,stroke-width:2px,color:#111;\nclassDef idle fill:#ded8c7,stroke:#111,stroke-width:2px,color:#111;\n${classes}`; container.innerHTML=`<div class="mermaid" id="dirty-diagram">${diagram}</div>`; if(window.mermaid) window.mermaid.run({nodes:[document.getElementById('dirty-diagram')]}).catch(()=>renderGraphFallback(container,names,activeName,names.indexOf(activeName))); else renderGraphFallback(container,names,activeName,names.indexOf(activeName));
+      function renderNahidGraph(snapshot,current) {
+        const container=document.getElementById('nahid-graph');
+        const names=['Victim call pool','Rafiq · 1021','Nusrat · 1022',"Bela dog · 1031","Bela cat · 1032",'Rehana · 1029','Stopped by police','Penalized after five'];
+        const victimNodes={1021:1,1022:2,1031:3,1032:4,1029:5};
+        const callerLine=lineForDirectory(snapshot,1030);
+        const calls=snapshot?.active_calls?.length?snapshot.active_calls:(snapshot?.calls||[]);
+        const selectedCall=calls.find(call=>Number(call.caller_line)===Number(callerLine))||null;
+        const selectedVictim=selectedCall?Number(selectedCall.requested_callee_directory_id):null;
+        const completed=new Set((snapshot?.call_history||[]).filter(call=>call.outcome==='completed'&&Number(call.caller_line)===Number(callerLine)).map(call=>{
+          return Number((snapshot.subscribers||[]).find(subscriber=>Number(subscriber.line)===Number(call.requested_callee_line))?.directory_id);
+        }));
+        const stateAt=index=>{
+          if(index===0) return current==='Scamming'?'eligible':'locked';
+          if(index===6) return current==='Stopped'?'terminal':(current==='Scamming'?'eligible':'locked');
+          if(index===7) return current==='Penalized'?'terminal':'locked';
+          const directoryId=Number(names[index].match(/\d{4}/)?.[0]);
+          if(completed.has(directoryId)) return 'done';
+          if(Number.isFinite(selectedVictim)&&selectedVictim===directoryId) return 'selected';
+          return current==='Scamming'?'eligible':'locked';
+        };
+        const nodeId=index=>`nahid-d${index}`;
+        const links=`${nodeId(0)} --> ${nodeId(1)}\n${nodeId(0)} --> ${nodeId(2)}\n${nodeId(0)} --> ${nodeId(3)}\n${nodeId(0)} --> ${nodeId(4)}\n${nodeId(0)} --> ${nodeId(5)}\n${nodeId(1)} --> ${nodeId(0)}\n${nodeId(2)} --> ${nodeId(0)}\n${nodeId(3)} --> ${nodeId(0)}\n${nodeId(4)} --> ${nodeId(0)}\n${nodeId(5)} --> ${nodeId(0)}\n${nodeId(0)} -- "POLICE success" --> ${nodeId(6)}\n${nodeId(0)} -- "five completed" --> ${nodeId(7)}`;
+        const classes=names.map((_,index)=>`class ${nodeId(index)} ${stateAt(index)};`).join('\n');
+        const diagram=`flowchart TB\n${names.map((name,index)=>`${nodeId(index)}["${name}"]`).join('\n')}\n${links}\nclassDef selected fill:#ffd21f,stroke:#111,stroke-width:4px,color:#111;\nclassDef eligible fill:#d8edf0,stroke:#111,stroke-width:3px,color:#111;\nclassDef done fill:#58d68d,stroke:#111,stroke-width:2px,color:#111;\nclassDef locked fill:#ded8c7,stroke:#777,stroke-width:1px,color:#68645b;\nclassDef terminal fill:#ffd2cd,stroke:#9d1f17,stroke-width:3px,color:#111;\n${classes}`;
+        container.innerHTML=`<div class="mermaid" id="nahid-diagram">${diagram}</div>`;
+        if(window.mermaid) renderMermaid(container,'nahid-diagram',()=>renderGraphFallback(container,names,current,stateAt));
+       else renderGraphFallback(container,names,current,stateAt);
       }
-     function renderGraphFallback(container,nodes,active,activeIndex) { container.innerHTML=`<div class="graph-fallback">${nodes.map((node,index)=>`<div class="fallback-node ${node===active?'active':(activeIndex>=0&&index<activeIndex?'done':'')}">${esc(node)}${node===active?' ◀ ACTIVE':''}</div>`).join('')}</div>`; }
-    function highlightJson(raw,emptyText) { if(!raw) return esc(emptyText); try { JSON.parse(raw); } catch (_) { return `<span class="json-invalid">${esc(raw)}</span>`; } return esc(raw).replace(/(&quot;.*?&quot;)(\s*:)?|\b(?:true|false)\b|\bnull\b|-?\d+(?:\.\d+)?/g,(match,string,colon)=>{ if(string) return `<span class="json-${colon?'key':'string'}">${match}</span>${colon||''}`; const type=match==='null'?'null':(match==='true'||match==='false'?'boolean':'number'); return `<span class="json-${type}">${match}</span>`; }); }
+      let mermaidRenderQueue=Promise.resolve();
+      function renderMermaid(container,diagramId,onFailure) {
+        const diagram=document.getElementById(diagramId);
+        mermaidRenderQueue=mermaidRenderQueue.then(()=>{
+          if(!diagram.isConnected) return;
+          return window.mermaid.run({nodes:[diagram]}).catch(()=>{
+            if(diagram.isConnected) onFailure();
+          });
+        }).catch(()=>onFailure());
+      }
+      function renderGraphFallback(container,nodes,current,stateAt) {
+       container.innerHTML=`<div class="graph-fallback">${nodes.map((node,index)=>`<div class="fallback-node ${stateAt(index)}">${esc(node)}${node===current&&['eligible','selected'].includes(stateAt(index))?' · '+(stateAt(index)==='selected'?'SELECTED':'ELIGIBLE'):''}</div>`).join('')}</div>`;
+     }
+     function highlightJson(raw,emptyText) { if(!raw) return esc(emptyText); try { JSON.parse(raw); } catch (_) { return `<span class="json-invalid">${esc(raw)}</span>`; } return esc(raw).replace(/(&quot;.*?&quot;)(\s*:)?|\b(?:true|false)\b|\bnull\b|-?\d+(?:\.\d+)?/g,(match,string,colon)=>{ if(string) return `<span class="json-${colon?'key':'string'}">${match}</span>${colon||''}`; const type=match==='null'?'null':(match==='true'||match==='false'?'boolean':'number'); return `<span class="json-${type}">${match}</span>`; }); }
      function conversationCard(item) { const failed=item.status==='failed'||item.error; const capture=item.captured_samples?`<audio controls preload="none" src="/api/voice/${item.id}/capture.wav"></audio>`:'<span class="muted">capture unavailable</span>'; const ready=['completed','failed','cancelled'].includes(item.status); const tts=item.tts_samples&&ready?`<audio controls preload="none" src="/api/voice/${item.id}/tts.wav"></audio>`:'<span class="muted">TTS unavailable or still generating</span>'; return `<article class="card ${failed?'failed':''}"><div class="card-grid"><div><b>TURN ${esc(item.id)}</b><br><span class="label">${esc(statusText(item.status))}</span><br><span class="muted">${esc(item.caller_name||'Unknown caller')}<br>${esc(item.caller_place||'Unknown place')}<br>${esc(item.captured_samples||0)} input / ${esc(item.tts_samples||0)} TTS samples</span></div><div><div class="label">STT</div><p>${esc(item.transcript||'-')}</p><div class="label">LLM PROMPT</div><p>${esc(item.llm_prompt||'-')}</p><div class="label">LLM RESPONSE</div><p>${esc(item.llm_response||item.response_text||'-')}</p>${item.error?`<p class="bad">${esc(item.error.code)}: ${esc(item.error.message)}</p>`:''}</div><div><div class="label">RECORDED INPUT</div>${capture}<div class="label">SYNTHESIZED OUTPUT</div>${tts}</div></div></article>`; }
     function table(items,columns) { if(!items||!items.length) return '<div class="empty">None.</div>'; return `<table><tr>${columns.map(column=>`<th>${esc(column.replaceAll('_',' '))}</th>`).join('')}</tr>${items.map(item=>`<tr>${columns.map(column=>`<td>${esc(Array.isArray(item[column])?item[column].join(', ')||'-':(item[column]??'-'))}</td>`).join('')}</tr>`).join('')}</table>`; }
     async function send(action,extra={}) { const status=document.getElementById('action-status'); try { const response=await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...extra})}); const result=await response.json(); if(!response.ok) throw new Error(result.error||`HTTP ${response.status}`); status.textContent=result.accepted===false?'REJECTED // '+(result.error?.message||'unknown error'):'ACCEPTED // '+action; status.className='action '+(result.accepted===false?'bad':'good'); } catch(error) { status.textContent='COMMAND ERROR // '+error; status.className='action bad'; } await refresh(); }
-     function advance(){ send('advance_time',{seconds:Number(document.getElementById('seconds').value)||0}); } function injectCall(){ send('inject_call',{caller_line:Number(document.getElementById('caller').value),callee_line:Number(document.getElementById('callee').value)}); } function toggleDebug(action){ const enabled=action==='godmode'?!latestSnapshot?.run?.godmode:!latestSnapshot?.run?.bypass_restrictions; send(action,{enabled}); } refresh(); setInterval(refresh,1000);
+      function advance(){ send('advance_time',{seconds:Number(document.getElementById('seconds').value)||0}); } function injectCall(){ send('inject_call',{caller_line:Number(document.getElementById('caller').value),callee_line:Number(document.getElementById('callee').value)}); } function toggleDebug(action){ const enabled=action==='godmode'?!latestSnapshot?.run?.godmode:!latestSnapshot?.run?.bypass_restrictions; send(action,{enabled}); } renderStoryGraphs(null); refresh(); setInterval(refresh,1000);
   </script>
 </body>
 </html>

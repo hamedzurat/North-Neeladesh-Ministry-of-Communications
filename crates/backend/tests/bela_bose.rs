@@ -198,18 +198,19 @@ fn next_bela_call_waits_for_the_previous_direct_circuit_to_be_removed() {
     );
 
     let next_call = backend.apply_input_message(input(&backend, 9, vec![], [1, 0, 2, 4]));
-    assert!(next_call.output.line_lamps[3]);
+    assert!(!next_call.output.line_lamps[3]);
     assert!(
-        next_call
+        !next_call
             .output
             .calls
             .iter()
-            .any(|call| call.caller_line == 3)
+            .any(|call| call.caller_line == 3),
+        "the beat stays dormant until the selector has an available slot"
     );
 }
 
 #[test]
-fn reset_starts_all_four_story_callers_together() {
+fn reset_selects_two_or_three_conflict_free_story_calls() {
     let mut backend = Backend::new_exchange();
     let reset = backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
@@ -220,7 +221,7 @@ fn reset_starts_all_four_story_callers_together() {
     assert_eq!(reset.snapshot.shapla_story_beat, "EmergencyCall");
     assert_eq!(reset.snapshot.neel_story_beat, "ProfessorRouting");
     assert_eq!(reset.snapshot.dirty_work_story_beat, "Instruction");
-    assert_eq!(reset.snapshot.nahid_story_beat, "ScamOne");
+    assert_eq!(reset.snapshot.nahid_story_beat, "Scamming");
 
     let response = backend.apply_input_message(input(&backend, 1, vec![], [0, 0, 0, 1]));
     let callers = response
@@ -229,9 +230,23 @@ fn reset_starts_all_four_story_callers_together() {
         .iter()
         .map(|call| call.caller_line)
         .collect::<Vec<_>>();
-    assert!(callers.contains(&1), "Shapla call missing: {callers:?}");
-    assert!(callers.contains(&2), "Neel call missing: {callers:?}");
-    assert!(callers.contains(&6), "Dirty Work call missing: {callers:?}");
-    assert!(callers.contains(&11), "Nahid call missing: {callers:?}");
-    assert_eq!(callers.len(), 4);
+    let selected_story_calls = callers
+        .iter()
+        .filter(|caller| [1, 2, 3, 6, 8, 9, 10, 11].contains(caller))
+        .count();
+    assert!(
+        (2..=3).contains(&selected_story_calls),
+        "expected 2-3 selected story calls: {callers:?}"
+    );
+    let calls = &response.output.calls;
+    for (index, call) in calls.iter().enumerate() {
+        for other in &calls[index + 1..] {
+            assert_ne!(call.caller_line, other.caller_line);
+            assert_ne!(call.caller_line, other.requested_callee_line);
+            assert_ne!(call.requested_callee_line, other.caller_line);
+            if call.requested_callee_line != 0 && other.requested_callee_line != 0 {
+                assert_ne!(call.requested_callee_line, other.requested_callee_line);
+            }
+        }
+    }
 }

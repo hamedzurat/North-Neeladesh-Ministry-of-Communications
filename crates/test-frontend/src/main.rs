@@ -8,8 +8,8 @@ use std::time::Duration;
 use exchange_protocol::{
     CordConnection, DEBUG_PROTOCOL_VERSION, DebugCommand, DebugRequest, DebugResponse,
     HeldControls, InputDebug, InputMessage, InputState, PROTOCOL_VERSION, PortId, PrinterEntry,
-    StateMessage, TEXT_PROTOCOL_VERSION, TextInputMessage, TextResponseMessage, TextStatus, TuningState,
-    read_frame, write_frame,
+    StateMessage, TEXT_PROTOCOL_VERSION, TextInputMessage, TextResponseMessage, TextStatus,
+    TuningState, read_frame, write_frame,
 };
 use serde::{Deserialize, Serialize};
 
@@ -131,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if initial_debug.snapshot.shapla_story_beat != "EmergencyCall"
         || initial_debug.snapshot.neel_story_beat != "ProfessorRouting"
         || initial_debug.snapshot.dirty_work_story_beat != "Instruction"
-        || initial_debug.snapshot.nahid_story_beat != "ScamOne"
+        || initial_debug.snapshot.nahid_story_beat != "Scamming"
     {
         return Err("story reset did not initialize registered story threads".into());
     }
@@ -289,7 +289,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     let no_service = matches!(
         path.as_str(),
-        "fallen_mother_no_water_help_leads_to_bad_ending" | "fallen_mother_unrelated_questions" | "fallen_mother_random_conversation"
+        "fallen_mother_no_water_help_leads_to_bad_ending"
+            | "fallen_mother_unrelated_questions"
+            | "fallen_mother_random_conversation"
     );
     if !no_service {
         log.row(CsvRow {
@@ -331,9 +333,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "clearly ask Police to send officers to Shapla Apartments, using a direct request rather than a question; phrase it naturally",
             true,
         ),
-        "fallen_mother_no_water_help_leads_to_bad_ending" | "fallen_mother_unrelated_questions" | "fallen_mother_random_conversation" => {
-            ("caller", HeldControls::default(), "", false)
-        }
+        "fallen_mother_no_water_help_leads_to_bad_ending"
+        | "fallen_mother_unrelated_questions"
+        | "fallen_mother_random_conversation" => ("caller", HeldControls::default(), "", false),
         other => return Err(format!("unknown test path: {other}").into()),
     };
     let utterance = if no_service {
@@ -1700,7 +1702,11 @@ fn run_nahid(
     revision = state.state_revision;
     let mut victims = Vec::new();
 
-    let scam_count = if path == "nahid_police_report_stops_scams" { 1 } else { 5 };
+    let scam_count = if path == "nahid_police_report_stops_scams" {
+        1
+    } else {
+        5
+    };
     for attempt in 0..scam_count {
         let call = state
             .output
@@ -2020,10 +2026,9 @@ fn route_tap_call(
         .as_ref()
         .is_none_or(|monitoring| monitoring.audio_clip.is_none())
     {
-        return Err(format!(
-            "Nahid TAP did not resolve a recording for victim line {callee}"
-        )
-        .into());
+        return Err(
+            format!("Nahid TAP did not resolve a recording for victim line {callee}").into(),
+        );
     }
     let duration = (0..60)
         .find_map(|_| {
@@ -2685,7 +2690,11 @@ fn run_bela_bose_story(
         text: "You connect LINE 3 to the Operator.",
     })?;
     let mut arnab_turns = turns;
-    let turn_count = if path == "bela_bose_completes_professor_routing" { 3 } else { 2 };
+    let turn_count = if path == "bela_bose_completes_professor_routing" {
+        3
+    } else {
+        2
+    };
     for turn in 0..turn_count {
         let task = if turn == 0 {
             "ask Arnab who he wants to be connected to"
@@ -2750,7 +2759,10 @@ fn run_bela_bose_story(
     let (_, next_revision) = ring_destination(backend, debug, &mut sequence, revision, 3, digits)?;
     revision = next_revision;
     let direct = vec![cord(PortId::Subscriber(3), PortId::Subscriber(destination))];
-    let mut state = exchange(backend, input(&mut sequence, revision, direct, false, digits))?;
+    let mut state = exchange(
+        backend,
+        input(&mut sequence, revision, direct, false, digits),
+    )?;
     revision = state.state_revision;
     if !state.accepted {
         return Err(format!("Bela route rejected: {:?}", state.error).into());

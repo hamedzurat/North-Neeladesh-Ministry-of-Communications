@@ -154,8 +154,12 @@ impl Beat {
 
     pub const fn patience_seconds(self) -> u64 {
         match self {
+            Self::Instruction => 64,
+            Self::MundaneCall => 64,
+            Self::WhistleblowerLeak => 64,
+            Self::SubscriberCall => 64,
+            Self::Interrogation => 64,
             Self::GoodEnding | Self::NeutralEnding | Self::BadEnding => 0,
-            _ => 64,
         }
     }
 

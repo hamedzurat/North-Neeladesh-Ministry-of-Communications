@@ -26,11 +26,11 @@ use exchange_protocol::{
     TextInputMessage, TextResponseMessage, TextStatus, VOICE_AUDIO_PACKET_SAMPLES,
     VOICE_AUDIO_SAMPLE_RATE, VOICE_INPUT_SAMPLE_RATE, VOICE_PROTOCOL_VERSION, VoiceControl,
     VoiceControlMessage, VoiceStatus, VoiceStatusMessage, decode_voice_input_audio,
-    decode_voice_status, encode_voice_control, encode_voice_status,
-    read_frame, write_frame,
+    decode_voice_status, encode_voice_control, encode_voice_status, read_frame, write_frame,
 };
 
 const LIVE_CALL_DURATION_SECONDS: u64 = u64::MAX;
+const MAX_RANDOM_PATIENCE_BONUS_SECONDS: u64 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum StoryId {
@@ -137,6 +137,7 @@ pub struct Backend {
     next_event_id: u64,
     line_limit: u8,
     call_target: usize,
+    story_call_target: usize,
     shift_started_elapsed_seconds: u64,
     next_call_arrival_elapsed_seconds: u64,
     resolved: u8,
@@ -185,9 +186,11 @@ pub struct Backend {
     neel_story_beat: stories::bela_bose::Beat,
     dirty_work_beat: stories::dirty_work::Beat,
     dirty_work_completed_contacts: Vec<u8>,
+    dirty_work_deferred_contacts: Vec<u8>,
     nahid_beat: stories::nahid::Beat,
     nahid_scam_count: u8,
     nahid_victims: Vec<u16>,
+    nahid_deferred_victims: Vec<u16>,
     story_controls: HeldControls,
     story_enabled: bool,
     story_started_elapsed_seconds: u64,
@@ -243,6 +246,29 @@ impl Backend {
             self.events.remove(0);
         }
         self.events.push(event);
+    }
+
+    fn record_money_change(&mut self, amount: i32, reason: &str) {
+        self.record_event(
+            "money",
+            "transaction",
+            format!("{amount:+} {reason}; balance={}", self.money),
+        );
+    }
+
+    fn requested_callee_directory_id(&self, caller: u8, callee: u8) -> Option<u16> {
+        let service_endpoint = callee == 0
+            && (self.is_directory_line(caller, stories::fallen_mother::CALLER_DIRECTORY)
+                || self.is_directory_line(caller, stories::dirty_work::RAHMAN_DIRECTORY));
+        if service_endpoint {
+            None
+        } else {
+            self.config
+                .subscribers
+                .iter()
+                .find(|subscriber| subscriber.line == callee)
+                .map(|subscriber| subscriber.id)
+        }
     }
 
     fn subscriber(&self, line: u8) -> &SubscriberConfig {
@@ -360,7 +386,7 @@ impl Backend {
     pub fn new_exchange() -> Self {
         let config = GameConfig::load();
         Self::validate_story_directories(&config);
-        Self {
+        let mut backend = Self {
             config: config.clone(),
             state: initial_state(&config),
             revision: 0,
@@ -375,6 +401,7 @@ impl Backend {
             next_event_id: 1,
             line_limit: LINES,
             call_target: config.active_calls,
+            story_call_target: (2 + config.story_seed as usize % 2).min(config.active_calls),
             shift_started_elapsed_seconds: 0,
             next_call_arrival_elapsed_seconds: 0,
             resolved: 0,
@@ -423,9 +450,11 @@ impl Backend {
             neel_story_beat: stories::bela_bose::Beat::ProfessorRouting,
             dirty_work_beat: stories::dirty_work::Beat::Instruction,
             dirty_work_completed_contacts: Vec::new(),
-            nahid_beat: stories::nahid::Beat::ScamOne,
+            dirty_work_deferred_contacts: Vec::new(),
+            nahid_beat: stories::nahid::Beat::Scamming,
             nahid_scam_count: 0,
             nahid_victims: Vec::new(),
+            nahid_deferred_victims: Vec::new(),
             story_controls: HeldControls::default(),
             story_enabled: true,
             story_started_elapsed_seconds: 0,
@@ -444,7 +473,12 @@ impl Backend {
             last_crank_elapsed_seconds: None,
             godmode: false,
             bypass_restrictions: false,
-        }
+        };
+        backend.refill_calls(backend.call_target);
+        backend.sync_call_state();
+        backend.sync_lamps(-1);
+        backend.state.shift.active_call_count = backend.calls.len() as u8;
+        backend
     }
     pub fn new_simple_hardware_demo() -> Self {
         let mut backend = Self::new_exchange();
@@ -626,6 +660,8 @@ impl Backend {
         self.sequence = None;
         self.clock_started = Instant::now();
         self.debug_elapsed = 0;
+        self.story_call_target = self.next_random() as usize % 2 + 2;
+        self.story_call_target = self.story_call_target.min(self.call_target);
         self.calls.clear();
         self.call_history.clear();
         self.recent_missed_lines.clear();
@@ -671,9 +707,11 @@ impl Backend {
         self.neel_story_beat = stories::bela_bose::Beat::ProfessorRouting;
         self.dirty_work_beat = stories::dirty_work::Beat::Instruction;
         self.dirty_work_completed_contacts.clear();
-        self.nahid_beat = stories::nahid::Beat::ScamOne;
+        self.dirty_work_deferred_contacts.clear();
+        self.nahid_beat = stories::nahid::Beat::Scamming;
         self.nahid_scam_count = 0;
         self.nahid_victims.clear();
+        self.nahid_deferred_victims.clear();
         self.story_controls = HeldControls::default();
         self.story_started_elapsed_seconds = self.elapsed_seconds() as u64;
         self.voice_turn_controls = HeldControls::default();
@@ -699,11 +737,7 @@ impl Backend {
                 caller_line: call.caller,
                 requested_callee_line: call.callee,
                 requested_callee_directory_id: self
-                    .config
-                    .subscribers
-                    .iter()
-                    .find(|subscriber| subscriber.line == call.callee)
-                    .map(|subscriber| subscriber.id),
+                    .requested_callee_directory_id(call.caller, call.callee),
                 phase: call.phase.clone(),
             })
             .collect();
@@ -724,11 +758,7 @@ impl Backend {
                 caller_line: call.caller,
                 requested_callee_line: call.callee,
                 requested_callee_directory_id: self
-                    .config
-                    .subscribers
-                    .iter()
-                    .find(|subscriber| subscriber.line == call.callee)
-                    .map(|subscriber| subscriber.id),
+                    .requested_callee_directory_id(call.caller, call.callee),
                 phase: call.phase.clone(),
                 started_elapsed_seconds: call.started_elapsed_seconds,
                 patience_deadline_elapsed_seconds: call.deadline,
@@ -1038,11 +1068,7 @@ impl Backend {
                 caller_line: c.caller,
                 requested_callee_line: c.callee,
                 requested_callee_directory_id: self
-                    .config
-                    .subscribers
-                    .iter()
-                    .find(|subscriber| subscriber.line == c.callee)
-                    .map(|subscriber| subscriber.id),
+                    .requested_callee_directory_id(c.caller, c.callee),
                 phase: c.phase.clone(),
             })
             .collect();
@@ -1267,34 +1293,6 @@ impl Backend {
         self.voice_state_revision = revision;
     }
 
-    fn sync_story_lamp(&mut self) {
-        if !self.story_enabled {
-            return;
-        }
-        if !self.story_connection_is_blocked(StoryId::Shapla)
-            && !self.shapla_story_completed
-            && self.story_beat != stories::fallen_mother::Beat::BadFollowup
-        {
-            self.state.line_lamps
-                [self.line_for_directory(stories::fallen_mother::CALLER_DIRECTORY) as usize] = true;
-        }
-        if !self.story_connection_is_blocked(StoryId::BelaBose)
-            && !stories::bela_bose::is_terminal(self.neel_story_beat)
-        {
-            self.state.line_lamps[self.story_caller_for_neel() as usize] = true;
-        }
-        if !self.story_connection_is_blocked(StoryId::DirtyWork)
-            && !self.dirty_work_beat.is_terminal()
-        {
-            self.state.line_lamps
-                [self.line_for_directory(stories::dirty_work::RAHMAN_DIRECTORY) as usize] = true;
-        }
-        if !self.story_connection_is_blocked(StoryId::Nahid) && !self.nahid_beat.is_terminal() {
-            self.state.line_lamps
-                [self.line_for_directory(stories::nahid::NAHID_DIRECTORY) as usize] = true;
-        }
-    }
-
     fn release_story_connection_gate(&mut self, input: &InputState) {
         self.story_connections_pending_disconnect
             .retain(|_, connection| {
@@ -1310,7 +1308,6 @@ impl Backend {
     fn sync_lamps(&mut self, ring_line: i16) {
         let previous = self.state.line_lamps;
         self.state.line_lamps = lamps(&self.calls, ring_line);
-        self.sync_story_lamp();
         for (line, (&was_on, &is_on)) in previous
             .iter()
             .zip(self.state.line_lamps.iter())
@@ -1344,7 +1341,10 @@ impl Backend {
             if let Some((caller, callee, caller_tap, callee_tap)) = previous {
                 match (caller_tap, callee_tap) {
                     (true, true) => {
-                        self.log("CALL", format_args!("disconnect {caller} -> tap -> {callee}"));
+                        self.log(
+                            "CALL",
+                            format_args!("disconnect {caller} -> tap -> {callee}"),
+                        );
                     }
                     (true, false) => {
                         self.log("CALL", format_args!("disconnect {caller} -> tap"));
@@ -1387,10 +1387,7 @@ impl Backend {
             } else {
                 rendered
             };
-            self.log(
-                "WIRE",
-                format_args!("topology={rendered}"),
-            );
+            self.log("WIRE", format_args!("topology={rendered}"));
             self.last_logged_topology = Some(input.cord_topology.clone());
         }
         if self.last_logged_ring_line != Some(input.ring_line) {
@@ -1398,7 +1395,6 @@ impl Backend {
             self.last_logged_ring_line = Some(input.ring_line);
         }
     }
-
 
     fn update_ring_activation(&mut self, input: &InputState) {
         let physical_line = physical_ring_line(input);
@@ -1487,6 +1483,7 @@ impl Backend {
             self.story_beat = stories::fallen_mother::Beat::BadFollowup;
             self.money -= 100;
             self.deductions += 100;
+            self.record_money_change(-100, "abandoned Shapla emergency call");
             append_printer(
                 &mut self.state,
                 &format!(
@@ -1573,6 +1570,7 @@ impl Backend {
             self.money += 100;
             self.earned += 100;
             self.story_reward_paid = true;
+            self.record_money_change(100, "Fallen Mother reward");
             append_printer(&mut self.state, "STORY // caller sent $100");
         }
     }
@@ -1597,12 +1595,18 @@ impl Backend {
         };
         self.log(
             "STORY nahid",
-            format_args!("beat {:?} -> {:?} after successful police report", self.nahid_beat, next),
+            format_args!(
+                "beat {:?} -> {:?} after successful police report",
+                self.nahid_beat, next
+            ),
         );
         self.record_event(
             "story",
             "transition",
-            format!("nahid {:?} -> {:?} after successful police report", self.nahid_beat, next),
+            format!(
+                "nahid {:?} -> {:?} after successful police report",
+                self.nahid_beat, next
+            ),
         );
         self.nahid_beat = next;
         append_printer(
@@ -2000,8 +2004,7 @@ impl Backend {
                     .and_then(|call| call.connected_at)
             })
             .map(|connected_at| {
-                (connected_at.elapsed().as_secs_f64()
-                    * f64::from(VOICE_AUDIO_SAMPLE_RATE)
+                (connected_at.elapsed().as_secs_f64() * f64::from(VOICE_AUDIO_SAMPLE_RATE)
                     / VOICE_AUDIO_PACKET_SAMPLES as f64) as usize
             })
             .unwrap_or(0)
@@ -2112,11 +2115,31 @@ impl Backend {
             },
             finished_elapsed_seconds: self.elapsed_seconds(),
         });
-        if self.is_directory_line(call.caller, stories::nahid::NAHID_DIRECTORY)
+        if !missed
+            && self.is_directory_line(call.caller, stories::nahid::NAHID_DIRECTORY)
             && let Some(callee_directory) = directory_id_for_line(&self.config, call.callee)
             && !self.nahid_victims.contains(&callee_directory)
         {
             self.nahid_victims.push(callee_directory);
+        }
+        if self.is_directory_line(call.caller, stories::nahid::NAHID_DIRECTORY)
+            && let Some(callee_directory) = directory_id_for_line(&self.config, call.callee)
+        {
+            if missed && !self.nahid_deferred_victims.contains(&callee_directory) {
+                self.nahid_deferred_victims.push(callee_directory);
+            } else if !missed {
+                self.nahid_deferred_victims
+                    .retain(|directory| *directory != callee_directory);
+            }
+        }
+        if missed
+            && let Some(contact) = directory_id_for_line(&self.config, call.caller)
+                .and_then(stories::dirty_work::contact_beat_by_directory)
+        {
+            self.dirty_work_deferred_contacts.push(call.caller);
+            if contact == self.dirty_work_beat {
+                self.dirty_work_beat = self.next_dirty_work_contact();
+            }
         }
         if self.audio_call == Some((call.caller, call.callee)) {
             self.audio_queue.clear();
@@ -2129,6 +2152,7 @@ impl Backend {
             self.missed += 1;
             self.deductions += 4;
             self.money -= 4;
+            self.record_money_change(-4, "missed call");
             append_printer(
                 &mut self.state,
                 &format!(
@@ -2136,12 +2160,34 @@ impl Backend {
                     call.caller, call.callee, self.money
                 ),
             );
+            if self.is_directory_line(call.caller, stories::fallen_mother::CALLER_DIRECTORY)
+                && let Some(next) = self.story_beat.after_patience_expired()
+            {
+                self.record_event(
+                    "story",
+                    "transition",
+                    format!("fallen_mother patience expired -> {:?}", next),
+                );
+                self.story_beat = next;
+                self.deductions += 100;
+                self.money -= 100;
+                self.record_money_change(-100, "abandoned Shapla emergency call");
+                append_printer(
+                    &mut self.state,
+                    &format!(
+                        "MONEY // -$100 abandoned Shapla emergency call // balance ${}",
+                        self.money
+                    ),
+                );
+            }
         } else {
             self.completed += 1;
             let seconds = if call.audio_duration_seconds == LIVE_CALL_DURATION_SECONDS {
                 call.connected_elapsed_seconds
                     .map(|started| {
-                        u64::from(self.elapsed_seconds()).saturating_sub(started).max(1)
+                        u64::from(self.elapsed_seconds())
+                            .saturating_sub(started)
+                            .max(1)
                     })
                     .unwrap_or(1)
             } else {
@@ -2150,6 +2196,7 @@ impl Backend {
             self.conversation_seconds = self.conversation_seconds.saturating_add(seconds);
             self.earned += 5;
             self.money += 5;
+            self.record_money_change(5, "completed connection");
             append_printer(
                 &mut self.state,
                 &format!(
@@ -2161,7 +2208,10 @@ impl Backend {
                 && self.nahid_beat.is_scamming()
             {
                 self.nahid_scam_count = self.nahid_scam_count.saturating_add(1);
-                let next = self.nahid_beat.after_completed_scam().unwrap();
+                let next = self
+                    .nahid_beat
+                    .after_completed_scam(self.nahid_scam_count)
+                    .unwrap();
                 self.log(
                     "STORY nahid",
                     format_args!("beat {:?} -> {:?}", self.nahid_beat, next),
@@ -2175,6 +2225,7 @@ impl Backend {
                 if next == stories::nahid::Beat::Penalized {
                     self.deductions += 100;
                     self.money -= 100;
+                    self.record_money_change(-100, "Nahid scammed five people");
                     append_printer(
                         &mut self.state,
                         &format!(
@@ -2231,6 +2282,7 @@ impl Backend {
                             && self.story_followup_call_started;
                         self.earned += 100;
                         self.money += 100;
+                        self.record_money_change(100, "Bela Bose story reward");
                         append_printer(
                             &mut self.state,
                             &format!(
@@ -2249,6 +2301,8 @@ impl Backend {
                 caller_directory.and_then(stories::dirty_work::contact_beat_by_directory)
                 && contact == self.dirty_work_beat
             {
+                self.dirty_work_deferred_contacts
+                    .retain(|caller| *caller != call.caller);
                 self.dirty_work_completed_contacts.push(call.caller);
                 let next = if self.dirty_work_completed_contacts.len()
                     == stories::dirty_work::CONTACT_BEATS.len()
@@ -2299,6 +2353,7 @@ impl Backend {
         self.failed += 1;
         self.deductions += 4;
         self.money -= 4;
+        self.record_money_change(-4, "failed connection");
         append_printer(
             &mut self.state,
             &format!(
@@ -2331,11 +2386,7 @@ impl Backend {
                 caller_line: call.caller,
                 requested_callee_line: call.callee,
                 requested_callee_directory_id: self
-                    .config
-                    .subscribers
-                    .iter()
-                    .find(|subscriber| subscriber.line == call.callee)
-                    .map(|subscriber| subscriber.id),
+                    .requested_callee_directory_id(call.caller, call.callee),
                 phase: call.phase.clone(),
             })
             .collect();
@@ -2347,7 +2398,6 @@ impl Backend {
                 .cloned()
         });
         self.state.line_lamps = lamps(&self.calls, -1);
-        self.sync_story_lamp();
         self.state.shift.active_call_count = self.calls.len() as u8;
     }
 
@@ -2489,7 +2539,9 @@ impl Backend {
             && now >= self.next_call_arrival_elapsed_seconds
         {
             let (caller, callee) = self.next_call();
-            let deadline = now + self.random_patience();
+            let base_patience = self.random_patience();
+            let patience = self.randomized_patience(base_patience);
+            let deadline = now + patience;
             self.calls.push(ActiveCall {
                 caller,
                 callee,
@@ -2516,44 +2568,99 @@ impl Backend {
             return;
         }
         let now = self.elapsed_seconds() as u64;
-        if !self.story_connection_is_blocked(StoryId::Shapla)
-            && !self.shapla_story_completed
-            && self.story_beat != stories::fallen_mother::Beat::BadFollowup
-            && !self.calls.iter().any(|call| {
-                self.is_directory_line(call.caller, stories::fallen_mother::CALLER_DIRECTORY)
-            })
-        {
-            if self.story_beat == stories::fallen_mother::Beat::HappyFollowup {
-                self.story_followup_call_started = true;
-            }
-            self.calls.push(ActiveCall {
-                caller: self.story_caller(),
-                callee: 0,
-                phase: CallPhase::Waiting,
-                deadline: now + u64::MAX / 2,
-                started_elapsed_seconds: now,
-                connected_at: None,
-                connected_elapsed_seconds: None,
-                ring_started_at: None,
-                ring_ready_at: None,
-                ring_activated: false,
-                disconnected_at: None,
-                audio_duration_seconds: 0,
-            });
+        let mut candidates = [
+            StoryId::Shapla,
+            StoryId::BelaBose,
+            StoryId::DirtyWork,
+            StoryId::Nahid,
+        ];
+        for index in (1..candidates.len()).rev() {
+            let swap = self.next_random() as usize % (index + 1);
+            candidates.swap(index, swap);
         }
-        if !self.story_connection_is_blocked(StoryId::BelaBose)
-            && !stories::bela_bose::is_terminal(self.neel_story_beat)
-            && !self
-                .calls
-                .iter()
-                .any(|call| self.is_neel_caller(call.caller))
-        {
-            let caller = self.story_caller_for_neel();
+
+        for story in candidates {
+            if self.story_call_count() >= self.story_call_target {
+                break;
+            }
+            let candidate = match story {
+                StoryId::Shapla
+                    if !self.story_connection_is_blocked(story)
+                        && !self.shapla_story_completed
+                        && self.story_beat != stories::fallen_mother::Beat::BadFollowup
+                        && !self.calls.iter().any(|call| {
+                            self.is_directory_line(
+                                call.caller,
+                                stories::fallen_mother::CALLER_DIRECTORY,
+                            )
+                        }) =>
+                {
+                    Some((
+                        self.story_caller(),
+                        0,
+                        self.story_beat.patience_seconds(),
+                        false,
+                    ))
+                }
+                StoryId::BelaBose
+                    if !self.story_connection_is_blocked(story)
+                        && !stories::bela_bose::is_terminal(self.neel_story_beat)
+                        && !self
+                            .calls
+                            .iter()
+                            .any(|call| self.is_neel_caller(call.caller)) =>
+                {
+                    Some((
+                        self.story_caller_for_neel(),
+                        self.story_requested_callee(),
+                        self.neel_story_beat.patience_seconds(),
+                        true,
+                    ))
+                }
+                StoryId::DirtyWork
+                    if !self.story_connection_is_blocked(story)
+                        && !self.dirty_work_beat.is_terminal()
+                        && !self
+                            .calls
+                            .iter()
+                            .any(|call| self.is_dirty_work_caller(call.caller)) =>
+                {
+                    Some((
+                        self.dirty_work_caller_line(),
+                        self.dirty_work_callee_line(),
+                        self.dirty_work_beat.patience_seconds(),
+                        self.dirty_work_beat.directory_callee().is_some(),
+                    ))
+                }
+                StoryId::Nahid
+                    if !self.story_connection_is_blocked(story)
+                        && !self.nahid_beat.is_terminal()
+                        && !self
+                            .calls
+                            .iter()
+                            .any(|call| self.is_nahid_caller(call.caller)) =>
+                {
+                    let caller = self.line_for_directory(stories::nahid::NAHID_DIRECTORY);
+                    self.next_nahid_victim()
+                        .map(|(victim, patience)| (caller, victim, patience, true))
+                }
+                _ => None,
+            };
+            let Some((caller, callee, patience, has_destination)) = candidate else {
+                continue;
+            };
+            if self.calls.iter().any(|call| {
+                self.call_uses_line(call, caller)
+                    || (has_destination && self.call_uses_line(call, callee))
+            }) {
+                continue;
+            }
+            let patience = self.randomized_patience(patience);
             self.calls.push(ActiveCall {
                 caller,
-                callee: self.story_requested_callee(),
+                callee,
                 phase: CallPhase::Waiting,
-                deadline: now + self.neel_story_beat.patience_seconds(),
+                deadline: now.saturating_add(patience),
                 started_elapsed_seconds: now,
                 connected_at: None,
                 connected_elapsed_seconds: None,
@@ -2563,116 +2670,98 @@ impl Backend {
                 disconnected_at: None,
                 audio_duration_seconds: 0,
             });
-        }
-        if !self.story_connection_is_blocked(StoryId::DirtyWork)
-            && !self.dirty_work_beat.is_terminal()
-            && !self
-                .calls
-                .iter()
-                .any(|call| self.is_dirty_work_caller(call.caller))
-        {
-            self.calls.push(ActiveCall {
-                caller: self.dirty_work_caller_line(),
-                callee: self.dirty_work_callee_line(),
-                phase: CallPhase::Waiting,
-                deadline: now + self.dirty_work_beat.patience_seconds(),
-                started_elapsed_seconds: now,
-                connected_at: None,
-                connected_elapsed_seconds: None,
-                ring_started_at: None,
-                ring_ready_at: None,
-                ring_activated: false,
-                disconnected_at: None,
-                audio_duration_seconds: 0,
-            });
-        }
-        if !self.story_connection_is_blocked(StoryId::Nahid)
-            && !self.nahid_beat.is_terminal()
-            && !self
-                .calls
-                .iter()
-                .any(|call| self.is_nahid_caller(call.caller))
-        {
-            let now = self.elapsed_seconds() as u64;
-            let victim = self.next_nahid_victim();
-            self.calls.push(ActiveCall {
-                caller: self.line_for_directory(stories::nahid::NAHID_DIRECTORY),
-                callee: victim,
-                phase: CallPhase::Waiting,
-                deadline: now + stories::nahid::PATIENCE_SECONDS,
-                started_elapsed_seconds: now,
-                connected_at: None,
-                connected_elapsed_seconds: None,
-                ring_started_at: None,
-                ring_ready_at: None,
-                ring_activated: false,
-                disconnected_at: None,
-                audio_duration_seconds: 0,
-            });
+            if story == StoryId::Shapla
+                && self.story_beat == stories::fallen_mother::Beat::HappyFollowup
+            {
+                self.story_followup_call_started = true;
+            }
         }
     }
 
-    fn next_nahid_victim(&mut self) -> u8 {
+    fn story_call_count(&self) -> usize {
+        self.calls
+            .iter()
+            .filter(|call| self.story_id_for_caller(call.caller).is_some())
+            .count()
+    }
+
+    fn call_uses_line(&self, call: &ActiveCall, line: u8) -> bool {
+        call.caller == line
+            || (call.callee == line
+                && !(call.callee == 0
+                    && (self
+                        .is_directory_line(call.caller, stories::fallen_mother::CALLER_DIRECTORY)
+                        || self.is_directory_line(
+                            call.caller,
+                            stories::dirty_work::RAHMAN_DIRECTORY,
+                        ))))
+    }
+
+    fn next_random(&mut self) -> u64 {
         self.rng = self
             .rng
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
-        let start = (self.rng as usize) % stories::nahid::VICTIM_DIRECTORIES.len();
-        for offset in 0..stories::nahid::VICTIM_DIRECTORIES.len() {
-            let victim_directory = stories::nahid::VICTIM_DIRECTORIES
-                [(start + offset) % stories::nahid::VICTIM_DIRECTORIES.len()];
-            let Some(victim) = self
-                .config
-                .subscribers
-                .iter()
-                .find(|subscriber| subscriber.id == victim_directory)
-                .map(|subscriber| subscriber.line)
-            else {
-                continue;
-            };
-            if !self
-                .calls
-                .iter()
-                .any(|call| call.caller == victim || call.callee == victim)
-                && !self.nahid_victims.contains(&victim_directory)
-            {
-                return victim;
-            }
+        self.rng
+    }
+
+    fn next_nahid_victim(&mut self) -> Option<(u8, u64)> {
+        let start = self.next_random() as usize % stories::nahid::VICTIM_DIRECTORIES.len();
+        let used = &self.nahid_victims;
+        let subscribers = &self.config.subscribers;
+        let calls = &self.calls;
+        let shapla_line = self.line_for_directory(stories::fallen_mother::CALLER_DIRECTORY);
+        let rahman_line = self.line_for_directory(stories::dirty_work::RAHMAN_DIRECTORY);
+        let find_victim = |deferred: &[u16]| {
+            (0..stories::nahid::VICTIM_DIRECTORIES.len())
+                .map(|offset| {
+                    stories::nahid::VICTIM_DIRECTORIES
+                        [(start + offset) % stories::nahid::VICTIM_DIRECTORIES.len()]
+                })
+                .filter(|directory| !used.contains(directory) && !deferred.contains(directory))
+                .filter_map(|directory| {
+                    let subscriber = subscribers
+                        .iter()
+                        .find(|subscriber| subscriber.id == directory)?;
+                    let patience = stories::nahid::victim_patience_seconds(directory)?;
+                    Some((subscriber.line, patience))
+                })
+                .find(|(victim, _)| {
+                    !calls.iter().any(|call| {
+                        call.caller == *victim
+                            || (call.callee == *victim
+                                && !(call.callee == 0
+                                    && (call.caller == shapla_line || call.caller == rahman_line)))
+                    })
+                })
+        };
+        if let Some(victim) = find_victim(&self.nahid_deferred_victims) {
+            return Some(victim);
         }
-        stories::nahid::VICTIM_DIRECTORIES
-            .iter()
-            .copied()
-            .find(|victim| !self.nahid_victims.contains(victim))
-            .and_then(|victim| {
-                self.config
-                    .subscribers
-                    .iter()
-                    .find(|subscriber| subscriber.id == victim)
-                    .map(|subscriber| subscriber.line)
-            })
-            .unwrap_or_else(|| {
-                self.config
-                    .subscribers
-                    .iter()
-                    .find(|subscriber| subscriber.id == stories::nahid::VICTIM_DIRECTORIES[0])
-                    .map(|subscriber| subscriber.line)
-                    .unwrap_or(0)
-            })
+        self.nahid_deferred_victims.clear();
+        find_victim(&[])
     }
 
     fn next_dirty_work_contact(&mut self) -> stories::dirty_work::Beat {
-        let remaining: Vec<_> = stories::dirty_work::CONTACT_BEATS
+        let mut remaining: Vec<_> = stories::dirty_work::CONTACT_BEATS
             .into_iter()
             .filter(|beat| {
                 let caller = self.line_for_directory(beat.directory_caller());
                 !self.dirty_work_completed_contacts.contains(&caller)
+                    && !self.dirty_work_deferred_contacts.contains(&caller)
             })
             .collect();
-        self.rng = self
-            .rng
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        remaining[(self.rng as usize) % remaining.len()]
+        if remaining.is_empty() {
+            self.dirty_work_deferred_contacts.clear();
+            remaining = stories::dirty_work::CONTACT_BEATS
+                .into_iter()
+                .filter(|beat| {
+                    let caller = self.line_for_directory(beat.directory_caller());
+                    !self.dirty_work_completed_contacts.contains(&caller)
+                })
+                .collect();
+        }
+        remaining[self.next_random() as usize % remaining.len()]
     }
 
     fn story_caller_for_neel(&self) -> u8 {
@@ -2715,12 +2804,10 @@ impl Backend {
                 && (!self.story_enabled
                     || (!story_caller_lines.contains(&caller)
                         && !story_caller_lines.contains(&callee)))
-                && self.calls.iter().all(|c| {
-                    c.caller != caller
-                        && c.callee != caller
-                        && c.caller != callee
-                        && c.callee != callee
-                })
+                && self
+                    .calls
+                    .iter()
+                    .all(|c| !self.call_uses_line(c, caller) && !self.call_uses_line(c, callee))
             {
                 return (caller, callee);
             }
@@ -2730,6 +2817,10 @@ impl Backend {
         self.rng = self.rng.wrapping_mul(6364136223846793005).wrapping_add(1);
         self.config.patience_min_seconds
             + self.rng % (self.config.patience_max_seconds - self.config.patience_min_seconds + 1)
+    }
+
+    fn randomized_patience(&mut self, base_seconds: u64) -> u64 {
+        base_seconds.saturating_add(self.next_random() % (MAX_RANDOM_PATIENCE_BONUS_SECONDS + 1))
     }
     fn elapsed_seconds(&self) -> u32 {
         (self.clock_started.elapsed().as_secs() + self.debug_elapsed).min(u32::MAX as u64) as u32
@@ -2749,6 +2840,11 @@ impl Backend {
             };
         }
         match request.command {
+            DebugCommand::Snapshot => {
+                self.expire_calls();
+                self.expire_story();
+                self.refill_calls(self.call_target);
+            }
             DebugCommand::ResetRun => self.reset_run(),
             DebugCommand::AdvanceTime { seconds } => {
                 self.debug_elapsed = self.debug_elapsed.saturating_add(u64::from(seconds));
@@ -2772,12 +2868,14 @@ impl Backend {
                             && call.callee != callee_line
                     });
                 if available {
+                    let now = self.elapsed_seconds() as u64;
+                    let patience = self.randomized_patience(30);
                     self.calls.push(ActiveCall {
                         caller: caller_line,
                         callee: callee_line,
                         phase: CallPhase::Waiting,
-                        deadline: self.elapsed_seconds() as u64 + 30,
-                        started_elapsed_seconds: self.elapsed_seconds() as u64,
+                        deadline: now + patience,
+                        started_elapsed_seconds: now,
                         connected_at: None,
                         connected_elapsed_seconds: None,
                         ring_started_at: None,
@@ -2868,7 +2966,14 @@ pub fn serve_with_voice_and_debug_engine(
     voice_socket: Option<UdpSocket>,
     debug_listener: Option<TcpListener>,
 ) -> io::Result<()> {
-    serve_with_voice_debug_and_text(listener, voice_socket, None, "127.0.0.1:7879".parse().unwrap(), debug_listener, None)
+    serve_with_voice_debug_and_text(
+        listener,
+        voice_socket,
+        None,
+        "127.0.0.1:7879".parse().unwrap(),
+        debug_listener,
+        None,
+    )
 }
 
 pub fn serve_with_voice_debug_and_text(
@@ -2995,13 +3100,13 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                     let Some((context, caller)) = context else {
                         continue;
                     };
-                     let worker_socket = socket.try_clone()?;
-                     let worker_backend = Arc::clone(&backend);
-                     let output_address = backend
-                         .lock()
-                         .ok()
-                         .and_then(|state| state.voice_peer)
-                         .unwrap_or(address);
+                    let worker_socket = socket.try_clone()?;
+                    let worker_backend = Arc::clone(&backend);
+                    let output_address = backend
+                        .lock()
+                        .ok()
+                        .and_then(|state| state.voice_peer)
+                        .unwrap_or(address);
                     let service_turn = backend.lock().ok().is_some_and(|state| {
                         state.voice_turn_controls.police || state.voice_turn_controls.ems
                     });
@@ -3216,14 +3321,14 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                         ssrc: 0x4e45_5554,
                                         samples: chunk.to_vec(),
                                     };
-                                     worker_socket.send_to(&packet.encode(), output_address).map_err(
-                                        |error| {
+                                    worker_socket
+                                        .send_to(&packet.encode(), output_address)
+                                        .map_err(|error| {
                                             VoiceError::new(
                                                 "voice_audio_send_failed",
                                                 error.to_string(),
                                             )
-                                        },
-                                    )?;
+                                        })?;
                                     packet_index += 1;
                                     sample_offset += chunk.len();
                                 }
@@ -3502,10 +3607,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
 /// Accept reliable microphone uploads and bridge their protocol frames into
 /// the existing voice worker. TCP provides ordering and delivery guarantees;
 /// the UDP socket remains dedicated to control/status and RTP playback.
-pub fn serve_voice_upload(
-    listener: TcpListener,
-    voice_target: SocketAddr,
-) -> io::Result<()> {
+pub fn serve_voice_upload(listener: TcpListener, voice_target: SocketAddr) -> io::Result<()> {
     for stream in listener.incoming() {
         let mut stream = stream?;
         let socket = UdpSocket::bind("127.0.0.1:0")?;
@@ -3956,6 +4058,165 @@ fn handle_debug_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) 
 }
 
 #[cfg(test)]
+mod beat_selector_tests {
+    use super::{Backend, CallPhase};
+
+    #[test]
+    fn new_exchange_starts_with_selected_story_calls() {
+        let backend = Backend::new_exchange();
+        let calls = backend.debug_snapshot().active_calls;
+
+        assert!((2..=3).contains(&calls.len()), "startup calls: {calls:?}");
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.requested_callee_directory_id.is_some()),
+            "startup should select story calls: {calls:?}"
+        );
+    }
+
+    #[test]
+    fn snapshot_request_expires_and_replaces_calls_past_patience() {
+        let mut backend = Backend::new_exchange();
+        backend.debug_elapsed = backend
+            .calls
+            .iter()
+            .map(|call| call.deadline)
+            .max()
+            .expect("startup calls have deadlines") as u64;
+
+        let response = backend.apply_debug_command(exchange_protocol::DebugRequest {
+            protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
+            command: exchange_protocol::DebugCommand::Snapshot,
+        });
+
+        assert!(
+            response.snapshot.active_calls.iter().all(|call| {
+                call.phase != CallPhase::Waiting || call.patience_remaining_seconds > 0
+            }),
+            "snapshot retained expired waiting calls: {:?}",
+            response.snapshot.active_calls
+        );
+        assert!((2..=3).contains(&response.snapshot.active_calls.len()));
+    }
+
+    #[test]
+    fn patience_random_bonus_is_bounded_to_ten_seconds() {
+        let mut backend = Backend::new_exchange();
+        let mut observed_min = u64::MAX;
+        let mut observed_max = 0;
+        for seed in 0..200 {
+            backend.rng = seed;
+            let patience = backend.randomized_patience(64);
+            assert!((64..=74).contains(&patience));
+            observed_min = observed_min.min(patience);
+            observed_max = observed_max.max(patience);
+        }
+        assert!(observed_min < observed_max, "patience bonus did not vary");
+    }
+
+    #[test]
+    fn operator_service_endpoint_is_not_mislabeled_as_line_zero_subscriber() {
+        let backend = Backend::new_exchange();
+        let rahman = backend.line_for_directory(super::stories::dirty_work::RAHMAN_DIRECTORY);
+        let nahid = backend.line_for_directory(super::stories::nahid::NAHID_DIRECTORY);
+
+        assert_eq!(backend.requested_callee_directory_id(rahman, 0), None);
+        assert_eq!(backend.requested_callee_directory_id(nahid, 0), Some(1021));
+    }
+
+    #[test]
+    fn nahid_retry_skips_a_recently_missed_victim() {
+        let mut backend = Backend::new_exchange();
+        let missed_victim =
+            backend.line_for_directory(super::stories::nahid::VICTIM_DIRECTORIES[0]);
+        backend
+            .nahid_deferred_victims
+            .push(super::stories::nahid::VICTIM_DIRECTORIES[0]);
+
+        let (selected, _) = backend
+            .next_nahid_victim()
+            .expect("another victim is available");
+
+        assert_ne!(selected, missed_victim);
+    }
+
+    #[test]
+    fn fallen_mother_patience_expiry_enters_its_bad_followup() {
+        let mut backend = Backend::new_exchange();
+        backend.story_call_target = 4;
+        backend.ensure_story_call();
+        let shapla = backend.line_for_directory(super::stories::fallen_mother::CALLER_DIRECTORY);
+        let call_index = backend
+            .calls
+            .iter()
+            .position(|call| call.caller == shapla)
+            .expect("selector creates the Shapla beat");
+
+        backend.finish_call(call_index, true);
+
+        assert_eq!(
+            backend.story_beat,
+            super::stories::fallen_mother::Beat::BadFollowup
+        );
+        assert_eq!(backend.money, -104);
+    }
+
+    #[test]
+    fn selector_never_activates_calls_with_overlapping_subscriber_lines() {
+        let mut backend = Backend::new_exchange();
+        let shapla_line =
+            backend.line_for_directory(super::stories::fallen_mother::CALLER_DIRECTORY);
+        let rahman_line = backend.line_for_directory(super::stories::dirty_work::RAHMAN_DIRECTORY);
+
+        for bela in [
+            super::stories::bela_bose::Beat::ProfessorRouting,
+            super::stories::bela_bose::Beat::ArnabDirectory,
+        ] {
+            for dirty in [
+                super::stories::dirty_work::Beat::Instruction,
+                super::stories::dirty_work::Beat::MundaneCall,
+                super::stories::dirty_work::Beat::WhistleblowerLeak,
+                super::stories::dirty_work::Beat::SubscriberCall,
+                super::stories::dirty_work::Beat::Interrogation,
+            ] {
+                for seed in 0..100 {
+                    backend.rng = seed;
+                    backend.calls.clear();
+                    backend.story_call_target = 3;
+                    backend.story_beat = super::stories::fallen_mother::Beat::EmergencyCall;
+                    backend.neel_story_beat = bela;
+                    backend.dirty_work_beat = dirty;
+                    backend.dirty_work_completed_contacts.clear();
+                    backend.dirty_work_deferred_contacts.clear();
+                    backend.nahid_beat = super::stories::nahid::Beat::Scamming;
+                    backend.nahid_victims.clear();
+                    backend.nahid_deferred_victims.clear();
+                    backend.ensure_story_call();
+
+                    for (index, left) in backend.calls.iter().enumerate() {
+                        let left_destination = !(left.callee == 0
+                            && (left.caller == shapla_line || left.caller == rahman_line));
+                        for right in &backend.calls[index + 1..] {
+                            assert!(!backend.call_uses_line(left, right.caller));
+                            assert!(!backend.call_uses_line(right, left.caller));
+                            let right_destination = !(right.callee == 0
+                                && (right.caller == shapla_line || right.caller == rahman_line));
+                            if left_destination {
+                                assert!(!backend.call_uses_line(right, left.callee));
+                            }
+                            if right_destination {
+                                assert!(!backend.call_uses_line(left, right.callee));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod story_knowledge_tests {
     use super::Backend;
 
@@ -3999,7 +4260,10 @@ mod story_knowledge_tests {
                 .join("../..")
                 .join(&path);
             let bytes = std::fs::read(&workspace_path).unwrap_or_else(|error| {
-                panic!("story recording {} is not readable: {error}", workspace_path.display())
+                panic!(
+                    "story recording {} is not readable: {error}",
+                    workspace_path.display()
+                )
             });
             assert!(
                 bytes.starts_with(b"RIFF"),

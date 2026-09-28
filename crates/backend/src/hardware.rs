@@ -10,7 +10,7 @@ use exchange_protocol::{
     StateMessage, StateOutput, TapBridgeMonitoring, TuningState, VoiceStatus,
 };
 
-use crate::config::{GameConfig, LedConfig, RgbColor, LINES};
+use crate::config::{GameConfig, LINES, LedConfig, RgbColor};
 
 pub(crate) fn initial_state(config: &GameConfig) -> StateOutput {
     StateOutput {
@@ -53,7 +53,7 @@ pub(crate) fn initial_state(config: &GameConfig) -> StateOutput {
         neel_story_beat: "ProfessorRouting".into(),
         dirty_work_story_beat: "Instruction".into(),
         dirty_work_completed_contacts: vec![],
-        nahid_story_beat: "ScamOne".into(),
+        nahid_story_beat: "Scamming".into(),
         nahid_scam_count: 0,
     }
 }
@@ -75,9 +75,9 @@ pub(crate) fn led_frame(
         ..LedFrame::default()
     };
     for (line, (pixel, active)) in frame.pixels.iter_mut().zip(line_lamps).enumerate() {
-        *pixel = if tap_lines.is_some_and(|(caller, callee)| {
-            line as u8 == caller || line as u8 == callee
-        }) {
+        *pixel = if tap_lines
+            .is_some_and(|(caller, callee)| line as u8 == caller || line as u8 == callee)
+        {
             pixel_color(config.tap)
         } else if direct_lines
             .iter()
@@ -87,13 +87,15 @@ pub(crate) fn led_frame(
         } else if operator_lines.contains(&(line as u8)) {
             pixel_color(config.connected_operator)
         } else if *active {
-            pixel_color(patience
-                .iter()
-                .find(|(caller, _, _)| *caller == line as u8)
-                .map_or(config.call_wait, |(_, remaining, total)| {
-                    let total = (*total).max(1);
-                    blend_color(config.call_expired, config.call_wait, *remaining, total)
-                }))
+            pixel_color(
+                patience
+                    .iter()
+                    .find(|(caller, _, _)| *caller == line as u8)
+                    .map_or(config.call_wait, |(_, remaining, total)| {
+                        let total = (*total).max(1);
+                        blend_color(config.call_expired, config.call_wait, *remaining, total)
+                    }),
+            )
         } else if missed_lines.contains(&(line as u8)) {
             pixel_color(config.call_expired)
         } else {

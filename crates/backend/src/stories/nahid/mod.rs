@@ -4,8 +4,17 @@ use std::process::Command;
 
 pub const NAHID_DIRECTORY: u16 = 1030;
 pub const LOCATION: &str = "SHONARPARA TOWER";
-pub const PATIENCE_SECONDS: u64 = 64;
 pub const VICTIM_DIRECTORIES: [u16; 5] = [1021, 1022, 1031, 1032, 1029];
+pub const fn victim_patience_seconds(directory_id: u16) -> Option<u64> {
+    match directory_id {
+        1021 => Some(64),
+        1022 => Some(64),
+        1031 => Some(64),
+        1032 => Some(64),
+        1029 => Some(64),
+        _ => None,
+    }
+}
 pub const MECHANICS: &[Mechanic] = &[
     Mechanic::OperatorConnection,
     Mechanic::DirectRouting,
@@ -43,11 +52,7 @@ these instructions are not part of the report.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Beat {
-    ScamOne,
-    ScamTwo,
-    ScamThree,
-    ScamFour,
-    ScamFive,
+    Scamming,
     Stopped,
     Penalized,
 }
@@ -55,34 +60,24 @@ pub enum Beat {
 impl Beat {
     pub const fn name(self) -> &'static str {
         match self {
-            Self::ScamOne => "ScamOne",
-            Self::ScamTwo => "ScamTwo",
-            Self::ScamThree => "ScamThree",
-            Self::ScamFour => "ScamFour",
-            Self::ScamFive => "ScamFive",
+            Self::Scamming => "Scamming",
             Self::Stopped => "Stopped",
             Self::Penalized => "Penalized",
         }
     }
 
     pub const fn is_scamming(self) -> bool {
-        matches!(
-            self,
-            Self::ScamOne | Self::ScamTwo | Self::ScamThree | Self::ScamFour | Self::ScamFive
-        )
+        matches!(self, Self::Scamming)
     }
 
     pub const fn is_terminal(self) -> bool {
         !self.is_scamming()
     }
 
-    pub const fn after_completed_scam(self) -> Option<Self> {
+    pub const fn after_completed_scam(self, completed_scams: u8) -> Option<Self> {
         match self {
-            Self::ScamOne => Some(Self::ScamTwo),
-            Self::ScamTwo => Some(Self::ScamThree),
-            Self::ScamThree => Some(Self::ScamFour),
-            Self::ScamFour => Some(Self::ScamFive),
-            Self::ScamFive => Some(Self::Penalized),
+            Self::Scamming if completed_scams >= 5 => Some(Self::Penalized),
+            Self::Scamming => Some(Self::Scamming),
             Self::Stopped | Self::Penalized => None,
         }
     }
@@ -145,37 +140,45 @@ pub fn report_succeeded(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Beat, report_succeeded};
+    use super::{Beat, VICTIM_DIRECTORIES, report_succeeded, victim_patience_seconds};
 
     #[test]
     fn nahid_successful_police_classification_is_required_to_stop_him() {
         assert!(report_succeeded("success"));
         assert!(!report_succeeded("failure"));
-        assert!(Beat::ScamOne.is_scamming());
+        assert!(Beat::Scamming.is_scamming());
         assert!(Beat::Stopped.is_terminal());
     }
 
     #[test]
-    fn nahid_completed_scam_advances_to_the_next_beat() {
-        assert_eq!(Beat::ScamOne.after_completed_scam(), Some(Beat::ScamTwo));
-        assert_eq!(Beat::ScamTwo.after_completed_scam(), Some(Beat::ScamThree));
-        assert_eq!(Beat::ScamThree.after_completed_scam(), Some(Beat::ScamFour));
-        assert_eq!(Beat::ScamFour.after_completed_scam(), Some(Beat::ScamFive));
-        assert_eq!(Beat::ScamFive.after_completed_scam(), Some(Beat::Penalized));
-        assert_eq!(Beat::Stopped.after_completed_scam(), None);
+    fn nahid_keeps_the_scam_pool_open_until_five_calls_complete() {
+        for completed_scams in 1..5 {
+            assert_eq!(
+                Beat::Scamming.after_completed_scam(completed_scams),
+                Some(Beat::Scamming)
+            );
+        }
+        assert_eq!(
+            Beat::Scamming.after_completed_scam(5),
+            Some(Beat::Penalized)
+        );
+        assert_eq!(Beat::Stopped.after_completed_scam(0), None);
     }
 
     #[test]
     fn nahid_successful_police_report_stops_any_active_scam_beat() {
-        for beat in [
-            Beat::ScamOne,
-            Beat::ScamTwo,
-            Beat::ScamThree,
-            Beat::ScamFour,
-            Beat::ScamFive,
-        ] {
-            assert_eq!(beat.after_successful_police_report(), Some(Beat::Stopped));
-        }
+        assert_eq!(
+            Beat::Scamming.after_successful_police_report(),
+            Some(Beat::Stopped)
+        );
         assert_eq!(Beat::Penalized.after_successful_police_report(), None);
+    }
+
+    #[test]
+    fn victim_calls_define_patience_independently() {
+        for victim in VICTIM_DIRECTORIES {
+            assert!(victim_patience_seconds(victim).is_some());
+        }
+        assert_eq!(victim_patience_seconds(9999), None);
     }
 }

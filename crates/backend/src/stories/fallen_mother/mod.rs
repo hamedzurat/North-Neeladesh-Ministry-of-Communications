@@ -2,8 +2,7 @@ use exchange_protocol::Mechanic;
 
 pub const CALLER_DIRECTORY: u16 = 1022;
 pub const PLACE: &str = "SHAPLA APARTMENTS";
-#[allow(dead_code)]
-pub const PATIENCE_SECONDS: u64 = 0;
+pub const EMERGENCY_CALL_PATIENCE_SECONDS: u64 = 64;
 pub const EMS_CLASSIFIER_PROMPT: &str = r#"
 The player is speaking to EMS.
 Allowed labels: success, failure. Choose success only when the player directly tells EMS to send medical help to Shapla Apartments. Choose failure if the player says that they will send or dispatch help themselves, even if they mention an ambulance and the correct location. Also choose failure for vague statements, wrong locations, and unrelated sentences.
@@ -72,12 +71,28 @@ pub enum Beat {
 }
 
 impl Beat {
+    pub const fn patience_seconds(self) -> u64 {
+        match self {
+            Self::EmergencyCall => EMERGENCY_CALL_PATIENCE_SECONDS,
+            Self::HappyFollowup => u64::MAX / 2,
+            Self::NeutralFollowup => u64::MAX / 2,
+            Self::BadFollowup => 0,
+        }
+    }
+
     pub const fn dialogue_prompt(self) -> &'static str {
         match self {
             Self::EmergencyCall => DIALOGUE_PROMPT,
             Self::HappyFollowup => HAPPY_PROMPT,
             Self::NeutralFollowup => NEUTRAL_PROMPT,
             Self::BadFollowup => BAD_PROMPT,
+        }
+    }
+
+    pub const fn after_patience_expired(self) -> Option<Self> {
+        match self {
+            Self::EmergencyCall => Some(Self::BadFollowup),
+            Self::HappyFollowup | Self::NeutralFollowup | Self::BadFollowup => None,
         }
     }
 }
@@ -127,7 +142,7 @@ pub fn next_beat(
 
 #[cfg(test)]
 mod tests {
-    use super::{Beat, Classification, next_beat};
+    use super::{Beat, Classification, EMERGENCY_CALL_PATIENCE_SECONDS, next_beat};
 
     #[test]
     fn police_wins_when_both_service_buttons_are_held() {
@@ -147,5 +162,18 @@ mod tests {
             next_beat(Beat::EmergencyCall, Classification::Failure, false, true),
             Some(Beat::BadFollowup)
         );
+    }
+
+    #[test]
+    fn emergency_call_patience_expiry_selects_bad_followup() {
+        assert_eq!(
+            Beat::EmergencyCall.after_patience_expired(),
+            Some(Beat::BadFollowup)
+        );
+        assert_eq!(
+            Beat::EmergencyCall.patience_seconds(),
+            EMERGENCY_CALL_PATIENCE_SECONDS
+        );
+        assert_eq!(Beat::HappyFollowup.after_patience_expired(), None);
     }
 }
