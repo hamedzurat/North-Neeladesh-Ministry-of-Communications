@@ -159,7 +159,6 @@ pub struct Backend {
     audio_timestamp: u32,
     audio_tap_was_active: bool,
     pending_tts: Vec<(u8, u8, bool)>,
-    tts_prepared: bool,
     last_ptt: bool,
     voice_peer: Option<SocketAddr>,
     voice_session_id: u64,
@@ -398,7 +397,6 @@ impl Backend {
             audio_timestamp: 0,
             audio_tap_was_active: false,
             pending_tts: Vec::new(),
-            tts_prepared: false,
             last_ptt: false,
             voice_peer: None,
             voice_session_id: 0,
@@ -450,7 +448,6 @@ impl Backend {
         let mut backend = Self::new_exchange();
         backend.call_target = backend.config.active_calls;
         backend.line_limit = 6;
-        backend.tts_prepared = true;
         backend.story_enabled = false;
         backend.calls.clear();
         backend.next_call_arrival_elapsed_seconds = backend.elapsed_seconds() as u64;
@@ -479,8 +476,7 @@ impl Backend {
         Self::new_simple_hardware_demo()
     }
     pub fn new_hardware_demo() -> Self {
-        let mut backend = Self::new_exchange();
-        backend.tts_prepared = true;
+        let backend = Self::new_exchange();
         backend
     }
     pub fn new_hardware_demo_with_printer_stress(_: bool) -> Self {
@@ -590,10 +586,9 @@ impl Backend {
                 && caller == self.line_for_directory(stories::fallen_mother::CALLER_DIRECTORY)
             {
                 format!(
-                    "{}\nStory place: {}\nOpening dialogue: {}",
+                    "{}\nStory place: {}",
                     self.story_beat.dialogue_prompt(),
                     stories::fallen_mother::PLACE,
-                    self.story_beat.opening_dialogue().unwrap_or(""),
                 )
             } else {
                 String::new()
@@ -1450,7 +1445,7 @@ impl Backend {
         }
         // Removing the operator cord is expected once a call has been
         // connected directly.  The voice worker may still be playing the
-        // call's opening audio, so do not mistake that normal transition for
+        // caller audio, so do not mistake that normal transition for
         // an abandoned operator conversation.
         if self
             .calls
@@ -1827,43 +1822,18 @@ impl Backend {
         else {
             return;
         };
-        let neel_story = self.neel_story_active();
-        let caller_directory = directory_id_for_line(&self.config, caller);
-        let callee_directory = directory_id_for_line(&self.config, callee);
-        let neel_audio = neel_story
-            && caller_directory
-                .zip(callee_directory)
-                .and_then(|(caller, callee)| stories::bela_bose::audio_path(caller, callee))
-                .is_some();
         let authored_audio = authored_audio_path(&self.config, caller, callee).is_some();
         let local_tap_audio = tap_audio && authored_audio;
-        let has_opening_audio = if neel_audio {
-            tap_audio && neel_audio
-        } else {
-            self.story_enabled && (self.opening_dialogue(caller).is_some() || authored_audio)
-        };
         let phase = self.calls[index].phase.clone();
         self.log(
             "CALL",
-            format_args!(
-                "connect {} -> {} from={:?} opening_audio={}",
-                caller, callee, phase, has_opening_audio
-            ),
+            format_args!("connect {} -> {} from={:?}", caller, callee, phase),
         );
         self.record_event(
             "call",
             "connect",
             format!("caller={caller} callee={callee} tap_audio={tap_audio}"),
         );
-        let tts_prepared = self.tts_prepared;
-        if !has_opening_audio && !neel_story && !tts_prepared {
-            self.log(
-                "VOICE",
-                format_args!(
-                    "queue opening audio caller={caller} callee={callee} tts_prepared={tts_prepared}"
-                ),
-            );
-        }
         let Some(call) = self.calls.get_mut(index) else {
             return;
         };
@@ -1873,30 +1843,11 @@ impl Backend {
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
             call.audio_duration_seconds =
                 authored_audio_duration_seconds(&self.config, caller, callee).unwrap_or(1);
-        } else if neel_audio && !has_opening_audio {
-            call.phase = CallPhase::Connected;
-            call.connected_at = Some(Instant::now());
-            call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
-            call.audio_duration_seconds = caller_directory
-                .zip(callee_directory)
-                .and_then(|(caller, callee)| {
-                    stories::bela_bose::audio_duration_seconds(caller, callee)
-                })
-                .unwrap_or(1);
-        } else if tts_prepared && !has_opening_audio {
-            call.phase = CallPhase::Connected;
-            call.connected_at = Some(Instant::now());
-            call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
-            call.audio_duration_seconds = if authored_audio {
-                authored_audio_duration_seconds(&self.config, caller, callee).unwrap_or(1)
-            } else {
-                2
-            };
         } else {
-            call.phase = CallPhase::Held;
-            call.connected_at = None;
-            call.audio_duration_seconds = 0;
-            self.pending_tts.push((caller, callee, tap_audio));
+            call.phase = CallPhase::Connected;
+            call.connected_at = Some(Instant::now());
+            call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
+            call.audio_duration_seconds = if self.story_enabled { u64::MAX } else { 2 };
         }
         if self.calls[index].phase == CallPhase::Connected {
             let remaining = self.calls[index]
@@ -2035,7 +1986,7 @@ impl Backend {
         callee: u8,
         _tap_audio: bool,
     ) -> Result<Vec<i16>, VoiceError> {
-        let caller_profile = config
+        let _caller_profile = config
             .subscribers
             .iter()
             .find(|subscriber| subscriber.line == caller)
@@ -2079,32 +2030,7 @@ impl Backend {
                 }
             }
         }
-        let caller_directory = config
-            .subscribers
-            .iter()
-            .find(|subscriber| subscriber.line == caller)
-            .map(|subscriber| subscriber.id);
-        let Some(text) = (caller_directory == Some(stories::fallen_mother::CALLER_DIRECTORY))
-            .then_some(stories::fallen_mother::OPENING_DIALOGUE)
-        else {
-            return Ok(Vec::new());
-        };
-        let samples =
-            with_persistent_pocket_tts(|tts| tts.synthesize(&caller_profile.voice_id, text))?;
-        if samples.is_empty() {
-            return Err(VoiceError::new(
-                "tts_empty_output",
-                "TTS returned no audio samples",
-            ));
-        }
-        Ok(samples)
-    }
-
-    fn opening_dialogue(&self, caller: u8) -> Option<&'static str> {
-        match self.is_directory_line(caller, stories::fallen_mother::CALLER_DIRECTORY) {
-            true => Some(stories::fallen_mother::OPENING_DIALOGUE),
-            _ => None,
-        }
+        Ok(Vec::new())
     }
 
     fn finish_call(&mut self, index: usize, missed: bool) {
@@ -2357,7 +2283,7 @@ impl Backend {
     fn fail_generated_call(&mut self, caller: u8, callee: u8, error: &VoiceError) {
         self.state.debug.messages.push(BackendDiagnostic {
             code: error.code.clone(),
-            message: format!("opening audio {caller}->{callee}: {}", error.message),
+            message: format!("tap audio {caller}->{callee}: {}", error.message),
         });
         if let Some(index) = self
             .calls
@@ -2925,10 +2851,7 @@ pub fn serve_with_voice_debug_and_text(
     debug_listener: Option<TcpListener>,
     text_listener: Option<TcpListener>,
 ) -> io::Result<()> {
-    let mut initial = Backend::new_exchange();
-    if text_listener.is_some() {
-        initial.tts_prepared = true;
-    }
+    let initial = Backend::new_exchange();
     let backend = Arc::new(Mutex::new(initial));
     if let Some(socket) = voice_socket {
         let voice_backend = Arc::clone(&backend);
@@ -4116,7 +4039,7 @@ mod story_knowledge_tests {
         assert!(
             context
                 .call_guidance
-                .contains("You failed to help, and I will pursue you for the loss.")
+                .contains("You failed to help, and I will sue you for the loss.")
         );
         assert!(
             !context

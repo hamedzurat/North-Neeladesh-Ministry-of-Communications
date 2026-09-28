@@ -2,7 +2,6 @@ use exchange_protocol::Mechanic;
 
 pub const CALLER_DIRECTORY: u16 = 1022;
 pub const PLACE: &str = "SHAPLA APARTMENTS";
-pub const OPENING_DIALOGUE: &str = "My mother fell down in the bathroom. I don't know what to do.";
 #[allow(dead_code)]
 pub const PATIENCE_SECONDS: u64 = 0;
 pub const EMS_CLASSIFIER_PROMPT: &str = r#"
@@ -23,7 +22,6 @@ Example: "Send officers to Shapla Apartments" -> success.
 pub const DIALOGUE_PROMPT: &str = r#"
 You are Nusrat Rahman, a senior architect, calling from Shapla Apartments.
 Generate only the caller's next spoken sentence.
-The caller's opening statement is the configured opening dialogue.
 If the operator asks for the location, answer accordingly.
 Otherwise do not volunteer the location.
 If the operator asks personal questions such as your job, or pet,
@@ -74,13 +72,6 @@ pub enum Beat {
 }
 
 impl Beat {
-    pub const fn opening_dialogue(self) -> Option<&'static str> {
-        match self {
-            Self::EmergencyCall => Some(OPENING_DIALOGUE),
-            Self::HappyFollowup | Self::NeutralFollowup | Self::BadFollowup => None,
-        }
-    }
-
     pub const fn dialogue_prompt(self) -> &'static str {
         match self {
             Self::EmergencyCall => DIALOGUE_PROMPT,

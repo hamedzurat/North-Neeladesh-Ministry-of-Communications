@@ -177,7 +177,15 @@ fn next_bela_call_waits_for_the_previous_direct_circuit_to_be_removed() {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
         command: DebugCommand::AdvanceTime { seconds: 30 },
     });
-    let finished = backend.apply_input_message(input(&backend, 6, direct, [1, 0, 2, 4]));
+    let still_connected = backend.apply_input_message(input(&backend, 6, direct, [1, 0, 2, 4]));
+    assert_eq!(still_connected.output.neel_story_beat, "ProfessorRouting");
+
+    backend.apply_input_message(input(&backend, 7, vec![], [1, 0, 2, 4]));
+    backend.apply_debug_command(DebugRequest {
+        protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
+        command: DebugCommand::AdvanceTime { seconds: 5 },
+    });
+    let finished = backend.apply_input_message(input(&backend, 8, vec![], [1, 0, 2, 4]));
 
     assert_eq!(finished.output.neel_story_beat, "ArnabDirectory");
     assert!(!finished.output.line_lamps[3]);
@@ -189,10 +197,10 @@ fn next_bela_call_waits_for_the_previous_direct_circuit_to_be_removed() {
             .any(|call| call.caller_line == 3)
     );
 
-    let disconnected = backend.apply_input_message(input(&backend, 7, vec![], [1, 0, 2, 4]));
-    assert!(disconnected.output.line_lamps[3]);
+    let next_call = backend.apply_input_message(input(&backend, 9, vec![], [1, 0, 2, 4]));
+    assert!(next_call.output.line_lamps[3]);
     assert!(
-        disconnected
+        next_call
             .output
             .calls
             .iter()

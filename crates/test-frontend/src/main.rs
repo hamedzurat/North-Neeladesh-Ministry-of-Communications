@@ -69,7 +69,6 @@ impl GameLog {
                 row.destination,
                 row.text.trim_start_matches("phase=")
             ),
-            "opening" => writeln!(self.file, "{} Caller: \"{}\".", prefix, row.text),
             "text_turn" => {
                 let parts: Vec<_> = row.text.split(" | ").collect();
                 let player = parts.first().unwrap_or(&"").trim_start_matches("player=");
@@ -238,15 +237,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         text: "caller connected to operator",
     })?;
 
-    log.row(CsvRow {
-        event: "opening",
-        sequence,
-        revision,
-        caller: call.caller_line,
-        destination: call.requested_callee_line,
-        status: "accepted",
-        text: "My mother fell down in the bathroom. I don't know what to do.",
-    })?;
     log.row(CsvRow {
         event: "ptt_start",
         sequence,

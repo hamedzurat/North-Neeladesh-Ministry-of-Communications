@@ -93,9 +93,9 @@ The visible call phases mean:
 | `Waiting`         | The caller is waiting for the operator.                                   |
 | `OperatorSession` | The caller is connected to the operator.                                  |
 | `AwaitingRouting` | The caller was released from the operator and is waiting for routing.     |
-| `Held`            | Routing is accepted and authored opening audio is being prepared.         |
+| `Held`            | The call is temporarily held while a connection or audio operation settles. |
 | `Ringing`         | The Ring Generator has started the requested call.                        |
-| `Connected`       | The call is in a direct or Tap circuit, or its authored audio is playing. |
+| `Connected`       | The call is in a direct or Tap circuit.                                  |
 | `Completed`       | Terminal history state for a successful call.                             |
 | `Missed`          | The caller's waiting deadline expired.                                    |
 | `Failed`          | The operator made a disallowed connection or audio generation failed.     |
@@ -176,12 +176,9 @@ directory routing, ringing, direct routing, or Tap monitoring.
 
 ### Starting beat: `EmergencyCall`
 
-Nusrat opens with:
-
-> My mother fell down in the bathroom. I don't know what to do.
-
-Connect her to the operator and speak with her using `PTT`. Ask for enough
-information to make a clear service request.
+Connect Nusrat to the operator and speak with her using `PTT`. Her responses
+follow the operator's questions; ask for enough information to make a clear
+service request.
 
 ### Service decision
 
