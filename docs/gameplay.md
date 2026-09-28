@@ -105,12 +105,15 @@ gets a 16-second ring grace period before returning to `AwaitingRouting`.
 
 ### Patience and arrivals
 
-Neutral calls use a random patience deadline from 32 through 64 seconds.
-Each story beat defines its own patience in its story module. A missed call
-returns its beat to the selector unless that story defines a timeout transition.
+Neutral calls use a random base patience deadline from 32 through 64 seconds.
+Every call adds a seeded-random 0–10 second bonus. Each story beat defines its
+base patience in its story module. A missed call returns its beat to the selector
+unless that story defines a timeout transition.
 Dirty Work defers an expired contact while it selects another uncompleted
 contact. Nahid tries another unused victim after a missed call. Fallen Mother's
-`EmergencyCall` expiry moves to `BadFollowup` and applies the $100 penalty.
+`EmergencyCall` expiry alone moves to `BadFollowup` and applies the $100 penalty.
+`HappyFollowup`, `NeutralFollowup`, and `BadFollowup` each retry the same beat if
+missed; the abandonment penalty is not charged again.
 
 When a waiting call expires, the backend marks it missed, deducts `$4`, and
 creates replacement work when appropriate.
@@ -208,7 +211,8 @@ real frontend cannot submit both controls at once.
 Receiving a non-empty generated response completes the Shapla story. The happy
 follow-up also grants `$100` and tells the caller to thank the operator.
 
-`BadFollowup` is terminal and gives no reward.
+`BadFollowup` gives no reward. It remains eligible for retry until the operator
+completes the follow-up.
 
 If the operator abandons an active emergency voice turn, the backend moves to
 `BadFollowup` immediately and deducts `$100`. If the operator disconnects after

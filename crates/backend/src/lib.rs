@@ -2587,7 +2587,6 @@ impl Backend {
                 StoryId::Shapla
                     if !self.story_connection_is_blocked(story)
                         && !self.shapla_story_completed
-                        && self.story_beat != stories::fallen_mother::Beat::BadFollowup
                         && !self.calls.iter().any(|call| {
                             self.is_directory_line(
                                 call.caller,
@@ -4160,6 +4159,66 @@ mod beat_selector_tests {
             super::stories::fallen_mother::Beat::BadFollowup
         );
         assert_eq!(backend.money, -104);
+
+        backend.ensure_story_call();
+        assert!(
+            backend.calls.iter().any(|call| call.caller == shapla),
+            "BadFollowup should be selected as a retry call"
+        );
+
+        let retry_index = backend
+            .calls
+            .iter()
+            .position(|call| call.caller == shapla)
+            .expect("BadFollowup retry is present");
+        backend.calls[retry_index].deadline = 0;
+        backend.expire_calls();
+        assert_eq!(
+            backend.story_beat,
+            super::stories::fallen_mother::Beat::BadFollowup,
+            "missing the follow-up retries the same beat"
+        );
+        assert_eq!(
+            backend.money, -108,
+            "the abandonment penalty is only charged once"
+        );
+        backend.ensure_story_call();
+        assert!(backend.calls.iter().any(|call| call.caller == shapla));
+    }
+
+    #[test]
+    fn missed_fallen_mother_followups_retry_without_changing_the_beat() {
+        for beat in [
+            super::stories::fallen_mother::Beat::HappyFollowup,
+            super::stories::fallen_mother::Beat::NeutralFollowup,
+            super::stories::fallen_mother::Beat::BadFollowup,
+        ] {
+            let mut backend = Backend::new_exchange();
+            backend.calls.clear();
+            backend.story_call_target = 1;
+            backend.story_beat = beat;
+            backend.neel_story_beat = super::stories::bela_bose::Beat::Completed;
+            backend.dirty_work_beat = super::stories::dirty_work::Beat::GoodEnding;
+            backend.nahid_beat = super::stories::nahid::Beat::Penalized;
+            backend.ensure_story_call();
+
+            let shapla =
+                backend.line_for_directory(super::stories::fallen_mother::CALLER_DIRECTORY);
+            let call_index = backend
+                .calls
+                .iter()
+                .position(|call| call.caller == shapla)
+                .expect("follow-up beat is eligible");
+            backend.calls[call_index].deadline = 0;
+            backend.expire_calls();
+
+            assert_eq!(backend.story_beat, beat, "missed {beat:?} changed the beat");
+            backend.ensure_story_call();
+            assert!(
+                backend.calls.iter().any(|call| call.caller == shapla),
+                "missed {beat:?} was not retried"
+            );
+        }
     }
 
     #[test]

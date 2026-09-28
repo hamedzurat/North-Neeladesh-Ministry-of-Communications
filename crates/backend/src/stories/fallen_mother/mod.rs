@@ -3,6 +3,9 @@ use exchange_protocol::Mechanic;
 pub const CALLER_DIRECTORY: u16 = 1022;
 pub const PLACE: &str = "SHAPLA APARTMENTS";
 pub const EMERGENCY_CALL_PATIENCE_SECONDS: u64 = 64;
+pub const HAPPY_FOLLOWUP_PATIENCE_SECONDS: u64 = 64;
+pub const NEUTRAL_FOLLOWUP_PATIENCE_SECONDS: u64 = 64;
+pub const BAD_FOLLOWUP_PATIENCE_SECONDS: u64 = 64;
 pub const EMS_CLASSIFIER_PROMPT: &str = r#"
 The player is speaking to EMS.
 Allowed labels: success, failure. Choose success only when the player directly tells EMS to send medical help to Shapla Apartments. Choose failure if the player says that they will send or dispatch help themselves, even if they mention an ambulance and the correct location. Also choose failure for vague statements, wrong locations, and unrelated sentences.
@@ -74,9 +77,9 @@ impl Beat {
     pub const fn patience_seconds(self) -> u64 {
         match self {
             Self::EmergencyCall => EMERGENCY_CALL_PATIENCE_SECONDS,
-            Self::HappyFollowup => u64::MAX / 2,
-            Self::NeutralFollowup => u64::MAX / 2,
-            Self::BadFollowup => 0,
+            Self::HappyFollowup => HAPPY_FOLLOWUP_PATIENCE_SECONDS,
+            Self::NeutralFollowup => NEUTRAL_FOLLOWUP_PATIENCE_SECONDS,
+            Self::BadFollowup => BAD_FOLLOWUP_PATIENCE_SECONDS,
         }
     }
 

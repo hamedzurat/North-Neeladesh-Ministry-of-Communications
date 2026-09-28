@@ -111,7 +111,7 @@
      function updateThreadStatus(id,snapshot,thread,beat) {
        const element=document.getElementById(id);
         if(!snapshot) { element.className='graph-status eligible'; element.textContent='BACKEND OFFLINE · showing the story path; live selection is unknown.'; return false; }
-        if(['Completed','BadEnding','BadFollowup','Stopped','Penalized','GoodEnding','NeutralEnding'].includes(beat)) { element.className='graph-status terminal'; element.textContent=`TERMINAL · ${beat}`; return false; }
+         if(['Completed','BadEnding','Stopped','Penalized','GoodEnding','NeutralEnding'].includes(beat)) { element.className='graph-status terminal'; element.textContent=`TERMINAL · ${beat}`; return false; }
         const calls=snapshot.active_calls?.length?snapshot.active_calls:(snapshot.calls||[]);
         if(!calls.length) { element.className='graph-status eligible'; element.textContent=`NO ACTIVE CALLS · ${beat} is eligible; reset the run or send gameplay input to start call selection.`; return false; }
         const call=selectedCall(snapshot,thread,beat);
