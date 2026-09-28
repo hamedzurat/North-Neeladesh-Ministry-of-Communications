@@ -43,7 +43,11 @@ these instructions are not part of the report.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Beat {
-    Scamming,
+    ScamOne,
+    ScamTwo,
+    ScamThree,
+    ScamFour,
+    ScamFive,
     Stopped,
     Penalized,
 }
@@ -51,14 +55,44 @@ pub enum Beat {
 impl Beat {
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Scamming => "Scamming",
+            Self::ScamOne => "ScamOne",
+            Self::ScamTwo => "ScamTwo",
+            Self::ScamThree => "ScamThree",
+            Self::ScamFour => "ScamFour",
+            Self::ScamFive => "ScamFive",
             Self::Stopped => "Stopped",
             Self::Penalized => "Penalized",
         }
     }
 
+    pub const fn is_scamming(self) -> bool {
+        matches!(
+            self,
+            Self::ScamOne | Self::ScamTwo | Self::ScamThree | Self::ScamFour | Self::ScamFive
+        )
+    }
+
     pub const fn is_terminal(self) -> bool {
-        !matches!(self, Self::Scamming)
+        !self.is_scamming()
+    }
+
+    pub const fn after_completed_scam(self) -> Option<Self> {
+        match self {
+            Self::ScamOne => Some(Self::ScamTwo),
+            Self::ScamTwo => Some(Self::ScamThree),
+            Self::ScamThree => Some(Self::ScamFour),
+            Self::ScamFour => Some(Self::ScamFive),
+            Self::ScamFive => Some(Self::Penalized),
+            Self::Stopped | Self::Penalized => None,
+        }
+    }
+
+    pub const fn after_successful_police_report(self) -> Option<Self> {
+        if self.is_scamming() {
+            Some(Self::Stopped)
+        } else {
+            None
+        }
     }
 }
 
@@ -114,10 +148,34 @@ mod tests {
     use super::{Beat, report_succeeded};
 
     #[test]
-    fn only_success_classification_stops_nahid() {
+    fn nahid_successful_police_classification_is_required_to_stop_him() {
         assert!(report_succeeded("success"));
         assert!(!report_succeeded("failure"));
-        assert!(!Beat::Scamming.is_terminal());
+        assert!(Beat::ScamOne.is_scamming());
         assert!(Beat::Stopped.is_terminal());
+    }
+
+    #[test]
+    fn nahid_completed_scam_advances_to_the_next_beat() {
+        assert_eq!(Beat::ScamOne.after_completed_scam(), Some(Beat::ScamTwo));
+        assert_eq!(Beat::ScamTwo.after_completed_scam(), Some(Beat::ScamThree));
+        assert_eq!(Beat::ScamThree.after_completed_scam(), Some(Beat::ScamFour));
+        assert_eq!(Beat::ScamFour.after_completed_scam(), Some(Beat::ScamFive));
+        assert_eq!(Beat::ScamFive.after_completed_scam(), Some(Beat::Penalized));
+        assert_eq!(Beat::Stopped.after_completed_scam(), None);
+    }
+
+    #[test]
+    fn nahid_successful_police_report_stops_any_active_scam_beat() {
+        for beat in [
+            Beat::ScamOne,
+            Beat::ScamTwo,
+            Beat::ScamThree,
+            Beat::ScamFour,
+            Beat::ScamFive,
+        ] {
+            assert_eq!(beat.after_successful_police_report(), Some(Beat::Stopped));
+        }
+        assert_eq!(Beat::Penalized.after_successful_police_report(), None);
     }
 }

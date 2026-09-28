@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use exchange_protocol::{
     CordConnection, DEBUG_PROTOCOL_VERSION, DebugCommand, DebugRequest, DebugResponse,
-    HeldControls, InputDebug, InputMessage, InputState, PROTOCOL_VERSION, PortId, StateMessage,
-    TEXT_PROTOCOL_VERSION, TextInputMessage, TextResponseMessage, TextStatus, TuningState,
+    HeldControls, InputDebug, InputMessage, InputState, PROTOCOL_VERSION, PortId, PrinterEntry,
+    StateMessage, TEXT_PROTOCOL_VERSION, TextInputMessage, TextResponseMessage, TextStatus, TuningState,
     read_frame, write_frame,
 };
 use serde::{Deserialize, Serialize};
@@ -117,7 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let text_address = argument("--text-connect").unwrap_or_else(|| "127.0.0.1:7880".into());
     let debug_address = argument("--debug-connect").unwrap_or_else(|| "127.0.0.1:7881".into());
     let log_path = argument("--log").unwrap_or_else(|| "story-test.log".into());
-    let path = argument("--path").unwrap_or_else(|| "ems_success".into());
+    let path = argument("--path").unwrap_or_else(|| "fallen_mother_ems_report_succeeds".into());
     let player_command = argument("--player-command");
 
     let mut backend = TcpStream::connect(&backend_address)?;
@@ -131,14 +131,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if initial_debug.snapshot.shapla_story_beat != "EmergencyCall"
         || initial_debug.snapshot.neel_story_beat != "ProfessorRouting"
         || initial_debug.snapshot.dirty_work_story_beat != "Instruction"
-        || initial_debug.snapshot.nahid_story_beat != "Scamming"
+        || initial_debug.snapshot.nahid_story_beat != "ScamOne"
     {
         return Err("story reset did not initialize registered story threads".into());
     }
     let initial_money = initial_debug.snapshot.money;
     let mut log = GameLog::open(&log_path)?;
     writeln!(log.file, "=== TEST PATH: {path} ===")?;
-    if path == "cross_thread_success" {
+    if path == "cross_story_fallen_mother_interleaving_succeeds" {
         return run_cross_thread_success(
             &mut backend,
             &mut text,
@@ -148,8 +148,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             initial_money,
         );
     }
-    if path == "cross_thread_nahid" {
-        return run_cross_thread_nahid(
+    if path == "nahid_dialogue_then_police_report_stops_scams" {
+        return run_nahid_dialogue_then_police_report_stops_scams(
             &mut backend,
             &mut text,
             &mut debug,
@@ -157,8 +157,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &player_command,
         );
     }
-    if path.starts_with("neel_") {
-        return run_neel_story(
+    if path.starts_with("bela_bose_") {
+        return run_bela_bose_story(
             &mut backend,
             &mut text,
             &mut debug,
@@ -168,7 +168,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             initial_money,
         );
     }
-    if path.starts_with("dirty_") {
+    if path.starts_with("dirty_work_") {
         return run_dirty_work(
             &mut backend,
             &mut text,
@@ -289,7 +289,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     let no_service = matches!(
         path.as_str(),
-        "water_no_help" | "unrelated_questions" | "random_conversation"
+        "fallen_mother_no_water_help_leads_to_bad_ending" | "fallen_mother_unrelated_questions" | "fallen_mother_random_conversation"
     );
     if !no_service {
         log.row(CsvRow {
@@ -304,7 +304,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let (service_name, service_controls, service_task, expected_success) = match path.as_str() {
-        "ems_success" => (
+        "fallen_mother_ems_report_succeeds" => (
             "EMS",
             HeldControls {
                 ems: true,
@@ -313,7 +313,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "ask EMS to send medical help to Shapla Apartments; phrase it naturally",
             true,
         ),
-        "ems_failure" => (
+        "fallen_mother_ems_report_fails" => (
             "EMS",
             HeldControls {
                 ems: true,
@@ -322,7 +322,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "say something vague that does not clearly request EMS or identify Shapla Apartments",
             false,
         ),
-        "police_success" => (
+        "fallen_mother_police_report_succeeds" => (
             "Police",
             HeldControls {
                 police: true,
@@ -331,7 +331,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "clearly ask Police to send officers to Shapla Apartments, using a direct request rather than a question; phrase it naturally",
             true,
         ),
-        "water_no_help" | "unrelated_questions" | "random_conversation" => {
+        "fallen_mother_no_water_help_leads_to_bad_ending" | "fallen_mother_unrelated_questions" | "fallen_mother_random_conversation" => {
             ("caller", HeldControls::default(), "", false)
         }
         other => return Err(format!("unknown test path: {other}").into()),
@@ -342,12 +342,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         player_utterance(&player_command, &call, revision, &turns, service_task)?
     };
     let text_response = if no_service {
-        let turn_tasks = if path == "water_no_help" {
+        let turn_tasks = if path == "fallen_mother_no_water_help_leads_to_bad_ending" {
             vec![
                 "tell the caller you will get her some water, without contacting EMS or Police"
                     .to_string(),
             ]
-        } else if path == "unrelated_questions" {
+        } else if path == "fallen_mother_unrelated_questions" {
             vec![
                 "ask plainly what the caller's name is, even though this is an emergency".to_string(),
                 "ask the caller what she does for work, even though this is an emergency"
@@ -494,7 +494,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let transition_debug = debug_snapshot(&mut debug)?;
     let expected_beat = if no_service {
         "BadFollowup"
-    } else if path == "police_success" {
+    } else if path == "fallen_mother_police_report_succeeds" {
         "NeutralFollowup"
     } else if classified_success {
         "HappyFollowup"
@@ -1331,7 +1331,7 @@ fn run_cross_thread_success(
     Ok(())
 }
 
-fn run_cross_thread_nahid(
+fn run_nahid_dialogue_then_police_report_stops_scams(
     backend: &mut TcpStream,
     text: &mut TcpStream,
     debug: &mut TcpStream,
@@ -1635,11 +1635,11 @@ fn run_dirty_work(
     )?;
     revision = state.state_revision;
     let report = match path {
-        "dirty_good" => "report only routine calls and protect the source",
-        "dirty_neutral" => {
+        "dirty_work_good_ending" => "report only routine calls and protect the source",
+        "dirty_work_neutral_ending" => {
             "report the corruption and Stall 4 at Koyal Market without naming the whistleblower"
         }
-        "dirty_bad" => "identify Tariq and Salim and report the rotten grain operation",
+        "dirty_work_bad_ending" => "identify Tariq and Salim and report the rotten grain operation",
         other => return Err(format!("unknown Dirty Work path: {other}").into()),
     };
     let report_text = player_utterance(player_command, &rahman, revision, &turns, report)?;
@@ -1700,7 +1700,7 @@ fn run_nahid(
     revision = state.state_revision;
     let mut victims = Vec::new();
 
-    let scam_count = if path == "nahid_police_success" { 1 } else { 5 };
+    let scam_count = if path == "nahid_police_report_stops_scams" { 1 } else { 5 };
     for attempt in 0..scam_count {
         let call = state
             .output
@@ -1744,7 +1744,7 @@ fn run_nahid(
         })?;
     }
 
-    if path == "nahid_police_success" {
+    if path == "nahid_police_report_stops_scams" {
         let call = state
             .output
             .calls
@@ -2014,27 +2014,42 @@ fn route_tap_call(
         )
         .into());
     }
-    let snapshot = debug_snapshot(debug)?;
-    let duration = snapshot
-        .snapshot
-        .active_calls
-        .iter()
-        .find(|call| call.caller_line == caller)
-        .map(|call| call.audio_duration_seconds)
-        .unwrap_or(1);
+    if state
+        .output
+        .tap_bridge_monitoring
+        .as_ref()
+        .is_none_or(|monitoring| monitoring.audio_clip.is_none())
+    {
+        return Err(format!(
+            "Nahid TAP did not resolve a recording for victim line {callee}"
+        )
+        .into());
+    }
+    let duration = (0..60)
+        .find_map(|_| {
+            let snapshot = debug_snapshot(debug).ok()?;
+            let duration = snapshot
+                .snapshot
+                .active_calls
+                .iter()
+                .find(|call| call.caller_line == caller)?
+                .audio_duration_seconds;
+            (duration != u64::MAX).then_some(duration)
+        })
+        .ok_or("TAP recording duration was not prepared")?;
     let _ = debug_command(
         debug,
         DebugCommand::AdvanceTime {
-            seconds: duration.saturating_add(1) as u32,
+            seconds: duration.saturating_add(1).min(u64::from(u32::MAX)) as u32,
         },
     )?;
-    let state = exchange(
+    let mut state = exchange(
         backend,
         tap_input(
             sequence,
             state.state_revision,
-            tap,
-            false,
+            tap.clone(),
+            true,
             directory_for_id(
                 state
                     .output
@@ -2046,16 +2061,50 @@ fn route_tap_call(
             ),
         ),
     )?;
-    // A completed monitored call keeps the story disconnect gate until its
-    // TAP cords are released. Clear the cords before exposing the next state
-    // to callers so the next story contact can be queued.
-    Ok(exchange(
+    state = exchange(
+        backend,
+        tap_input(sequence, state.state_revision, tap, false, [0, 0, 0, 1]),
+    )?;
+    state = exchange(
         backend,
         tap_input(sequence, state.state_revision, vec![], false, [0, 0, 0, 1]),
+    )?;
+    // Finish the pending story call before reading the next scammer arrival.
+    Ok(exchange(
+        backend,
+        input(sequence, state.state_revision, vec![], false, [0, 0, 0, 1]),
     )?)
 }
 
-fn run_neel_story(
+fn log_new_money_entries(
+    log: &mut GameLog,
+    printer_output: &[PrinterEntry],
+    logged_money_count: &mut usize,
+    sequence: u64,
+    revision: u64,
+    caller: u8,
+    destination: u8,
+) -> io::Result<()> {
+    let entries = printer_output
+        .iter()
+        .filter(|entry| entry.text.contains("MONEY //"))
+        .collect::<Vec<_>>();
+    for entry in entries.iter().skip(*logged_money_count) {
+        log.row(CsvRow {
+            event: "money",
+            sequence,
+            revision,
+            caller,
+            destination,
+            status: "accepted",
+            text: &entry.text,
+        })?;
+    }
+    *logged_money_count = entries.len();
+    Ok(())
+}
+
+fn run_bela_bose_story(
     backend: &mut TcpStream,
     text: &mut TcpStream,
     debug: &mut TcpStream,
@@ -2066,6 +2115,7 @@ fn run_neel_story(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut sequence = 0;
     let mut revision = 0;
+    let mut logged_money_count = 0;
     let mut state = exchange(
         backend,
         input(&mut sequence, revision, vec![], false, [0, 0, 0, 1]),
@@ -2088,7 +2138,7 @@ fn run_neel_story(
         text: "Neel University calls; Professor Routing is active.",
     })?;
 
-    if path == "neel_patience" {
+    if path == "bela_bose_patience_expires" {
         let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 33 })?;
         state = exchange(
             backend,
@@ -2154,7 +2204,7 @@ fn run_neel_story(
         text: "You connect Neel University to the Operator.",
     })?;
     let mut turns = Vec::new();
-    let question = if path == "neel_professor_questions" {
+    let question = if path == "bela_bose_answers_professor_questions" {
         "What subject do you teach?".to_string()
     } else {
         player_utterance(
@@ -2332,19 +2382,63 @@ fn run_neel_story(
         status: "accepted",
         text: "You disconnect LINE 2 from the Operator and connect it directly to LINE 3.",
     })?;
-    let first_audio_duration = debug_snapshot(debug)?
-        .snapshot
-        .active_calls
-        .iter()
-        .find(|call| call.caller_line == 2)
-        .map(|call| call.audio_duration_seconds)
-        .unwrap_or(2);
-    if path.contains("tap") || path.contains("rewire") {
+    const TAP_TEST_DELAY_SECONDS: u32 = 2;
+    if path == "bela_bose_completes_professor_routing" {
+        let question = "Why are you calling there?";
+        let response = send_text(
+            text,
+            TextInputMessage {
+                protocol_version: TEXT_PROTOCOL_VERSION,
+                session_id: 1,
+                turn_id: 2,
+                state_revision: revision,
+                held_controls: HeldControls::default(),
+                text: question.into(),
+            },
+        )?;
+        let response_text = response.response_text.clone().unwrap_or_default();
+        if response_text.is_empty() {
+            return Err("Professor gave no response to the follow-up question".into());
+        }
+        log.row(CsvRow {
+            event: "text_turn",
+            sequence,
+            revision,
+            caller: 2,
+            destination: 3,
+            status: "accepted",
+            text: &format!(
+                "player={question} | service=caller | classification=none | subscriber={response_text}"
+            ),
+        })?;
+
+        state = exchange(
+            backend,
+            input(
+                &mut sequence,
+                revision,
+                vec![],
+                false,
+                directory_for_id(1024),
+            ),
+        )?;
+        let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 5 })?;
+        state = exchange(
+            backend,
+            input(
+                &mut sequence,
+                state.state_revision,
+                vec![],
+                false,
+                directory_for_id(1024),
+            ),
+        )?;
+    } else if path.contains("tap") || path.contains("rewire") {
         if path.contains("late") {
             let _ = debug_command(
                 debug,
                 DebugCommand::AdvanceTime {
-                    seconds: (first_audio_duration / 2) as u32,
+                    seconds: TAP_TEST_DELAY_SECONDS,
                 },
             )?;
         }
@@ -2371,15 +2465,6 @@ fn run_neel_story(
                 ),
             )?;
             revision = state.state_revision;
-            if path.contains("late") {
-                // The first advance moves halfway through the recording. Move past
-                // the remaining audio plus the five-second TAP rewire window so
-                // this path is deterministic for recordings of any authored length.
-                let remaining = first_audio_duration
-                    .saturating_sub(first_audio_duration / 2)
-                    .saturating_add(6) as u32;
-                let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: remaining })?;
-            }
         }
         state = exchange(
             backend,
@@ -2392,30 +2477,22 @@ fn run_neel_story(
             ),
         )?;
         revision = state.state_revision;
-        if path.contains("rewire_late") {
-            if state.output.tap_bridge_audio_active {
-                return Err("late Neel rewire unexpectedly kept TAP audio active".into());
-            }
-        } else if !state.output.tap_bridge_audio_active {
+        if !state.output.tap_bridge_audio_active {
             return Err("TAP did not become active for the Neel/Shadhin call".into());
         }
-        if !path.contains("rewire_late") {
-            let monitoring = state
-                .output
-                .tap_bridge_monitoring
-                .as_ref()
-                .ok_or("TAP state did not identify the monitored connection")?;
-            let expected_caller_port = if path.contains("reverse") { 2 } else { 1 };
-            if monitoring.caller_line != 2
-                || monitoring.callee_line != 3
-                || monitoring.caller_tap_port != expected_caller_port
-            {
-                return Err(format!("unexpected TAP monitoring state: {monitoring:?}").into());
-            }
-        }
-        if !path.contains("rewire_late")
-            && (!state.output.line_lamps[2] || !state.output.line_lamps[3])
+        let monitoring = state
+            .output
+            .tap_bridge_monitoring
+            .as_ref()
+            .ok_or("TAP state did not identify the monitored connection")?;
+        let expected_caller_port = if path.contains("reverse") { 2 } else { 1 };
+        if monitoring.caller_line != 2
+            || monitoring.callee_line != 3
+            || monitoring.caller_tap_port != expected_caller_port
         {
+            return Err(format!("unexpected TAP monitoring state: {monitoring:?}").into());
+        }
+        if !state.output.line_lamps[2] || !state.output.line_lamps[3] {
             return Err("both Neel/Shadhin LEDs were not active during monitored audio".into());
         }
         log.row(CsvRow {
@@ -2425,30 +2502,8 @@ fn run_neel_story(
             caller: 2,
             destination: 3,
             status: "accepted",
-            text: if path.contains("rewire_late") {
-                "TAP rewire was attempted after the buffer expired."
-            } else {
-                "TAP is held and monitors the active call timeline."
-            },
+            text: "TAP is held and monitors the active call timeline.",
         })?;
-        if path.contains("rewire_late") {
-            log.row(CsvRow {
-                event: "rewire_expired",
-                sequence,
-                revision,
-                caller: 2,
-                destination: 3,
-                status: "accepted",
-                text: "The 5-second rewiring buffer expired; the old call was no longer monitorable.",
-            })?;
-            return Ok(());
-        }
-        let _ = debug_command(
-            debug,
-            DebugCommand::AdvanceTime {
-                seconds: first_audio_duration.saturating_add(1) as u32,
-            },
-        )?;
         state = exchange(
             backend,
             tap_input(&mut sequence, revision, tap, false, directory_for_id(1024)),
@@ -2466,29 +2521,32 @@ fn run_neel_story(
                 directory_for_id(1024),
             ),
         )?;
+        let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 5 })?;
+        state = exchange(
+            backend,
+            input(
+                &mut sequence,
+                state.state_revision,
+                vec![],
+                false,
+                directory_for_id(1024),
+            ),
+        )?;
         if state.output.line_lamps[2] {
-            return Err("Neel LED remained active after the loaded audio duration".into());
+            return Err("Neel LED remained active after disconnecting the monitored call".into());
         }
     } else {
-        let _ = debug_command(
-            debug,
-            DebugCommand::AdvanceTime {
-                seconds: first_audio_duration.saturating_add(1) as u32,
-            },
-        )?;
         state = exchange(
             backend,
             input(
                 &mut sequence,
                 revision,
-                direct.clone(),
+                vec![],
                 false,
                 directory_for_id(1024),
             ),
         )?;
-        // The completed direct circuit is removed during the input above. The
-        // next story caller is queued only after that removal, so release the
-        // old circuit before looking for Arnab's follow-up call.
+        let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 5 })?;
         state = exchange(
             backend,
             input(
@@ -2509,18 +2567,32 @@ fn run_neel_story(
         )
         .into());
     }
-    log.row(CsvRow {
-        event: "audio",
-        sequence,
-        revision,
-        caller: 2,
-        destination: 3,
-        status: "accepted",
-        text: &format!(
-            "The operator hears no direct-call mix; the authored Professor recording runs for {} seconds on the connected lines.",
-            first_audio_duration
+    // The backend queues the next story caller on the next state update after
+    // the previous direct circuit has been removed.
+    state = exchange(
+        backend,
+        input(
+            &mut sequence,
+            revision,
+            vec![],
+            false,
+            directory_for_id(1024),
         ),
-    })?;
+    )?;
+    revision = state.state_revision;
+    if path.contains("tap") || path.contains("rewire") {
+        log.row(CsvRow {
+            event: "audio",
+            sequence,
+            revision,
+            caller: 2,
+            destination: 3,
+            status: "accepted",
+            text: &format!(
+                "TAP is connected to the active Neel/Shadhin call; caller dialogue is generated from the operator's turns."
+            ),
+        })?;
+    }
     log.row(CsvRow {
         event: "beat_result",
         sequence,
@@ -2530,6 +2602,15 @@ fn run_neel_story(
         status: "accepted",
         text: "Backend transition: ProfessorRouting -> ArnabDirectory.",
     })?;
+    log_new_money_entries(
+        log,
+        &state.output.printer_output,
+        &mut logged_money_count,
+        sequence,
+        revision,
+        2,
+        3,
+    )?;
     let arnab = state
         .output
         .calls
@@ -2604,22 +2685,22 @@ fn run_neel_story(
         text: "You connect LINE 3 to the Operator.",
     })?;
     let mut arnab_turns = turns;
-    let turn_count = if path == "neel_direct" { 3 } else { 2 };
+    let turn_count = if path == "bela_bose_completes_professor_routing" { 3 } else { 2 };
     for turn in 0..turn_count {
         let task = if turn == 0 {
             "ask Arnab who he wants to be connected to"
-        } else if path == "neel_direct" && turn == 2 {
+        } else if path == "bela_bose_completes_professor_routing" && turn == 2 {
             "ask Arnab for more information about Bela Bose"
-        } else if path == "neel_arnab_unrelated_questions" {
+        } else if path == "bela_bose_handles_arnab_unrelated_questions" {
             "ask Arnab an unrelated personal question about his favorite food"
         } else if path.contains("questions") {
             "ask Arnab whether Bela Bose has a cat"
         } else {
             "ask Arnab whether he knows Bela Bose's directory ID"
         };
-        let utterance = if path == "neel_direct" && turn == 2 {
+        let utterance = if path == "bela_bose_completes_professor_routing" && turn == 2 {
             "Can you tell me more about her?".to_string()
-        } else if path == "neel_arnab_unrelated_questions" && turn == 1 {
+        } else if path == "bela_bose_handles_arnab_unrelated_questions" && turn == 1 {
             "What is your favorite food?".to_string()
         } else {
             player_utterance(player_command, &arnab, revision, &arnab_turns, task)?
@@ -2654,7 +2735,13 @@ fn run_neel_story(
             text: &format!("player={utterance} | service=caller | classification=none | subscriber={response_text}"),
         })?;
     }
-    let destination = if path.contains("1031") { 4 } else { 5 };
+    let destination = if path == "bela_bose_misdirection_reaches_bad_ending"
+        || path == "bela_bose_wrong_bela_destination"
+    {
+        4
+    } else {
+        5
+    };
     let digits = if destination == 4 {
         [1, 0, 3, 1]
     } else {
@@ -2663,10 +2750,7 @@ fn run_neel_story(
     let (_, next_revision) = ring_destination(backend, debug, &mut sequence, revision, 3, digits)?;
     revision = next_revision;
     let direct = vec![cord(PortId::Subscriber(3), PortId::Subscriber(destination))];
-    let mut state = exchange(
-        backend,
-        input(&mut sequence, revision, direct.clone(), false, digits),
-    )?;
+    let mut state = exchange(backend, input(&mut sequence, revision, direct, false, digits))?;
     revision = state.state_revision;
     if !state.accepted {
         return Err(format!("Bela route rejected: {:?}", state.error).into());
@@ -2684,34 +2768,14 @@ fn run_neel_story(
             destination
         ),
     })?;
-    let connected_snapshot = debug_snapshot(debug)?;
-    let audio_duration = connected_snapshot
-        .snapshot
-        .active_calls
-        .iter()
-        .find(|call| call.caller_line == 3)
-        .map(|call| call.audio_duration_seconds)
-        .ok_or("Bela connection did not become active")?;
-    log.row(CsvRow {
-        event: "audio",
-        sequence,
-        revision,
-        caller: 3,
-        destination,
-        status: "accepted",
-        text: &format!(
-            "The operator hears no direct-call mix; the authored Bela recording runs for {audio_duration} seconds on LINE 3 and LINE {destination}."
-        ),
-    })?;
-    let _ = debug_command(
-        debug,
-        DebugCommand::AdvanceTime {
-            seconds: audio_duration.saturating_add(1) as u32,
-        },
-    )?;
     state = exchange(
         backend,
-        input(&mut sequence, revision, direct, false, digits),
+        input(&mut sequence, revision, vec![], false, digits),
+    )?;
+    let _ = debug_command(debug, DebugCommand::AdvanceTime { seconds: 5 })?;
+    state = exchange(
+        backend,
+        input(&mut sequence, state.state_revision, vec![], false, digits),
     )?;
     revision = state.state_revision;
     if !state.accepted {
@@ -2754,7 +2818,7 @@ fn run_neel_story(
         caller: 3,
         destination,
         status: "accepted",
-        text: "The Bela Bose recording ended and the completed connection cleared.",
+        text: "The player-led conversation ended and the completed connection cleared.",
     })?;
     log.row(CsvRow {
         event: "beat_result",
@@ -2765,6 +2829,15 @@ fn run_neel_story(
         status: "accepted",
         text: "Backend transition: ArnabDirectory -> Completed.",
     })?;
+    log_new_money_entries(
+        log,
+        &state.output.printer_output,
+        &mut logged_money_count,
+        sequence,
+        revision,
+        3,
+        destination,
+    )?;
     assert_printer_balance(&state, snapshot.snapshot.money)?;
     let outcome = format!(
         "Backend final money: ${} (started at ${}; delta ${}). Final beat: {}.",
@@ -2773,19 +2846,6 @@ fn run_neel_story(
         snapshot.snapshot.money - initial_money,
         snapshot.snapshot.neel_story_beat,
     );
-    for entry in &state.output.printer_output {
-        if entry.text.contains("MONEY //") {
-            log.row(CsvRow {
-                event: "money",
-                sequence,
-                revision,
-                caller: 3,
-                destination,
-                status: "accepted",
-                text: &entry.text,
-            })?;
-        }
-    }
     log.row(CsvRow {
         event: "outcome",
         sequence,

@@ -30,6 +30,8 @@ use exchange_protocol::{
     read_frame, write_frame,
 };
 
+const LIVE_CALL_DURATION_SECONDS: u64 = u64::MAX;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum StoryId {
     Shapla,
@@ -421,7 +423,7 @@ impl Backend {
             neel_story_beat: stories::bela_bose::Beat::ProfessorRouting,
             dirty_work_beat: stories::dirty_work::Beat::Instruction,
             dirty_work_completed_contacts: Vec::new(),
-            nahid_beat: stories::nahid::Beat::Scamming,
+            nahid_beat: stories::nahid::Beat::ScamOne,
             nahid_scam_count: 0,
             nahid_victims: Vec::new(),
             story_controls: HeldControls::default(),
@@ -669,7 +671,7 @@ impl Backend {
         self.neel_story_beat = stories::bela_bose::Beat::ProfessorRouting;
         self.dirty_work_beat = stories::dirty_work::Beat::Instruction;
         self.dirty_work_completed_contacts.clear();
-        self.nahid_beat = stories::nahid::Beat::Scamming;
+        self.nahid_beat = stories::nahid::Beat::ScamOne;
         self.nahid_scam_count = 0;
         self.nahid_victims.clear();
         self.story_controls = HeldControls::default();
@@ -1589,6 +1591,26 @@ impl Backend {
         }
     }
 
+    fn stop_nahid_after_police_report(&mut self) {
+        let Some(next) = self.nahid_beat.after_successful_police_report() else {
+            return;
+        };
+        self.log(
+            "STORY nahid",
+            format_args!("beat {:?} -> {:?} after successful police report", self.nahid_beat, next),
+        );
+        self.record_event(
+            "story",
+            "transition",
+            format!("nahid {:?} -> {:?} after successful police report", self.nahid_beat, next),
+        );
+        self.nahid_beat = next;
+        append_printer(
+            &mut self.state,
+            "STORY nahid // police report accepted; scammer stopped",
+        );
+    }
+
     fn advance(
         &mut self,
         input: &InputState,
@@ -1847,7 +1869,11 @@ impl Backend {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
-            call.audio_duration_seconds = if self.story_enabled { u64::MAX } else { 2 };
+            call.audio_duration_seconds = if self.story_enabled {
+                LIVE_CALL_DURATION_SECONDS
+            } else {
+                2
+            };
         }
         if self.calls[index].phase == CallPhase::Connected {
             let remaining = self.calls[index]
@@ -1900,6 +1926,11 @@ impl Backend {
                 call.phase = CallPhase::Connected;
                 call.connected_at = Some(Instant::now());
                 call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
+            } else if tap_audio {
+                // A recording explicitly requested through Tap defines the
+                // monitored call's playback length; ordinary live dialogue
+                // calls remain connected until the operator disconnects.
+                call.audio_duration_seconds = duration;
             }
             call.deadline.checked_sub(connected_elapsed_seconds)
         };
@@ -2107,8 +2138,16 @@ impl Backend {
             );
         } else {
             self.completed += 1;
-            let seconds = call.audio_duration_seconds.max(1);
-            self.conversation_seconds += seconds;
+            let seconds = if call.audio_duration_seconds == LIVE_CALL_DURATION_SECONDS {
+                call.connected_elapsed_seconds
+                    .map(|started| {
+                        u64::from(self.elapsed_seconds()).saturating_sub(started).max(1)
+                    })
+                    .unwrap_or(1)
+            } else {
+                call.audio_duration_seconds.max(1)
+            };
+            self.conversation_seconds = self.conversation_seconds.saturating_add(seconds);
             self.earned += 5;
             self.money += 5;
             append_printer(
@@ -2119,32 +2158,21 @@ impl Backend {
                 ),
             );
             if self.is_directory_line(call.caller, stories::nahid::NAHID_DIRECTORY)
-                && self.nahid_beat == stories::nahid::Beat::Scamming
+                && self.nahid_beat.is_scamming()
             {
                 self.nahid_scam_count = self.nahid_scam_count.saturating_add(1);
+                let next = self.nahid_beat.after_completed_scam().unwrap();
                 self.log(
                     "STORY nahid",
-                    format_args!("completed scam {} of 5", self.nahid_scam_count),
+                    format_args!("beat {:?} -> {:?}", self.nahid_beat, next),
                 );
-                if self.nahid_scam_count >= 5 {
-                    self.log(
-                        "STORY nahid",
-                        format_args!(
-                            "beat {:?} -> {:?}",
-                            self.nahid_beat,
-                            stories::nahid::Beat::Penalized
-                        ),
-                    );
-                    self.record_event(
-                        "story",
-                        "transition",
-                        format!(
-                            "nahid {:?} -> {:?}",
-                            self.nahid_beat,
-                            stories::nahid::Beat::Penalized
-                        ),
-                    );
-                    self.nahid_beat = stories::nahid::Beat::Penalized;
+                self.record_event(
+                    "story",
+                    "transition",
+                    format!("nahid {:?} -> {:?}", self.nahid_beat, next),
+                );
+                self.nahid_beat = next;
+                if next == stories::nahid::Beat::Penalized {
                     self.deductions += 100;
                     self.money -= 100;
                     append_printer(
@@ -3078,12 +3106,7 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                                                             .into(),
                                                     );
                                                     if success {
-                                                        state.nahid_beat =
-                                                            stories::nahid::Beat::Stopped;
-                                                        append_printer(
-                                                            &mut state.state,
-                                                            "STORY nahid // police report accepted; scammer stopped",
-                                                        );
+                                                        state.stop_nahid_after_police_report();
                                                     }
                                                 }
                                                 Err(error) => append_printer(
@@ -3698,7 +3721,7 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
                         classification_word =
                             Some(if success { "success" } else { "failure" }.into());
                         if success {
-                            state.nahid_beat = stories::nahid::Beat::Stopped;
+                            state.stop_nahid_after_police_report();
                             state.log(
                                 "STORY nahid",
                                 format_args!(

@@ -220,7 +220,7 @@ fn reset_starts_all_four_story_callers_together() {
     assert_eq!(reset.snapshot.shapla_story_beat, "EmergencyCall");
     assert_eq!(reset.snapshot.neel_story_beat, "ProfessorRouting");
     assert_eq!(reset.snapshot.dirty_work_story_beat, "Instruction");
-    assert_eq!(reset.snapshot.nahid_story_beat, "Scamming");
+    assert_eq!(reset.snapshot.nahid_story_beat, "ScamOne");
 
     let response = backend.apply_input_message(input(&backend, 1, vec![], [0, 0, 0, 1]));
     let callers = response

@@ -6,7 +6,7 @@ backend-debug address="0.0.0.0:7878" voice_address="0.0.0.0:7879":
 story-test-backend address="0.0.0.0:7878" voice_address="0.0.0.0:7879" text_address="127.0.0.1:7880" debug_address="127.0.0.1:7882":
     PYTHONPATH=python NN_STORY_CLASSIFIER_COMMAND="python -m voice_workers.classifier" NN_VOICE_STT_COMMAND="uv run --project python --no-sync python -m voice_workers.stt" NN_VOICE_DIALOGUE_COMMAND="python -m voice_workers.dialogue" NN_VOICE_DIALOGUE_PERSISTENT=1 NN_VOICE_TTS_COMMAND="uv run --project python --no-sync python -m voice_workers.pocket_tts" NN_VOICE_TTS_PERSISTENT=1 cargo run --quiet -p exchange-backend --bin exchange-backend -- --bind {{ address }} --voice-bind {{ voice_address }} --voice-upload-bind 0.0.0.0:7883 --text-bind {{ text_address }} --debug-bind {{ debug_address }}
 
-story-test path="ems_success" log="story-test.log":
+story-test path="fallen_mother_ems_report_succeeds" log="story-test.log":
     PYTHONPATH=python NN_STORY_CLASSIFIER_COMMAND="python -m voice_workers.classifier" cargo run --quiet -p exchange-test-frontend -- --connect 127.0.0.1:7878 --text-connect 127.0.0.1:7880 --debug-connect 127.0.0.1:7882 --path {{ path }} --log {{ log }} --player-command "python -m voice_workers.player"
 
 story-audio:
@@ -16,7 +16,7 @@ story-test-all:
     #!/usr/bin/env bash
     set -euo pipefail
     rm -f story-test-all.log
-    for path in ems_success ems_failure police_success water_no_help unrelated_questions random_conversation neel_direct neel_misdirection neel_professor_questions neel_tap neel_tap_reverse neel_tap_late neel_rewire neel_rewire_late neel_patience neel_arnab_patience neel_bela_1031 neel_bela_1032 neel_bela_1032_questions neel_arnab_unrelated_questions dirty_good dirty_neutral dirty_bad nahid_police_success nahid_five_scams cross_thread_nahid; do
+    for path in fallen_mother_ems_report_succeeds fallen_mother_ems_report_fails fallen_mother_police_report_succeeds fallen_mother_no_water_help_leads_to_bad_ending fallen_mother_unrelated_questions fallen_mother_random_conversation bela_bose_completes_professor_routing bela_bose_misdirection_reaches_bad_ending bela_bose_answers_professor_questions bela_bose_tap_monitors_call bela_bose_reverse_tap_wiring_monitors_call bela_bose_late_tap_monitors_call bela_bose_rewires_tap_monitoring bela_bose_patience_expires bela_bose_arnab_patience_expires bela_bose_wrong_bela_destination bela_bose_correct_bela_destination bela_bose_answers_bela_questions bela_bose_handles_arnab_unrelated_questions dirty_work_good_ending dirty_work_neutral_ending dirty_work_bad_ending nahid_police_report_stops_scams nahid_five_completed_scams_end_in_penalty nahid_dialogue_then_police_report_stops_scams; do
         temp="/tmp/opencode/story-test-${path}.log"
         just story-test "${path}" "$temp"
         cat "$temp" >> story-test-all.log

@@ -53,7 +53,7 @@ pub(crate) fn initial_state(config: &GameConfig) -> StateOutput {
         neel_story_beat: "ProfessorRouting".into(),
         dirty_work_story_beat: "Instruction".into(),
         dirty_work_completed_contacts: vec![],
-        nahid_story_beat: "Scamming".into(),
+        nahid_story_beat: "ScamOne".into(),
         nahid_scam_count: 0,
     }
 }

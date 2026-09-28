@@ -309,7 +309,7 @@ still apply.
 Nahid is a scammer at Shonarpara Tower, directory 1030. This story uses direct
 routing, police service, patience, and scoring.
 
-### Scamming
+### Scam beats
 
 Nahid calls one of five victims, chosen in seeded order:
 
@@ -319,14 +319,15 @@ Nahid calls one of five victims, chosen in seeded order:
 - 1032, Bela's cat entry
 - 1029, Rehana
 
-Route each call normally. A completed call counts as one scam and pays the
+The five calls are five separate beats: `ScamOne` through `ScamFive`. Route
+each call normally. A completed call advances exactly one beat and pays the
 normal `$5` connection reward. The victim list does not repeat during a run.
 
 After the fifth completed scam, the story enters `Penalized` and deducts
 `$100`. This happens after the ordinary `$5` payment for the fifth call.
 
-Missing or abandoning a Nahid call does not increase the scam count. The story
-continues and selects another victim while it remains in `Scamming`.
+Missing or abandoning a Nahid call does not advance the beat. The same beat
+continues until its call is completed.
 
 ### Police report
 
@@ -336,8 +337,8 @@ While connected to Nahid, hold `POLICE` and report all of the following:
 - The location is Shonarpara Tower.
 
 The classifier must return `success`. A successful report moves the story to
-`Stopped` and prevents further Nahid scam calls. A failed or incomplete report
-leaves the story in `Scamming`.
+`Stopped` and prevents further Nahid scam calls, regardless of which scam beat
+is current. A failed or incomplete report leaves the current beat unchanged.
 
 Stopping Nahid does not award a separate bonus. It prevents the five-scam
 penalty.
