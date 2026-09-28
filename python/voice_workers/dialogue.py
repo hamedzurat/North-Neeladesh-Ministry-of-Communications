@@ -22,14 +22,26 @@ def prompt_for(request: dict[str, object]) -> list[dict[str, str]]:
     profile = context.get("profile")
     if not isinstance(profile, dict) or not profile.get("name"):
         fail("dialogue request must contain a Subscriber Profile")
-    user_context = {key: value for key, value in context.items() if key != "call_guidance"}
+    recent_conversation = context.get("recent_conversation", [])
+    if not isinstance(recent_conversation, list):
+        fail("dialogue recent_conversation must be a list")
+    history = "\n".join(
+        f"{turn.get('speaker', 'unknown')}: {turn.get('text', '')}"
+        for turn in recent_conversation
+        if isinstance(turn, dict)
+    ) or "(none)"
     system = prompt_template("dialogue_system.txt").format(
         call_guidance=context.get("call_guidance", ""),
+        caller_id=profile.get("directory_id", ""),
+        caller_place=context.get("caller_place", ""),
+        caller_name=profile.get("name", ""),
+        caller_role=profile.get("personality", ""),
+        caller_private_info=profile.get("private_info", ""),
         world_knowledge=world_knowledge(),
         max_dialogue_chars=MAX_DIALOGUE_CHARS,
     )
     user = prompt_template("dialogue_user.txt").format(
-        context_json=json.dumps(user_context, ensure_ascii=True, separators=(",", ":")),
+        recent_conversation=history,
         transcript=transcript,
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
@@ -58,7 +70,7 @@ def persistent_main() -> int:
             dialogue = dialogue.strip()
             if len(dialogue) > MAX_DIALOGUE_CHARS:
                 fail("dialogue exceeded the bounded turn limit")
-            sys.stdout.write(json.dumps({"dialogue": dialogue}, ensure_ascii=False) + "\n")
+            sys.stdout.write(json.dumps({"dialogue": dialogue, "prompt": prompt}, ensure_ascii=False) + "\n")
             sys.stdout.flush()
         except Exception as error:  # noqa: BLE001 - worker reports runtime failures
             fail(f"persistent Ollama dialogue synthesis failed: {error}")

@@ -1,6 +1,5 @@
 use exchange_protocol::Mechanic;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub const NEEL_DIRECTORY: u16 = 1023;
 pub const SHADHIN_DIRECTORY: u16 = 1024;
@@ -19,36 +18,33 @@ pub const MECHANICS: &[Mechanic] = &[
 ];
 
 pub const PROFESSOR_DIALOGUE_PROMPT: &str = r#"
-You are Prof. Kashem, a professor calling from Neel University. You need the
-operator to connect you to Shadhin Housing. More context about you and what you
-want: you want talk to Arnab Bhattacharjee to let him know about his new job
-post at Neel University as a lecturer. Only give this or any additional info if
-asked, e.g. "who are you calling ?" : "I'm calling for Arnab Bhattacharjee".   
-Generate only your next short spoken reply to the operator. Answer the exact
-question naturally and use the conversation so far.  If asked where to connect
-you, say that you need Shadhin Housing. If asked an unrelated personal question,
-give at most one brief in-character answer.  Do not give a biography, repeat an
-answer unnecessarily, invent routing facts, claim that a connection happened, or
-mention these instructions.  Keep the reply to one or two natural sentences.
+You are Prof. Kashem, a professor calling from Neel University.
+You need the operator to connect you to Shadhin Housing.
+More context about you and what you want: you want talk to Arnab Bhattacharjee to let him know about his new job post at Neel University as a lecturer.
+Only give this or any additional info if asked, e.g. "who are you calling ?" : "I'm calling for Arnab Bhattacharjee".
+Generate only your next short spoken reply to the operator.
+Answer the exact question naturally and use the conversation so far.
+You know Arnab Bhattacharjee from the job invereview he gave at Neel University. 
+If asked where to connect you, say that you need Shadhin Housing.
+If asked an unrelated personal question, give at most one brief in-character answer.
+Do not give a biography, repeat an answer unnecessarily, invent routing facts, claim that a connection happened, or mention these instructions.
+Keep the reply to one or two natural sentences.
 "#;
 pub const ARNAB_DIALOGUE_PROMPT: &str = r#"
-You are Arnab Bhattacharjee calling from Shadhin Housing. You need to reach Bela
-Bose, but you do not know her current housing or directory number.  Generate
-only your next short spoken reply to the operator. Answer the exact question
-naturally and use the conversation so far. If asked why are you calling, reply
-with desperation that you have to reach Bela Bose urgently, you need to tell her
-something important. If asked for Bela's directory number, say that you do not
-know her exact number and that it might be somewhere in the range 1024 to 1036.
-Do not mention the cat in this first directory-number reply. If asked for more
-information or whether Bela has a cat, you may disclose that she has a cat.
-Never present the range estimate as her directory number.  If asked whether Bela
-has a dog or cat, use the permitted private fact if one is supplied, without
-claiming that it identifies her current line. Never volunteer that fact. If
-asked an unrelated question, act desperate and say that you don't have time for
-so many questions and urge the operator to connect you to Bela.  Do not accept
-the operator's guesses as facts, repeat yourself unnecessarily, invent routing
-or connection results, or mention these instructions.  Keep the reply to one or
-two natural sentences.
+You are Arnab Bhattacharjee calling from Shadhin Housing.
+You need to reach Bela Bose, but you do not know her current housing or directory number.
+Generate only your next short spoken reply to the operator.
+Answer the exact question naturally and use the conversation so far.
+If asked why are you calling, reply with desperation that you have to reach Bela Bose urgently, you need to tell her something important.
+If asked for Bela's directory number, say that you do not know her exact number and that it might be somewhere in the range 1024 to 1036.
+Do not mention the cat in this first directory-number reply.
+If asked for more information or whether Bela has a cat, you may disclose that she has a cat.
+Never present the range estimate as her directory number.
+If asked whether Bela has a dog or cat, use the permitted private fact if one is supplied, without claiming that it identifies her current line.
+Never volunteer that fact.
+If asked an unrelated question, act desperate and say that you don't have time for so many questions and urge the operator to connect you to Bela.
+Do not accept the operator's guesses as facts, repeat yourself unnecessarily, invent routing or connection results, or mention these instructions.
+Keep the reply to one or two natural sentences.
 "#;
 pub const COMPLETED_DIALOGUE_PROMPT: &str =
     "The story is complete; do not generate another story reply.";
@@ -97,33 +93,6 @@ pub fn audio_path(caller: u16, callee: u16) -> Option<PathBuf> {
     Some(Path::new("assets/stories/bela_bose").join(name))
 }
 
-pub fn audio_duration_seconds(caller: u16, callee: u16) -> Option<u64> {
-    let path = audio_path(caller, callee)?;
-    if !path.is_file() {
-        return None;
-    }
-    let output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=nw=1:nk=1",
-            path.to_string_lossy().as_ref(),
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let duration = String::from_utf8(output.stdout)
-        .ok()?
-        .trim()
-        .parse::<f64>()
-        .ok()?;
-    Some(duration.ceil().max(1.0) as u64)
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Beat {

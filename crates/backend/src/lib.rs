@@ -5,7 +5,7 @@
 //! configuration (`config`), call state (`calls`), physical exchange rules
 //! (`hardware`), story definitions (`stories`), and voice workers.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::env;
 use std::fmt::Display;
 use std::fs;
@@ -18,7 +18,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use exchange_protocol::{
-    BackendDiagnostic, CallPhase, CallStatus, DEBUG_PROTOCOL_VERSION, DebugActiveCall,
+    CallPhase, CallStatus, DEBUG_PROTOCOL_VERSION, DebugActiveCall,
     DebugCallRecord, DebugCommand, DebugCounters, DebugEvent, DebugFrontendState, DebugRequest,
     DebugResponse, DebugRunState, DebugSnapshot, DebugSubscriberState, DebugVoiceConversation,
     FrameError, GamePhase, HeldControls, InputMessage, InputState, PROTOCOL_VERSION, PortId,
@@ -51,9 +51,18 @@ fn directory_id_for_line(config: &GameConfig, line: u8) -> Option<u16> {
 fn authored_audio_path(config: &GameConfig, caller: u8, callee: u8) -> Option<PathBuf> {
     let caller = directory_id_for_line(config, caller)?;
     let callee = directory_id_for_line(config, callee)?;
-    stories::bela_bose::audio_path(caller, callee)
+    let path = stories::bela_bose::audio_path(caller, callee)
         .or_else(|| stories::dirty_work::audio_path(caller, callee))
-        .or_else(|| stories::nahid::audio_path(caller, callee))
+        .or_else(|| stories::nahid::audio_path(caller, callee))?;
+    if path.is_absolute() {
+        path.canonicalize().ok()
+    } else {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(path)
+            .canonicalize()
+            .ok()
+    }
 }
 
 fn save_voice_wav(
@@ -92,12 +101,26 @@ fn save_voice_wav(
     Ok(path)
 }
 
-fn authored_audio_duration_seconds(config: &GameConfig, caller: u8, callee: u8) -> Option<u64> {
-    let caller = directory_id_for_line(config, caller)?;
-    let callee = directory_id_for_line(config, callee)?;
-    stories::bela_bose::audio_duration_seconds(caller, callee)
-        .or_else(|| stories::dirty_work::audio_duration_seconds(caller, callee))
-        .or_else(|| stories::nahid::audio_duration_seconds(caller, callee))
+fn load_authored_audio_duration(path: &std::path::Path) -> Option<u64> {
+    if !path.is_file() {
+        return None;
+    }
+    let output = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(path)
+        .args(["-f", "s16le", "-ar", "24000", "-ac", "1", "-"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let (chunks, _) = output.stdout.as_chunks::<2>();
+    let sample_count = chunks.len();
+    (sample_count > 0).then(|| {
+        (sample_count as u64)
+            .div_ceil(u64::from(VOICE_AUDIO_SAMPLE_RATE))
+            .max(1)
+    })
 }
 
 mod calls;
@@ -116,7 +139,6 @@ mod stories;
 use calls::ActiveCall;
 use config::{GameConfig, LINES, SubscriberConfig};
 use hardware::*;
-const MAX_AUDIO_PACKETS: usize = 4096;
 static DIALOGUE_WORKER: OnceLock<Mutex<Option<PersistentCommandDialogueGenerator>>> =
     OnceLock::new();
 static POCKET_TTS_WORKER: OnceLock<Mutex<Option<PersistentPocketTtsCommand>>> = OnceLock::new();
@@ -124,6 +146,7 @@ static TEXT_TURN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 pub struct Backend {
     config: GameConfig,
+    authored_audio: HashMap<(u8, u8), u64>,
     state: StateOutput,
     revision: u64,
     sequence: Option<u64>,
@@ -151,17 +174,6 @@ pub struct Backend {
     run_generation: u64,
     last_request: Option<InputMessage>,
     last_response: Option<StateMessage>,
-    audio_queue: VecDeque<Vec<u8>>,
-    audio_call: Option<(u8, u8)>,
-    audio_replay: Vec<Vec<u8>>,
-    audio_replay_call: Option<(u8, u8)>,
-    audio_next_send_at: Option<Instant>,
-    audio_queue_tap_only: bool,
-    tap_bridge_audio_local: bool,
-    audio_sequence: u16,
-    audio_timestamp: u32,
-    audio_tap_was_active: bool,
-    pending_tts: Vec<(u8, u8, bool)>,
     last_ptt: bool,
     voice_peer: Option<SocketAddr>,
     voice_session_id: u64,
@@ -386,8 +398,19 @@ impl Backend {
     pub fn new_exchange() -> Self {
         let config = GameConfig::load();
         Self::validate_story_directories(&config);
+        let mut authored_audio = HashMap::new();
+        for caller in &config.subscribers {
+            for callee in &config.subscribers {
+                if let Some(duration) = authored_audio_path(&config, caller.line, callee.line)
+                    .and_then(|path| load_authored_audio_duration(&path))
+                {
+                    authored_audio.insert((caller.line, callee.line), duration);
+                }
+            }
+        }
         let mut backend = Self {
             config: config.clone(),
+            authored_audio,
             state: initial_state(&config),
             revision: 0,
             sequence: None,
@@ -415,17 +438,6 @@ impl Backend {
             run_generation: 0,
             last_request: None,
             last_response: None,
-            audio_queue: VecDeque::new(),
-            audio_call: None,
-            audio_replay: Vec::new(),
-            audio_replay_call: None,
-            audio_next_send_at: None,
-            audio_queue_tap_only: false,
-            tap_bridge_audio_local: false,
-            audio_sequence: 0,
-            audio_timestamp: 0,
-            audio_tap_was_active: false,
-            pending_tts: Vec::new(),
             last_ptt: false,
             voice_peer: None,
             voice_session_id: 0,
@@ -571,11 +583,14 @@ impl Backend {
     fn voice_context(&self, caller: u8, callee: u8) -> ResponseContext {
         let caller_profile = self.subscriber(caller);
         let callee_profile = self.subscriber(callee);
+        let is_fallen_mother_caller = self.shapla_story_active()
+            && caller == self.line_for_directory(stories::fallen_mother::CALLER_DIRECTORY);
         ResponseContext {
             profile: SubscriberProfile {
                 subscriber_id: caller,
                 directory_id: caller_profile.id,
                 name: caller_profile.name.clone(),
+                private_info: caller_profile.private_info.clone(),
                 voice_id: caller_profile.voice_id.clone(),
                 personality: caller_profile.role.clone(),
                 baseline_goals: Vec::new(),
@@ -583,8 +598,16 @@ impl Backend {
                 permitted_actions: Vec::new(),
             },
             caller_place: caller_profile.place.clone(),
-            requested_place: callee_profile.place.clone(),
-            requested_directory_id: callee_profile.id,
+            requested_place: if is_fallen_mother_caller {
+                caller_profile.place.clone()
+            } else {
+                callee_profile.place.clone()
+            },
+            requested_directory_id: if is_fallen_mother_caller {
+                caller_profile.id
+            } else {
+                callee_profile.id
+            },
             known_places: self
                 .config
                 .subscribers
@@ -594,15 +617,11 @@ impl Backend {
             subscriber_goal: String::new(),
             call_premise: String::new(),
             call_guidance: if self.is_neel_caller(caller) {
-                format!(
-                    "{}\nStory place: {}",
-                    if caller == self.line_for_directory(stories::bela_bose::NEEL_DIRECTORY) {
-                        stories::bela_bose::Beat::ProfessorRouting.dialogue_prompt()
-                    } else {
-                        stories::bela_bose::Beat::ArnabDirectory.dialogue_prompt()
-                    },
-                    self.subscriber(caller).place,
-                )
+                if caller == self.line_for_directory(stories::bela_bose::NEEL_DIRECTORY) {
+                    stories::bela_bose::Beat::ProfessorRouting.dialogue_prompt().to_string()
+                } else {
+                    stories::bela_bose::Beat::ArnabDirectory.dialogue_prompt().to_string()
+                }
             } else if self.is_dirty_work_caller(caller) {
                 format!(
                     "{}\nCaller place: {}\nRequested destination: {}",
@@ -618,11 +637,9 @@ impl Backend {
                     callee_profile.place,
                     self.nahid_scam_count
                 )
-            } else if self.shapla_story_active()
-                && caller == self.line_for_directory(stories::fallen_mother::CALLER_DIRECTORY)
-            {
+            } else if is_fallen_mother_caller {
                 format!(
-                    "{}\nStory place: {}",
+                    "{}\nCalled from: {}",
                     self.story_beat.dialogue_prompt(),
                     stories::fallen_mother::PLACE,
                 )
@@ -678,17 +695,6 @@ impl Backend {
         self.conversation_seconds = 0;
         self.shift_started_elapsed_seconds = 0;
         self.next_call_arrival_elapsed_seconds = 0;
-        self.audio_queue.clear();
-        self.audio_call = None;
-        self.audio_replay.clear();
-        self.audio_replay_call = None;
-        self.audio_next_send_at = None;
-        self.audio_queue_tap_only = false;
-        self.tap_bridge_audio_local = false;
-        self.audio_sequence = 0;
-        self.audio_timestamp = 0;
-        self.audio_tap_was_active = false;
-        self.pending_tts.clear();
         self.last_ptt = false;
         self.pending_voice_control = None;
         self.voice_turn_id = 0;
@@ -997,7 +1003,12 @@ impl Backend {
             && !self
                 .calls
                 .iter()
-                .any(|call| matches!(call.phase, CallPhase::Held | CallPhase::Connected))
+                .any(|call| {
+                    matches!(
+                        call.phase,
+                        CallPhase::OperatorSession | CallPhase::Held | CallPhase::Connected
+                    )
+                })
         {
             self.settle_shift();
         }
@@ -1112,40 +1123,13 @@ impl Backend {
         }
         self.story_controls = input.held_controls.clone();
         self.state.shift.active_call_count = self.calls.len() as u8;
-        let tap_was_active = self.state.tap_bridge_monitoring.is_some();
-        let tap_was_local = self.tap_bridge_audio_local;
         self.state.tap_bridge_monitoring = tap_monitor(input, &self.state).map(|mut monitoring| {
             monitoring.audio_clip =
                 authored_audio_path(&self.config, monitoring.caller_line, monitoring.callee_line)
                     .map(|path| path.to_string_lossy().into_owned());
             monitoring
         });
-        if !tap_was_active
-            && let Some(monitoring) = self.state.tap_bridge_monitoring.as_ref()
-            && self.audio_replay_call != Some((monitoring.caller_line, monitoring.callee_line))
-            && authored_audio_path(&self.config, monitoring.caller_line, monitoring.callee_line)
-                .is_some()
-        {
-            self.log(
-                "VOICE",
-                format_args!(
-                    "tap audio requested call={}->{}",
-                    monitoring.caller_line, monitoring.callee_line
-                ),
-            );
-            self.pending_tts
-                .push((monitoring.caller_line, monitoring.callee_line, true));
-        }
         self.state.tap_bridge_audio_active = self.state.tap_bridge_monitoring.is_some();
-        self.tap_bridge_audio_local = self
-            .state
-            .tap_bridge_monitoring
-            .as_ref()
-            .is_some_and(|monitoring| monitoring.audio_clip.is_some());
-        if self.tap_bridge_audio_local && !tap_was_local {
-            self.audio_queue.clear();
-            self.audio_next_send_at = None;
-        }
         self.sync_story_output();
         self.update_voice_control(input, self.revision);
         self.cancel_voice_if_operator_disconnected(input);
@@ -1494,8 +1478,6 @@ impl Backend {
         }
         self.voice_status = Some(VoiceStatus::Cancelled);
         self.voice_speaker_active = false;
-        self.audio_queue.clear();
-        self.audio_call = None;
         let finished_elapsed_seconds = self.elapsed_seconds();
         for conversation in &mut self.voice_conversations {
             if conversation.session_id == self.voice_session_id
@@ -1848,8 +1830,7 @@ impl Backend {
         else {
             return;
         };
-        let authored_audio = authored_audio_path(&self.config, caller, callee).is_some();
-        let local_tap_audio = tap_audio && authored_audio;
+        let authored_duration = self.authored_audio.get(&(caller, callee)).copied();
         let phase = self.calls[index].phase.clone();
         self.log(
             "CALL",
@@ -1863,12 +1844,11 @@ impl Backend {
         let Some(call) = self.calls.get_mut(index) else {
             return;
         };
-        if local_tap_audio {
+        if let Some(duration) = authored_duration {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
             call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
-            call.audio_duration_seconds =
-                authored_audio_duration_seconds(&self.config, caller, callee).unwrap_or(1);
+            call.audio_duration_seconds = duration;
         } else {
             call.phase = CallPhase::Connected;
             call.connected_at = Some(Instant::now());
@@ -1891,180 +1871,6 @@ impl Backend {
                 ),
             );
         }
-    }
-
-    fn install_generated_audio(
-        &mut self,
-        caller: u8,
-        callee: u8,
-        tap_audio: bool,
-        samples: Vec<i16>,
-    ) {
-        let connected_elapsed_seconds = self.elapsed_seconds() as u64;
-        let replay_offset_samples = if tap_audio {
-            self.calls
-                .iter()
-                .find(|call| call.caller == caller && call.callee == callee)
-                .and_then(|call| call.connected_at)
-                .map(|connected_at| {
-                    (connected_at.elapsed().as_secs_f64() * f64::from(VOICE_AUDIO_SAMPLE_RATE))
-                        as usize
-                })
-                .unwrap_or(0)
-        } else {
-            0
-        };
-        let duration = (samples.len() as u64)
-            .div_ceil(u64::from(VOICE_AUDIO_SAMPLE_RATE))
-            .max(1);
-        let beat_time_remaining = {
-            let Some(call) = self.calls.iter_mut().find(|call| {
-                call.caller == caller
-                    && call.callee == callee
-                    && matches!(call.phase, CallPhase::Held | CallPhase::Connected)
-            }) else {
-                return;
-            };
-            if call.phase == CallPhase::Held {
-                call.audio_duration_seconds = duration;
-                call.phase = CallPhase::Connected;
-                call.connected_at = Some(Instant::now());
-                call.connected_elapsed_seconds = Some(connected_elapsed_seconds);
-            } else if tap_audio {
-                // A recording explicitly requested through Tap defines the
-                // monitored call's playback length; ordinary live dialogue
-                // calls remain connected until the operator disconnects.
-                call.audio_duration_seconds = duration;
-            }
-            call.deadline.checked_sub(connected_elapsed_seconds)
-        };
-        self.log(
-            "CALL",
-            format_args!(
-                "line connected {} -> {} beat_time_remaining={:?}",
-                caller, callee, beat_time_remaining
-            ),
-        );
-        self.sync_call_state();
-        self.audio_call = Some((caller, callee));
-        let sequence = self.audio_sequence;
-        let timestamp = self.audio_timestamp;
-        let mut packets = Vec::new();
-        for (index, chunk) in samples.chunks(VOICE_AUDIO_PACKET_SAMPLES).enumerate() {
-            packets.push(
-                RtpL16Packet {
-                    marker: index == 0,
-                    sequence: sequence.wrapping_add(index as u16),
-                    timestamp: timestamp.wrapping_add((index * VOICE_AUDIO_PACKET_SAMPLES) as u32),
-                    ssrc: 0x4e45_5554,
-                    samples: chunk.to_vec(),
-                }
-                .encode(),
-            );
-        }
-        self.log(
-            "VOICE",
-            format_args!(
-                "audio queued call={}->{} source={} packets={}",
-                caller,
-                callee,
-                if authored_audio_path(&self.config, caller, callee).is_some() {
-                    "prerecorded"
-                } else {
-                    "generated"
-                },
-                packets
-                    .len()
-                    .saturating_sub(replay_offset_samples / VOICE_AUDIO_PACKET_SAMPLES,)
-            ),
-        );
-        self.audio_replay = packets.clone();
-        self.audio_replay_call = Some((caller, callee));
-        self.audio_queue_tap_only = tap_audio;
-        for packet in packets
-            .into_iter()
-            .skip(replay_offset_samples / VOICE_AUDIO_PACKET_SAMPLES)
-        {
-            if self.audio_queue.len() >= MAX_AUDIO_PACKETS {
-                self.audio_queue.pop_front();
-            }
-            self.audio_queue.push_back(packet);
-        }
-        self.audio_sequence =
-            sequence.wrapping_add(samples.len().div_ceil(VOICE_AUDIO_PACKET_SAMPLES) as u16);
-        self.audio_timestamp = timestamp.wrapping_add(samples.len() as u32);
-    }
-
-    fn audio_replay_offset_packets(&self) -> usize {
-        self.audio_call
-            .and_then(|(caller, callee)| {
-                self.calls
-                    .iter()
-                    .find(|call| call.caller == caller && call.callee == callee)
-                    .and_then(|call| call.connected_at)
-            })
-            .map(|connected_at| {
-                (connected_at.elapsed().as_secs_f64() * f64::from(VOICE_AUDIO_SAMPLE_RATE)
-                    / VOICE_AUDIO_PACKET_SAMPLES as f64) as usize
-            })
-            .unwrap_or(0)
-    }
-
-    fn take_pending_tts(&mut self) -> Vec<(u8, u8, bool)> {
-        std::mem::take(&mut self.pending_tts)
-    }
-
-    fn generate_call_audio(
-        config: GameConfig,
-        caller: u8,
-        callee: u8,
-        _tap_audio: bool,
-    ) -> Result<Vec<i16>, VoiceError> {
-        let _caller_profile = config
-            .subscribers
-            .iter()
-            .find(|subscriber| subscriber.line == caller)
-            .ok_or_else(|| {
-                VoiceError::new("subscriber_not_configured", "caller is not configured")
-            })?;
-        let _callee_profile = config
-            .subscribers
-            .iter()
-            .find(|subscriber| subscriber.line == callee)
-            .ok_or_else(|| {
-                VoiceError::new("subscriber_not_configured", "callee is not configured")
-            })?;
-        if let Some(path) = authored_audio_path(&config, caller, callee)
-            && path.is_file()
-        {
-            let output = Command::new("ffmpeg")
-                .args([
-                    "-v",
-                    "error",
-                    "-i",
-                    path.to_string_lossy().as_ref(),
-                    "-f",
-                    "s16le",
-                    "-ar",
-                    "24000",
-                    "-ac",
-                    "1",
-                    "-",
-                ])
-                .output()
-                .map_err(|error| VoiceError::new("story_audio_decode_failed", error.to_string()))?;
-            if output.status.success() {
-                let (chunks, _) = output.stdout.as_chunks::<2>();
-                let samples = chunks
-                    .iter()
-                    .map(|chunk| i16::from_le_bytes(*chunk))
-                    .collect::<Vec<_>>();
-                if !samples.is_empty() {
-                    return Ok(samples);
-                }
-            }
-        }
-        Ok(Vec::new())
     }
 
     fn finish_call(&mut self, index: usize, missed: bool) {
@@ -2140,12 +1946,6 @@ impl Backend {
             if contact == self.dirty_work_beat {
                 self.dirty_work_beat = self.next_dirty_work_contact();
             }
-        }
-        if self.audio_call == Some((call.caller, call.callee)) {
-            self.audio_queue.clear();
-            self.audio_call = None;
-            self.audio_replay.clear();
-            self.audio_replay_call = None;
         }
         self.resolved = self.resolved.saturating_add(1);
         if missed {
@@ -2363,20 +2163,6 @@ impl Backend {
         );
     }
 
-    fn fail_generated_call(&mut self, caller: u8, callee: u8, error: &VoiceError) {
-        self.state.debug.messages.push(BackendDiagnostic {
-            code: error.code.clone(),
-            message: format!("tap audio {caller}->{callee}: {}", error.message),
-        });
-        if let Some(index) = self
-            .calls
-            .iter()
-            .position(|call| call.caller == caller && call.callee == callee)
-        {
-            self.fail_call(index, "tts_generation_failed");
-        }
-    }
-
     fn sync_call_state(&mut self) {
         let focused_caller = self.state.call.as_ref().map(|call| call.caller_line);
         self.state.calls = self
@@ -2478,8 +2264,6 @@ impl Backend {
                 finished_elapsed_seconds,
             });
         }
-        self.audio_queue.clear();
-        self.audio_call = None;
         append_printer(
             &mut self.state,
             &format!(
@@ -3537,69 +3321,6 @@ pub fn serve_voice(socket: UdpSocket, backend: Arc<Mutex<Backend>>) -> io::Resul
                 .map_err(|error| io::Error::other(error.to_string()))?;
             socket.send_to(&datagram, address)?;
         }
-        let (packet, audio_peer) = backend
-            .lock()
-            .ok()
-            .map(|mut state| {
-                let peer = state.voice_peer;
-                if !state.state.tap_bridge_audio_active {
-                    state.audio_tap_was_active = false;
-                } else if !state.audio_tap_was_active {
-                    if state.audio_queue.is_empty()
-                        && state.audio_call.is_some()
-                        && state.audio_replay_call == state.audio_call
-                    {
-                        state.log(
-                            "VOICE",
-                            format_args!(
-                                "tap replay call={:?} connection_offset_packets={}",
-                                state.audio_call,
-                                state.audio_replay_offset_packets()
-                            ),
-                        );
-                        let replay_offset_packets = state.audio_replay_offset_packets();
-                        let replay = state
-                            .audio_replay
-                            .iter()
-                            .skip(replay_offset_packets)
-                            .cloned()
-                            .collect::<Vec<_>>();
-                        state.audio_queue.extend(replay);
-                    } else {
-                        state.log(
-                            "VOICE",
-                            format_args!(
-                                "tap active call={:?} queued_packets={} replay_packets={}",
-                                state.audio_call,
-                                state.audio_queue.len(),
-                                state.audio_replay.len()
-                            ),
-                        );
-                    }
-                    state.audio_tap_was_active = true;
-                }
-                let packet = if peer.is_some()
-                    && !state.audio_queue.is_empty()
-                    && (!state.audio_queue_tap_only || state.state.tap_bridge_audio_active)
-                    && !state.tap_bridge_audio_local
-                    && state
-                        .audio_next_send_at
-                        .is_none_or(|ready_at| Instant::now() >= ready_at)
-                {
-                    let packet = state.audio_queue.pop_front();
-                    state.audio_next_send_at = Some(Instant::now() + Duration::from_millis(20));
-                    packet
-                } else {
-                    None
-                };
-                (packet, peer)
-            })
-            .unwrap_or_default();
-        if let Some(address) = audio_peer {
-            if let Some(packet) = packet {
-                socket.send_to(&packet, address)?;
-            }
-        }
     }
 }
 
@@ -3658,9 +3379,8 @@ fn generate_operator_response(
     if service_turn {
         return Ok((transcript, String::new(), Vec::new()));
     }
-    let prompt = dialogue_prompt_json(&context, &transcript)?;
+    let (response, prompt) = generate_dialogue(&context, &transcript)?;
     llm_prompt_sink(&prompt);
-    let response = generate_dialogue(&context, &transcript)?;
     llm_response_sink(&response);
     let mut audio = Vec::new();
     with_persistent_pocket_tts(|tts| {
@@ -3678,16 +3398,18 @@ fn generate_operator_response(
     Ok((transcript, response, audio))
 }
 
-fn dialogue_prompt_json(context: &ResponseContext, transcript: &str) -> Result<String, VoiceError> {
-    serde_json::to_string(&serde_json::json!({
-        "context": context,
-        "transcript": transcript,
-    }))
-    .map_err(|error| VoiceError::new("dialogue_request_failed", error.to_string()))
-}
-
-fn generate_dialogue(context: &ResponseContext, transcript: &str) -> Result<String, VoiceError> {
-    Ok(with_persistent_dialogue(|dialogue| dialogue.generate(context, transcript))?.dialogue)
+fn generate_dialogue(
+    context: &ResponseContext,
+    transcript: &str,
+) -> Result<(String, String), VoiceError> {
+    let result = with_persistent_dialogue(|dialogue| dialogue.generate(context, transcript))?;
+    let prompt = result.prompt.ok_or_else(|| {
+        VoiceError::new(
+            "dialogue_prompt_missing",
+            "dialogue worker did not return the formatted Ollama prompt",
+        )
+    })?;
+    Ok((result.dialogue, prompt))
 }
 
 fn classify_story(
@@ -3908,20 +3630,13 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
         let response = if let Some((code, message)) = error {
             text_error(&request, code, message)
         } else {
-            let llm_prompt = if service_turn {
-                None
-            } else {
-                context
-                    .as_ref()
-                    .and_then(|context| dialogue_prompt_json(context, &request.text).ok())
-            };
             let generated = if service_turn {
-                Ok(String::new())
+                Ok((String::new(), String::new()))
             } else {
                 generate_dialogue(&context.expect("validated text context"), &request.text)
             };
             match generated {
-                Ok(response_text) => {
+                Ok((response_text, llm_prompt)) => {
                     if let Ok(mut state) = backend.lock() {
                         let caller = state.voice_subscriber_line.unwrap_or(0);
                         if !service_turn {
@@ -3934,7 +3649,8 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
                         state.voice_status = Some(VoiceStatus::Completed);
                         state.voice_transcript = Some(request.text.clone());
                         state.voice_response_text = Some(response_text.clone());
-                        state.voice_llm_prompt = llm_prompt.clone();
+                        state.voice_llm_prompt =
+                            (!llm_prompt.is_empty()).then_some(llm_prompt.clone());
                         state.voice_llm_response =
                             (!response_text.is_empty()).then_some(response_text.clone());
                         let conversation_id = state.next_voice_conversation_id;
@@ -3958,7 +3674,7 @@ fn handle_text_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) -
                             tts_samples: 0,
                             transcript: Some(request.text.clone()),
                             response_text: Some(response_text.clone()),
-                            llm_prompt,
+                            llm_prompt: (!llm_prompt.is_empty()).then_some(llm_prompt),
                             llm_response: (!response_text.is_empty())
                                 .then_some(response_text.clone()),
                             error: None,
@@ -4004,31 +3720,12 @@ pub fn handle_connection(mut stream: TcpStream, backend: Arc<Mutex<Backend>>) ->
             }
             Err(error) => return Err(io::Error::new(ErrorKind::InvalidData, error.to_string())),
         };
-        let (response, pending_tts, config) = {
+        let response = {
             let mut state = backend
                 .lock()
                 .map_err(|_| io::Error::other("backend state lock poisoned"))?;
-            let response = state.apply_input_message(request);
-            (response, state.take_pending_tts(), state.config.clone())
+            state.apply_input_message(request)
         };
-        for (caller, callee, tap_audio) in pending_tts {
-            let worker_backend = Arc::clone(&backend);
-            let call_config = config.clone();
-            thread::spawn(move || {
-                match Backend::generate_call_audio(call_config, caller, callee, tap_audio) {
-                    Ok(samples) => {
-                        if let Ok(mut state) = worker_backend.lock() {
-                            state.install_generated_audio(caller, callee, tap_audio, samples);
-                        }
-                    }
-                    Err(error) => {
-                        if let Ok(mut state) = worker_backend.lock() {
-                            state.fail_generated_call(caller, callee, &error);
-                        }
-                    }
-                }
-            });
-        }
         write_frame(&mut stream, &response)
             .map_err(|e| io::Error::other(format!("state response write failed: {e}")))?;
     }
@@ -4277,7 +3974,21 @@ mod beat_selector_tests {
 
 #[cfg(test)]
 mod story_knowledge_tests {
-    use super::Backend;
+    use super::{Backend, authored_audio_path};
+
+    #[test]
+    fn authored_audio_paths_are_canonical_files_for_the_frontend() {
+        let backend = Backend::new_exchange();
+        let caller = backend.line_for_directory(crate::stories::bela_bose::NEEL_DIRECTORY);
+        let callee = backend.line_for_directory(crate::stories::bela_bose::SHADHIN_DIRECTORY);
+
+        let path = authored_audio_path(&backend.config, caller, callee)
+            .expect("authored audio should resolve at startup");
+
+        assert!(path.is_absolute());
+        assert!(path.is_file());
+        assert!(!path.to_string_lossy().contains(".."));
+    }
 
     #[test]
     fn every_authored_story_recording_is_a_playable_wav() {
@@ -4391,6 +4102,21 @@ mod story_knowledge_tests {
             !context
                 .call_guidance
                 .contains("If the operator asks for the location")
+        );
+    }
+
+    #[test]
+    fn fallen_mother_voice_context_uses_the_callers_emergency_destination() {
+        let backend = Backend::new_exchange();
+        let caller = backend.line_for_directory(crate::stories::fallen_mother::CALLER_DIRECTORY);
+        let callee = backend.line_for_directory(1021);
+
+        let context = backend.voice_context(caller, callee);
+
+        assert_eq!(context.requested_place, "Shapla Apartments");
+        assert_eq!(
+            context.requested_directory_id,
+            crate::stories::fallen_mother::CALLER_DIRECTORY
         );
     }
 

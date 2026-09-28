@@ -22,7 +22,7 @@ use exchange_protocol::{
 use serde::{Deserialize, Serialize};
 
 pub const MAX_RESPONSE_CONTEXT_TOKENS: usize = 3_072;
-const MAX_DIALOGUE_CHARS: usize = 2_000;
+const MAX_DIALOGUE_CHARS: usize = 200;
 const DEFAULT_MAX_CAPTURE_SAMPLES: usize = VOICE_AUDIO_SAMPLE_RATE as usize * 15;
 const MAX_WORKER_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 static WORKER_CANCELLED: AtomicBool = AtomicBool::new(false);
@@ -74,6 +74,7 @@ pub struct SubscriberProfile {
     pub subscriber_id: u8,
     pub directory_id: u16,
     pub name: String,
+    pub private_info: String,
     pub voice_id: String,
     pub personality: String,
     pub baseline_goals: Vec<String>,
@@ -215,6 +216,7 @@ pub trait VoiceOutput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubscriberResponse {
     pub dialogue: String,
+    pub prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -410,6 +412,7 @@ impl OperatorSession {
             self.emit(VoiceStatus::Completed, None, None, None)?;
             return Ok(SubscriberResponse {
                 dialogue: String::new(),
+                prompt: None,
             });
         }
         self.emit(VoiceStatus::Transcribing, None, None, None)?;
@@ -420,6 +423,7 @@ impl OperatorSession {
                 self.emit(VoiceStatus::Completed, None, None, None)?;
                 return Ok(SubscriberResponse {
                     dialogue: String::new(),
+                    prompt: None,
                 });
             }
             Err(error) => return self.fail(error),
@@ -529,7 +533,10 @@ impl OperatorSession {
             None,
         )?;
         self.phase = SessionPhase::Completed;
-        Ok(SubscriberResponse { dialogue })
+        Ok(SubscriberResponse {
+            dialogue,
+            prompt: None,
+        })
     }
 
     fn emit(
@@ -1056,6 +1063,8 @@ impl CommandDialogueGenerator {
 #[derive(Deserialize)]
 struct DialogueResult {
     dialogue: String,
+    #[serde(default)]
+    prompt: Option<serde_json::Value>,
 }
 
 impl DialogueGenerator for CommandDialogueGenerator {
@@ -1073,6 +1082,9 @@ impl DialogueGenerator for CommandDialogueGenerator {
         serde_json::from_slice::<DialogueResult>(&output)
             .map(|result| SubscriberResponse {
                 dialogue: result.dialogue,
+                prompt: result
+                    .prompt
+                    .map(|prompt| serde_json::to_string_pretty(&prompt).unwrap_or_default()),
             })
             .map_err(|error| VoiceError::new("dialogue_invalid_output", error.to_string()))
     }
@@ -1146,6 +1158,9 @@ impl DialogueGenerator for PersistentCommandDialogueGenerator {
         serde_json::from_str::<DialogueResult>(&line)
             .map(|result| SubscriberResponse {
                 dialogue: result.dialogue,
+                prompt: result
+                    .prompt
+                    .map(|prompt| serde_json::to_string_pretty(&prompt).unwrap_or_default()),
             })
             .map_err(|error| VoiceError::new("dialogue_invalid_output", error.to_string()))
     }
@@ -2283,6 +2298,7 @@ mod tests {
             assert_eq!(context.current_input.as_deref(), Some("connect me to Vira"));
             Ok(SubscriberResponse {
                 dialogue: "I am listening.".to_string(),
+                prompt: None,
             })
         }
     }
@@ -2319,6 +2335,7 @@ mod tests {
                 subscriber_id: 0,
                 directory_id: 0,
                 name: "Taren Kesh".to_string(),
+                private_info: String::new(),
                 voice_id: "Ryan".to_string(),
                 personality: "unassigned".to_string(),
                 baseline_goals: Vec::new(),
@@ -2609,6 +2626,7 @@ mod tests {
             dialogue.generate(&context(), "fixture transcript"),
             Ok(SubscriberResponse {
                 dialogue: "fixture response".to_string(),
+                prompt: None,
             })
         );
 

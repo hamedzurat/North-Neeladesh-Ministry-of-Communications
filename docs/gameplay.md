@@ -18,20 +18,20 @@ panel and render the returned state.
 The four directory digits are public subscriber IDs. They are not hardware
 line numbers. The current configuration contains these records:
 
-| Directory ID | Subscriber           | Place             | Hardware line |
-| ------------ | -------------------- | ----------------- | ------------: |
-| 1021         | Rafiq Ahmed          | Mohona Heights    |             0 |
-| 1022         | Nusrat Rahman        | Shapla Apartments |             1 |
-| 1023         | Prof. Kashem         | Neel University   |             2 |
-| 1024         | Arnab Bhattacharjee  | Shadhin Housing   |             3 |
-| 1031         | Bela Bose, dog entry | Meghna Abashon    |             4 |
-| 1032         | Bela Bose, cat entry | Padma Nibash      |             5 |
-| 1025         | Agent Rahman         | Secret Police     |             6 |
-| 1026         | Farhana              | Bagha News        |             7 |
-| 1027         | Tariq                | Koyal Market      |             8 |
-| 1028         | Dr. Kamal            | Karnafuli Colony  |             9 |
-| 1029         | Rehana               | Teesta Bhaban     |            10 |
-| 1030         | Nahid                | Shonarpara Tower  |            11 |
+| Directory ID | Subscriber          | Role                 | Place             | Private info                  | Voice ID   | Hardware line |
+| ------------ | ------------------- | -------------------- | ----------------- | ----------------------------- | ---------- | ------------: |
+| 1021         | Mirazul Islam       | CD seller            | Mohona Heights    | has a dog named Kutta         | paul       |             0 |
+| 1022         | Nusrat Rahman       | architect            | Shapla Apartments | has a parrot named Tiya       | anna       |             1 |
+| 1023         | Prof. Kashem        | university professor | Neel University   | has a tortoise named Dheere   | giovanni   |             2 |
+| 1024         | Arnab Bhattacharjee | junior engineer      | Shadhin Housing   | has a hamster named Golu      | george     |             3 |
+| 1031         | Bela Bose           | librarian            | Meghna Abashon    | has a dog named Momo          | caro_davy  |             4 |
+| 1032         | Bela Bose           | school teacher       | Padma Nibash      | has a cat named Tuli          | cosette    |             5 |
+| 1025         | Agent Rahman        | intelligence officer | Secret Police     | has an aquarium with goldfish | alba       |             6 |
+| 1026         | Farhana             | newspaper editor     | Bagha News        | has a canary named Shonali    | azelma     |             7 |
+| 1027         | Tariq               | warehouse clerk      | Koyal Market      | has a pug named Bagha         | bill_boerst|             8 |
+| 1028         | Dr. Kamal           | retired professor    | Karnafuli Colony  | has a pigeon named Bakum      | charles    |             9 |
+| 1029         | Rehana              | botanist             | Teesta Bhaban     | has a white cat named Snow    | eponine    |            10 |
+| 1030         | Nahid               | call center agent    | Shonarpara Tower  | has a puppy named Sheru       | michael    |            11 |
 
 The physical line column is an implementation detail. Story rules use the
 directory IDs. A lookup for an unlisted ID displays `NO RECORD` and does not
@@ -88,17 +88,17 @@ call is connected, the two Tap cords are exact, and `TAP` is held.
 
 The visible call phases mean:
 
-| Phase             | Meaning                                                                   |
-| ----------------- | ------------------------------------------------------------------------- |
-| `Waiting`         | The caller is waiting for the operator.                                   |
-| `OperatorSession` | The caller is connected to the operator.                                  |
-| `AwaitingRouting` | The caller was released from the operator and is waiting for routing.     |
+| Phase             | Meaning                                                                     |
+| ----------------- | --------------------------------------------------------------------------- |
+| `Waiting`         | The caller is waiting for the operator.                                     |
+| `OperatorSession` | The caller is connected to the operator.                                    |
+| `AwaitingRouting` | The caller was released from the operator and is waiting for routing.       |
 | `Held`            | The call is temporarily held while a connection or audio operation settles. |
-| `Ringing`         | The Ring Generator has started the requested call.                        |
-| `Connected`       | The call is in a direct or Tap circuit.                                  |
-| `Completed`       | Terminal history state for a successful call.                             |
-| `Missed`          | The caller's waiting deadline expired.                                    |
-| `Failed`          | The operator made a disallowed connection or audio generation failed.     |
+| `Ringing`         | The Ring Generator has started the requested call.                          |
+| `Connected`       | The call is in a direct or Tap circuit.                                     |
+| `Completed`       | Terminal history state for a successful call.                               |
+| `Missed`          | The caller's waiting deadline expired.                                      |
+| `Failed`          | The operator made a disallowed connection or audio generation failed.       |
 
 If a ringing circuit is removed before the direct circuit is ready, the call
 gets a 16-second ring grace period before returning to `AwaitingRouting`.
@@ -320,7 +320,7 @@ While the thread is in `Scamming`, the selector can choose any uncompleted victi
 call. These five call beats are independent; their order does not matter. The
 selector chooses randomly and skips victims whose lines conflict with active calls:
 
-- 1021, Rafiq Ahmed
+- 1021, Mirazul Islam
 - 1022, Nusrat Rahman
 - 1031, Bela's dog entry
 - 1032, Bela's cat entry

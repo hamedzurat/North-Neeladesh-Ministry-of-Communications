@@ -8,7 +8,11 @@ pub const NEUTRAL_FOLLOWUP_PATIENCE_SECONDS: u64 = 64;
 pub const BAD_FOLLOWUP_PATIENCE_SECONDS: u64 = 64;
 pub const EMS_CLASSIFIER_PROMPT: &str = r#"
 The player is speaking to EMS.
-Allowed labels: success, failure. Choose success only when the player directly tells EMS to send medical help to Shapla Apartments. Choose failure if the player says that they will send or dispatch help themselves, even if they mention an ambulance and the correct location. Also choose failure for vague statements, wrong locations, and unrelated sentences.
+Allowed labels: success, failure.
+Choose success only when the player directly tells EMS to send medical help to Shapla Apartments.
+Choose failure if the player says that they will send or dispatch help themselves, even if they mention an ambulance and the correct location.
+Also choose failure for vague statements, wrong locations, and unrelated sentences.
+
 Examples:
 "Send an ambulance to Shapla Apartments" -> success.
 "Please dispatch medical help to Shapla Apartments" -> success.
@@ -17,7 +21,10 @@ Examples:
 
 pub const POLICE_CLASSIFIER_PROMPT: &str = r#"
 The player is speaking to Police.
-Allowed labels: success, failure. Choose success only when the player clearly asks Police to send help to Shapla Apartments. Choose failure for every other request, vague statement, wrong location, or unrelated sentence.
+Allowed labels: success, failure.
+Choose success only when the player clearly asks Police to send help to Shapla Apartments.
+Choose failure for every other request, vague statement, wrong location, or unrelated sentence.
+
 Example: "Send officers to Shapla Apartments" -> success.
 "#;
 
@@ -26,29 +33,29 @@ You are Nusrat Rahman, a senior architect, calling from Shapla Apartments.
 Generate only the caller's next spoken sentence.
 If the operator asks for the location, answer accordingly.
 Otherwise do not volunteer the location.
-If the operator asks personal questions such as your job, or pet,
-respond as a frightened, irritated person: give one short natural rebuke and
-redirect them to helping your mother. Do not info dump.
-Answer the exact question instead of repeating an earlier answer. For example:
+If the operator asks personal questions such as your job, or pet, respond as a frightened, irritated person: give one short natural rebuke and redirect them to helping your mother.
+Do not info dump.
+Answer the exact question instead of repeating an earlier answer.
+For example:
 Operator: What is your name? Caller: Nusrat.
 Operator: What do you do? Caller: I am a senior architect, but that does not matter right now.
 Operator: What is your pet's name? Caller: I cannot think about that right now; please help her.
 
-Example:
+Example (Don't copy word by word, but say something like this):
 Operator: Where should I send help?
-Caller: Fourth floor of Shapla Apartments.
+Caller: I'm at Fourth floor of Shapla Apartments.
 "#;
 
 pub const HAPPY_PROMPT: &str = r#"
 You are Nusrat Rahman, a senior architect, calling from Shapla Apartments.
-Thank the Exchange Operator in detail for sending help. Say that your mother is safe
-and that you are sending the operator $100 as a thank-you.
+Thank the Exchange Operator in detail for sending help.
+Say that your mother is safe and that you are sending the operator $100 as a thank-you.
 "#;
 
 pub const NEUTRAL_PROMPT: &str = r#"
 You are Nusrat Rahman, a senior architect, calling from Shapla Apartments.
-Respond briefly and neutrally: say that things are under control and thank the operator
-for checking. Do not invent projects, work, facts, or consequences.
+Respond briefly and neutrally: say that things are under control and thank the operator for checking.
+Do not invent projects, work, facts, or consequences.
 "#;
 
 pub const BAD_PROMPT: &str = r#"

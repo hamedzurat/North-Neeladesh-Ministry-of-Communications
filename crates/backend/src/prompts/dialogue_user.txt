@@ -1,5 +1,5 @@
-Response context:
-{context_json}
+Recent conversation:
+{recent_conversation}
 
-Conversation transcript:
+Operator's latest input:
 {transcript}

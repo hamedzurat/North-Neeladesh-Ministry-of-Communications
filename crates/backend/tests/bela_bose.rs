@@ -173,19 +173,21 @@ fn next_bela_call_waits_for_the_previous_direct_circuit_to_be_removed() {
 
     let direct = vec![cord(PortId::Subscriber(2), PortId::Subscriber(3))];
     backend.apply_input_message(input(&backend, 5, direct.clone(), [1, 0, 2, 4]));
+    let audio_duration = backend
+        .debug_snapshot()
+        .active_calls
+        .iter()
+        .find(|call| call.caller_line == 2)
+        .expect("direct call should be active")
+        .audio_duration_seconds;
+    assert!(audio_duration > 0 && audio_duration < u64::MAX);
     backend.apply_debug_command(DebugRequest {
         protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
-        command: DebugCommand::AdvanceTime { seconds: 30 },
+        command: DebugCommand::AdvanceTime {
+            seconds: audio_duration as u32,
+        },
     });
-    let still_connected = backend.apply_input_message(input(&backend, 6, direct, [1, 0, 2, 4]));
-    assert_eq!(still_connected.output.neel_story_beat, "ProfessorRouting");
-
-    backend.apply_input_message(input(&backend, 7, vec![], [1, 0, 2, 4]));
-    backend.apply_debug_command(DebugRequest {
-        protocol_version: exchange_protocol::DEBUG_PROTOCOL_VERSION,
-        command: DebugCommand::AdvanceTime { seconds: 5 },
-    });
-    let finished = backend.apply_input_message(input(&backend, 8, vec![], [1, 0, 2, 4]));
+    let finished = backend.apply_input_message(input(&backend, 6, direct, [1, 0, 2, 4]));
 
     assert_eq!(finished.output.neel_story_beat, "ArnabDirectory");
     assert!(!finished.output.line_lamps[3]);
@@ -197,7 +199,7 @@ fn next_bela_call_waits_for_the_previous_direct_circuit_to_be_removed() {
             .any(|call| call.caller_line == 3)
     );
 
-    let next_call = backend.apply_input_message(input(&backend, 9, vec![], [1, 0, 2, 4]));
+    let next_call = backend.apply_input_message(input(&backend, 7, vec![], [1, 0, 2, 4]));
     assert!(!next_call.output.line_lamps[3]);
     assert!(
         !next_call

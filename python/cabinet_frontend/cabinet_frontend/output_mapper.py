@@ -2,19 +2,38 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections.abc import Callable
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 from .diagnostics import ChangeLogger
 from .state import HeldControls
 
 
+def local_story_audio_path(backend_path: str) -> str:
+    """Map a backend story asset path to the cabinet's local asset copy."""
+    parts = Path(backend_path).parts
+    for index in range(len(parts) - 1):
+        if parts[index : index + 2] == ("assets", "stories"):
+            relative = parts[index + 2 :]
+            if relative and all(part not in {"", ".", ".."} for part in relative):
+                root = Path(
+                    os.environ.get(
+                        "NN_CABINET_ASSETS_DIR",
+                        str(Path.home() / "Desktop" / "cabinet-frontend" / "assets"),
+                    )
+                )
+                return str(root.joinpath("stories", *relative))
+    return backend_path
+
+
 class OutputMapper:
     AUDIO_SAMPLE_RATE = 24_000
-    GAME_START_MINUTES = 8 * 60
+    GAME_START_MINUTES = 7 * 60
 
     def __init__(
         self,
@@ -256,7 +275,7 @@ class OutputMapper:
                             int((now_monotonic - connected_at) * self.AUDIO_SAMPLE_RATE),
                         )
                         self.local_audio_queue.put(
-                            (audio_clip, offset_samples)
+                            (local_story_audio_path(audio_clip), offset_samples)
                         )
                     self._last_local_audio = audio_clip
                 elif not isinstance(audio_clip, str) and self._last_local_audio is not None:
@@ -346,7 +365,7 @@ class OutputMapper:
         if self._clock_start_monotonic is not None:
             elapsed = max(0, int(time.monotonic() - self._clock_start_monotonic))
             virtual_minutes = self.GAME_START_MINUTES + elapsed
-            display = f"{(virtual_minutes // 60) % 100:02d}{virtual_minutes % 60:02d}"
+            display = f"{(virtual_minutes // 60) % 24:02d}{virtual_minutes % 60:02d}"
             with self._clock_lock:
                 if display != self._last_seven_segment and self._try(
                     "seven_segment", lambda: self.seven_segment.show(display)

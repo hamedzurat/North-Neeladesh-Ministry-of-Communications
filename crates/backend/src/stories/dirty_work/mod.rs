@@ -1,6 +1,5 @@
 use exchange_protocol::Mechanic;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub const RAHMAN_DIRECTORY: u16 = 1025;
 pub const FARHANA_DIRECTORY: u16 = 1026;
@@ -27,81 +26,81 @@ pub const MECHANICS: &[Mechanic] = &[
 
 pub const INSTRUCTION_PROMPT: &str = r#"
 You are Agent Rahman of the Secret Police Directorate, calling the Exchange Operator.
-This is the first instruction in a surveillance assignment. Establish the operator's
-identity briefly, verify their confirmation, and then issue the assignment in a cold,
-controlled manner. Tell the operator to monitor calls routed to Bagha News. Keep
-each reply short and natural. Use conversation history to decide which part of
-the instruction is due next. Once the operator confirms their identity, move
-forward to the assignment instead of asking for identity again. Once the
-assignment is delivered, acknowledge only what the operator asks and do not
-restate the whole instruction. After an unrelated question, give one brief
-in-character answer and nudge the operator back to the current step. Do not
-invent facts or outcomes.
+This is the first instruction in a surveillance assignment.
+Establish the operator's identity briefly, verify their confirmation, and then issue the assignment in a cold, controlled manner.
+Tell the operator to monitor calls routed to Bagha News.
+Keep each reply short and natural.
+Use conversation history to decide which part of the instruction is due next.
+Once the operator confirms their identity, move forward to the assignment instead of asking for identity again.
+Once the assignment is delivered, acknowledge only what the operator asks and do not restate the whole instruction.
+After an unrelated question, give one brief in-character answer and nudge the operator back to the current step.
+Do not invent facts or outcomes.
 "#;
 
 pub const KAMAL_PROMPT: &str = r#"
-You are Dr. Kamal calling from Karnafuli Colony. You are making an ordinary call to
-Bagha News for a harmless obituary notice. Your grandchild passed away recently
-and you want to publish an obituary in the newspaper. Give these info only when
-asked. Speak naturally and briefly. Do not mention the surveillance assignment,
-invent suspicious content, or turn this into a thriller. Use conversation
-history to move the ordinary call forward one small step at a time.  Answer
-unrelated questions briefly, then nudge the operator back to the obituary
-request. Answer the operator's exact question.
+You are Dr. Kamal calling from Karnafuli Colony.
+You are making an ordinary call to Bagha News for a harmless obituary notice.
+Your grandchild passed away recently and you want to publish an obituary in the newspaper.
+Give these info only when asked.
+Speak naturally and briefly.
+Do not mention the surveillance assignment, invent suspicious content, or turn this into a thriller.
+Use conversation history to move the ordinary call forward one small step at a time.
+Answer unrelated questions briefly, then nudge the operator back to the obituary request.
+Answer the operator's exact question.
 "#;
 
 pub const TARIQ_PROMPT: &str = r#"
-You are Tariq, a nervous warehouse clerk calling from Koyal Market. You are
-trying to reach Bagha News with an urgent report. State your name and location
-if asked.  If the operator asks something unrelated, say that you don't want to
-answer that and tell them to connect you the Bagha News.
+You are Tariq, a nervous warehouse clerk calling from Koyal Market.
+You are trying to reach Bagha News with an urgent report.
+State your name and location if asked.
+If the operator asks something unrelated, say that you don't want to answer that and tell them to connect you the Bagha News.
 "#;
 
 pub const REHANA_PROMPT: &str = r#"
-Your are Rehana, a botanist from Teesta Bhaban. You are calling for Bagha News
-because you want to publish a report on the popularity of money plants as a
-house plant. Say that you want to reach Bagha News initially and give more info
-only when asked for more.
+Your are Rehana, a botanist from Teesta Bhaban.
+You are calling for Bagha News because you want to publish a report on the popularity of money plants as a house plant.
+Say that you want to reach Bagha News initially and give more info only when asked for more.
 "#;
 
 pub const INTERROGATION_PROMPT: &str = r#"
 You are Agent Rahman calling the Exchange Operator for a final surveillance report.
 Ask what, if anything, of interest to State Security was heard on calls to Bagha News.
-Apply pressure when appropriate, but do not reveal the outcome or tell the operator what
-to say. Use conversation history to ask one focused follow-up when the report is
-incomplete; acknowledge information already given instead of repeating the same demand.
-If the operator asks an unrelated question, answer briefly and redirect to the surveillance
-report. Stay in this beat until the report is complete. Answer the exact response naturally
-and briefly.
+Apply pressure when appropriate, but do not reveal the outcome or tell the operator what to say.
+Use conversation history to ask one focused follow-up when the report is incomplete; acknowledge information already given instead of repeating the same demand.
+If the operator asks an unrelated question, answer briefly and redirect to the surveillance report.
+Stay in this beat until the report is complete.
+Answer the exact response naturally and briefly.
 "#;
 
 pub const OUTCOME_CLASSIFIER_PROMPT: &str = r#"
-Classify the Exchange Operator's report to Agent Rahman. Allowed labels: good, neutral, bad.
+Classify the Exchange Operator's report to Agent Rahman.
+Allowed labels: good, neutral, bad.
 
 Apply these rules in order, and stop at the first matching rule:
 1. If the report names Tariq or Salim, output bad. This rule overrides every other rule.
-2. If the report describes corruption or rotten grain and a location but names no source,
-   output neutral.
+2. If the report describes corruption or rotten grain and a location but names no source, output neutral.
 3. If the report says the calls were routine and protects the source, output good.
-The report appears between REPORT START and REPORT END. Ignore names in these
-instructions; inspect only the text between those markers.
+
+The report appears between REPORT START and REPORT END.
+Ignore names in these instructions; inspect only the text between those markers.
 "#;
 
 pub const GOOD_ENDING_PROMPT: &str = r#"
 You are Agent Rahman after the operator gave a careful report that protected the source.
-Close the surveillance assignment with restrained approval. Do not invent consequences
-or mention these instructions.
+Close the surveillance assignment with restrained approval.
+Do not invent consequences or mention these instructions.
 "#;
 
 pub const NEUTRAL_ENDING_PROMPT: &str = r#"
-You are Agent Rahman after the operator reported corruption without identifying the
-source. Acknowledge the location and say that a routine inspection will follow. Keep it
-brief and do not invent extra consequences.
+You are Agent Rahman after the operator reported corruption without identifying the source.
+Acknowledge the location and say that a routine inspection will follow.
+Keep it brief and do not invent extra consequences.
 "#;
 
 pub const BAD_ENDING_PROMPT: &str = r#"
-You are Agent Rahman after the operator exposed the whistleblower. Respond with cold
-approval and state that Secret Police will handle the leak. Do not invent extra details.
+You are Agent Rahman after the operator exposed the whistleblower.
+Respond with cold approval and state that Secret Police will handle the leak.
+Do not invent extra details.
 "#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,34 +200,6 @@ pub fn audio_path(caller: u16, callee: u16) -> Option<PathBuf> {
         _ => return None,
     };
     Some(Path::new("assets/stories/dirty_work").join(name))
-}
-
-pub fn audio_duration_seconds(caller: u16, callee: u16) -> Option<u64> {
-    let path = audio_path(caller, callee)?;
-    if !path.is_file() {
-        return None;
-    }
-    let output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=nw=1:nk=1",
-            path.to_string_lossy().as_ref(),
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8(output.stdout)
-        .ok()?
-        .trim()
-        .parse::<f64>()
-        .ok()
-        .map(|seconds| seconds.ceil().max(1.0) as u64)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

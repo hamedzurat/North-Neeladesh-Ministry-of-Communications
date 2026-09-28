@@ -120,7 +120,16 @@ fn parse_voice_audio_path(path: &str) -> Option<(u64, DebugAudioKind)> {
 }
 
 fn debug_command(backend: &str, command: DebugCommand) -> io::Result<DebugResponse> {
-    let mut stream = TcpStream::connect(backend)?;
+    let mut stream = TcpStream::connect(backend).map_err(|error| {
+        if error.kind() == io::ErrorKind::ConnectionRefused {
+            io::Error::new(
+                error.kind(),
+                format!("debug backend at {backend} refused the connection; start the backend with `just backend-debug`"),
+            )
+        } else {
+            error
+        }
+    })?;
     write_frame(
         &mut stream,
         &DebugRequest {
@@ -299,5 +308,18 @@ mod tests {
     fn debug_ui_rejects_non_loopback_addresses() {
         assert!(bind_loopback_listener("0.0.0.0:0").is_err());
         assert!(bind_loopback_listener("127.0.0.1:0").is_ok());
+    }
+
+    #[test]
+    fn refused_backend_connection_explains_how_to_start_it() {
+        let error = debug_command(
+            "127.0.0.1:0",
+            DebugCommand::Snapshot,
+        )
+        .expect_err("no backend is listening on port zero");
+
+        assert_eq!(error.kind(), io::ErrorKind::ConnectionRefused);
+        assert!(error.to_string().contains("just backend-debug"));
+        assert!(error.to_string().contains("127.0.0.1:0"));
     }
 }

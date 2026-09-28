@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
-from cabinet_frontend.output_mapper import OutputMapper
+from cabinet_frontend.output_mapper import OutputMapper, local_story_audio_path
 from cabinet_frontend.state import HeldControls
 
 
@@ -33,6 +34,38 @@ class Spy:
 
 
 class OutputMapperTests(unittest.TestCase):
+    def test_backend_story_audio_path_maps_to_cabinet_assets(self) -> None:
+        with mock.patch.dict("os.environ", {"NN_CABINET_ASSETS_DIR": "/cabinet/assets"}):
+            path = local_story_audio_path(
+                "/backend/worktree/assets/stories/bela_bose/professor_arnab.wav"
+            )
+
+        self.assertEqual(
+            path,
+            "/cabinet/assets/stories/bela_bose/professor_arnab.wav",
+        )
+
+    def test_local_clock_starts_at_seven_and_wraps_in_24_hour_format(self) -> None:
+        components = [Spy() for _ in range(4)]
+        mapper = OutputMapper(*components, local_clock_display=True)
+        mapper._clock_start_monotonic = 0
+
+        with mock.patch("cabinet_frontend.output_mapper.time.monotonic", return_value=0):
+            mapper._update_local_clock()
+        with mock.patch("cabinet_frontend.output_mapper.time.monotonic", return_value=40):
+            mapper._update_local_clock()
+        with mock.patch("cabinet_frontend.output_mapper.time.monotonic", return_value=17 * 60):
+            mapper._update_local_clock()
+
+        self.assertEqual(
+            components[1].calls,
+            [
+                ("seven_segment", "0700"),
+                ("seven_segment", "0740"),
+                ("seven_segment", "0000"),
+            ],
+        )
+
     def test_maps_held_controls_to_the_four_extra_leds(self) -> None:
         components = [Spy() for _ in range(4)]
         mapper = OutputMapper(*components, line_lamp_count=12)
